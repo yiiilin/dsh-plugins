@@ -1,0 +1,28 @@
+{
+  "name": "dsh-plugin-original-models-page-patch",
+  "version": "0.1.0",
+  "description": "DSH host plugin: makes the original built-in Models settings page writable from non-loopback addresses by patching the official settings bundle and routing settings RPCs through the Host settings service.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
+}

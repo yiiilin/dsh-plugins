@@ -1,0 +1,18 @@
+# dsh-plugin-auth-webserver bundle patch.
+#
+# Disable the stock webserver and provide the compatible `webServer` service
+# from this package instead. The replacement defaults to 0.0.0.0:3080 while
+# still honoring `dsh web --port ...`; pass `--host` only for 127.0.0.1 because
+# the stock CLI intentionally rejects `--host 0.0.0.0`.
+
+- id: webserver
+  disabled: true
+
+- insert:
+    - id: webserver-auth
+      name: 'dsh-plugin-auth-webserver'
+      inject:
+        - webStartup
+      config:
+        host: !!js ctx.webStartup.host ?? '0.0.0.0'
+        port: !!js ctx.webStartup.port ?? 3080

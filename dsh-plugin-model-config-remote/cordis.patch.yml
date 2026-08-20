@@ -1,0 +1,7 @@
+# dsh-plugin-model-config-remote bundle patch.
+#
+# Adds a single Host-only row serving the remote model configuration page.
+
+- insert:
+    - id: model-config-remote
+      name: 'dsh-plugin-model-config-remote'
