@@ -1,21 +1,24 @@
 /**
  * dsh-plugin-auth-webserver
  *
- * A DSH web bundle that replaces the stock webserver with a compatible
- * `webServer` service, binds to 0.0.0.0 by default, and requires either HTTP
- * Basic Auth or an HMAC-signed login cookie before routes/fallbacks run.
+ * An auth-gated reverse proxy for the DSH web server.
+ *
+ * The stock `dsh web` server stays untouched and keeps listening on
+ * 127.0.0.1:3080 (loopback, no auth). This bundle instead listens on every
+ * non-loopback network interface address at the same port (e.g. 192.168.1.5:3080),
+ * requires HTTP Basic Auth or an HMAC-signed login cookie, and proxies every
+ * accepted request — including WebSocket upgrades — to 127.0.0.1:3080.
  *
  * Credential precedence is DSH_AUTH_USER/DSH_AUTH_PASS (or AUTH_USER/AUTH_PASS)
  * > cordis row config > plugin state at
  * $DSH_HOME/plugins/dsh-plugin-auth-webserver/state.json.
  */
 
-import { createServer } from "node:http";
+import { createServer, request } from "node:http";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, networkInterfaces } from "node:os";
 import { join, resolve } from "node:path";
-import { Service } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
 
 export const name = "auth-webserver";
@@ -90,188 +93,74 @@ async function readBody(req, limit = 65536) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-export class AuthWebServer extends Service {
-  static Config = z.object({
-    host: z.union([z.const("127.0.0.1"), z.const("0.0.0.0")]).default("0.0.0.0"),
-    port: z.natural().max(65535).default(3080),
-    username: z.string().default("admin"),
-    password: z.string().default(""),
-    realm: z.string().default("DeepSeek Harness Authentication"),
-  });
+export const Config = z.object({
+  /** Port the gateway listens on for each non-loopback address. */
+  port: z.natural().max(65535).default(3080),
+  /** Upstream host the gateway proxies to (the stock DSH web server). */
+  targetHost: z.string().default("127.0.0.1"),
+  /** Upstream port the gateway proxies to. */
+  targetPort: z.natural().max(65535).default(3080),
+  /** Explicit bind addresses; when empty, all non-loopback NIC addresses are used. */
+  addresses: z.array(z.string()).default([]),
+  username: z.string().default("admin"),
+  password: z.string().default(""),
+  realm: z.string().default("DeepSeek Harness Authentication"),
+});
 
-  exact = new Map();
-  prefixes = new Map();
-  upgrades = new Map();
-  upgradedSockets = new Set();
-  indexTaps = [];
-  fallback;
-  server;
-  listenedPort;
-  secret;
+function stateFile() {
+  return join(stateDir(), "state.json");
+}
 
-  constructor(ctx, config) {
-    super(ctx, "webServer");
-    this.config = config;
-    this.loadState();
-    this.secret = this.loadOrCreateSecret();
-
-    this.register({
-      kind: "exact",
-      path: "/api/auth.login",
-      handler: (req, res) => this.handleLogin(req, res),
-    });
-    this.register({
-      kind: "exact",
-      path: "/api/auth.logout",
-      handler: (req, res) => this.handleLogout(req, res),
-    });
-  }
-
-  loadState() {
-    let state;
-    try {
-      state = JSON.parse(readFileSync(join(stateDir(), "state.json"), "utf8"));
-    } catch {
-      return;
-    }
+function loadStateInto(target) {
+  try {
+    const state = JSON.parse(readFileSync(stateFile(), "utf8"));
     if (state === null || typeof state !== "object") return;
-    if (typeof state.username === "string") this.config.username = state.username;
-    if (typeof state.password === "string") this.config.password = state.password;
-    if (typeof state.realm === "string") this.config.realm = state.realm;
+    if (typeof state.username === "string") target.username = state.username;
+    if (typeof state.password === "string") target.password = state.password;
+    if (typeof state.realm === "string") target.realm = state.realm;
+  } catch {
+    // No persisted state yet; config/env values stand.
   }
+}
 
-  saveState() {
-    try {
-      const dir = stateDir();
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, "state.json"), JSON.stringify({
-        username: this.config.username ?? "admin",
-        password: this.config.password ?? "",
-        realm: this.config.realm ?? "DeepSeek Harness Authentication",
-      }, null, 2), { encoding: "utf8", mode: 0o600 });
-    } catch (error) {
-      this.ctx.logger?.warn("auth-webserver: failed to persist auth state", error);
+function loadOrCreateSecret() {
+  const file = join(stateDir(), ".secret");
+  try {
+    if (existsSync(file)) {
+      const value = readFileSync(file, "utf8").trim();
+      if (value) return value;
+    }
+    const secret = randomBytes(32).toString("hex");
+    mkdirSync(stateDir(), { recursive: true });
+    writeFileSync(file, secret, { encoding: "utf8", mode: 0o600 });
+    return secret;
+  } catch {
+    // An ephemeral secret keeps the server usable when the home is read-only.
+    return randomBytes(32).toString("hex");
+  }
+}
+
+function pickAddresses(config) {
+  const override = config.addresses.filter((entry) => typeof entry === "string" && entry.trim() !== "");
+  if (override.length > 0) return override;
+  const out = [];
+  const ifaces = networkInterfaces();
+  for (const name of Object.keys(ifaces)) {
+    for (const info of ifaces[name] || []) {
+      if (info.internal) continue;
+      if (info.family === "IPv4" || info.family === 4) out.push(info.address);
     }
   }
+  return out;
+}
 
-  loadOrCreateSecret() {
-    const file = join(stateDir(), ".secret");
-    try {
-      if (existsSync(file)) {
-        const value = readFileSync(file, "utf8").trim();
-        if (value) return value;
-      }
-      const secret = randomBytes(32).toString("hex");
-      mkdirSync(stateDir(), { recursive: true });
-      writeFileSync(file, secret, { encoding: "utf8", mode: 0o600 });
-      return secret;
-    } catch {
-      // An ephemeral secret keeps the server usable when the home is read-only.
-      return randomBytes(32).toString("hex");
-    }
-  }
-
-  credentials() {
-    return {
-      user: process.env.DSH_AUTH_USER || process.env.AUTH_USER || this.config.username || "admin",
-      pass: process.env.DSH_AUTH_PASS || process.env.AUTH_PASS || this.config.password || "",
-      realm: this.config.realm || "DeepSeek Harness Authentication",
-    };
-  }
-
-  generateToken(user, pass) {
-    const now = Date.now();
-    const signature = createHmac("sha256", this.secret)
-      .update(`${user}\u0000${pass}\u0000${now}`)
-      .digest("hex");
-    return `${now}.${signature}`;
-  }
-
-  verifyToken(token, user, pass) {
-    if (typeof token !== "string") return false;
-    const parts = token.split(".");
-    if (parts.length !== 2) return false;
-    const timestamp = Number(parts[0]);
-    if (!Number.isFinite(timestamp)) return false;
-    const age = Date.now() - timestamp;
-    if (age < -60000 || age > SESSION_MAX_AGE_MS) return false;
-    const expected = createHmac("sha256", this.secret)
-      .update(`${user}\u0000${pass}\u0000${timestamp}`)
-      .digest();
-    let actual;
-    try {
-      actual = Buffer.from(parts[1], "hex");
-    } catch {
-      return false;
-    }
-    if (actual.length !== expected.length) return false;
-    return timingSafeEqual(actual, expected);
-  }
-
-  checkAuth(req) {
-    const { user, pass } = this.credentials();
-    if (!pass) return false;
-
-    const basic = parseBasic(req.headers.authorization);
-    if (basic && safeEqual(basic.user, user) && safeEqual(basic.pass, pass)) {
-      return true;
-    }
-
-    const cookies = parseCookies(req);
-    if (cookies[COOKIE_NAME] && this.verifyToken(cookies[COOKIE_NAME], user, pass)) {
-      return true;
-    }
-    return false;
-  }
-
-  async handleLogin(req, res) {
-    if (req.method !== "POST") {
-      res.writeHead(405, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ ok: false, error: "Method not allowed" }));
-      return;
-    }
-
-    let body;
-    try {
-      body = JSON.parse(await readBody(req));
-    } catch {
-      res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ ok: false, error: "Invalid request body" }));
-      return;
-    }
-
-    const { user, pass } = this.credentials();
-    const submittedUser = typeof body.username === "string" ? body.username : "";
-    const submittedPass = typeof body.password === "string" ? body.password : "";
-    if (!pass || !safeEqual(submittedUser, user) || !safeEqual(submittedPass, pass)) {
-      res.writeHead(401, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ ok: false, error: "Invalid username or password" }));
-      return;
-    }
-
-    const token = this.generateToken(user, pass);
-    res.writeHead(200, {
-      "Content-Type": "application/json; charset=utf-8",
-      "Set-Cookie": `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SECONDS}`,
-    });
-    res.end(JSON.stringify({ ok: true, username: user }));
-  }
-
-  async handleLogout(req, res) {
-    res.writeHead(200, {
-      "Content-Type": "application/json; charset=utf-8",
-      "Set-Cookie": `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
-    });
-    res.end(JSON.stringify({ ok: true }));
-  }
-
-  renderLoginPage(res) {
-    const realm = String(this.config.realm ?? "DeepSeek Harness Authentication")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-    const html = `<!doctype html>
+function renderLoginPage(realm) {
+  const safeRealm = String(realm ?? "DeepSeek Harness Authentication")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+  return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -294,7 +183,7 @@ export class AuthWebServer extends Service {
 <body>
   <form id="login">
     <h1>DeepSeek Harness</h1>
-    <p>${realm}</p>
+    <p>${safeRealm}</p>
     <label for="username">Username</label>
     <input id="username" name="username" autocomplete="username" autofocus required>
     <label for="password">Password</label>
@@ -334,234 +223,273 @@ export class AuthWebServer extends Service {
   </script>
 </body>
 </html>`;
+}
+
+function sendUnauthorized(req, res, realm, rawPath) {
+  const accept = req.headers.accept ?? "";
+  const wantsHtml = rawPath === "/" || rawPath === "/index.html"
+    || (req.method === "GET" && accept.includes("text/html"));
+  if (wantsHtml) {
     res.writeHead(200, {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
     });
-    res.end(html);
+    res.end(renderLoginPage(realm));
+    return;
+  }
+  res.writeHead(401, {
+    "Content-Type": "application/json; charset=utf-8",
+    "WWW-Authenticate": `Basic realm="${String(realm ?? "DeepSeek Harness Authentication").replace(/"/g, '\\"')}"`,
+  });
+  res.end(JSON.stringify({ ok: false, error: "Authentication required" }));
+}
+
+export function apply(ctx, config) {
+  const state = {
+    username: config.username,
+    password: config.password,
+    realm: config.realm,
+  };
+  loadStateInto(state);
+
+  const secret = loadOrCreateSecret();
+
+  // In non-secure contexts (plain http on a LAN address) `crypto.randomUUID`
+  // does not exist, which breaks the DSH client RPC layer. The old replacement
+  // webserver injected this polyfill into every index response itself; now the
+  // stock webserver serves index, so register the polyfill as an index tap on
+  // that service instead.
+  const webServer = ctx.get("webServer");
+  if (webServer !== undefined && typeof webServer.tapIndex === "function") {
+    const frame = `<script data-dsh-auth-polyfill="1">(function(){var c=window.crypto||(window.crypto={});if(typeof c.randomUUID!=="function"){if(typeof c.getRandomValues==="function"){c.randomUUID=function(){return([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g,function(x){return(x^c.getRandomValues(new Uint8Array(1))[0]&15>>x/4).toString(16)})}}else{c.randomUUID=function(){return"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,function(x){var r=Math.random()*16|0,v=x==="x"?r:(r&0x3|0x8);return v.toString(16)})}}}})();</script>`;
+    ctx.effect(() => webServer.tapIndex((html) => {
+      if (typeof html !== "string" || html.includes("dsh-auth-polyfill")) return html;
+      if (html.includes("<head>")) return html.replace("<head>", `<head>${frame}`);
+      return `${frame}${html}`;
+    }));
   }
 
-  sendUnauthorized(req, res, rawPath) {
-    const accept = req.headers.accept ?? "";
-    const wantsHtml = rawPath === "/" || rawPath === "/index.html"
-      || (req.method === "GET" && accept.includes("text/html"));
-    if (wantsHtml) {
-      this.renderLoginPage(res);
+  const credentials = () => ({
+    user: process.env.DSH_AUTH_USER || process.env.AUTH_USER || state.username || "admin",
+    pass: process.env.DSH_AUTH_PASS || process.env.AUTH_PASS || state.password || "",
+    realm: state.realm || "DeepSeek Harness Authentication",
+  });
+
+  const generateToken = (user, pass) => {
+    const now = Date.now();
+    const signature = createHmac("sha256", secret)
+      .update(`${user}\u0000${pass}\u0000${now}`)
+      .digest("hex");
+    return `${now}.${signature}`;
+  };
+
+  const verifyToken = (token, user, pass) => {
+    if (typeof token !== "string") return false;
+    const parts = token.split(".");
+    if (parts.length !== 2) return false;
+    const timestamp = Number(parts[0]);
+    if (!Number.isFinite(timestamp)) return false;
+    const age = Date.now() - timestamp;
+    if (age < -60000 || age > SESSION_MAX_AGE_MS) return false;
+    const expected = createHmac("sha256", secret)
+      .update(`${user}\u0000${pass}\u0000${timestamp}`)
+      .digest();
+    let actual;
+    try {
+      actual = Buffer.from(parts[1], "hex");
+    } catch {
+      return false;
+    }
+    if (actual.length !== expected.length) return false;
+    return timingSafeEqual(actual, expected);
+  };
+
+  const checkAuth = (req) => {
+    const { user, pass } = credentials();
+    if (!pass) return false;
+
+    const basic = parseBasic(req.headers.authorization);
+    if (basic && safeEqual(basic.user, user) && safeEqual(basic.pass, pass)) {
+      return true;
+    }
+
+    const cookies = parseCookies(req);
+    if (cookies[COOKIE_NAME] && verifyToken(cookies[COOKIE_NAME], user, pass)) {
+      return true;
+    }
+    return false;
+  };
+
+  const handleLogin = async (req, res) => {
+    if (req.method !== "POST") {
+      res.writeHead(405, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: false, error: "Method not allowed" }));
       return;
     }
-    res.writeHead(401, {
+
+    let body;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: false, error: "Invalid request body" }));
+      return;
+    }
+
+    const { user, pass } = credentials();
+    const submittedUser = typeof body.username === "string" ? body.username : "";
+    const submittedPass = typeof body.password === "string" ? body.password : "";
+    if (!pass || !safeEqual(submittedUser, user) || !safeEqual(submittedPass, pass)) {
+      res.writeHead(401, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: false, error: "Invalid username or password" }));
+      return;
+    }
+
+    const token = generateToken(user, pass);
+    res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
-      "WWW-Authenticate": `Basic realm="${String(this.config.realm ?? "DeepSeek Harness Authentication").replace(/"/g, '\\"')}"`,
+      "Set-Cookie": `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SECONDS}`,
     });
-    res.end(JSON.stringify({ ok: false, error: "Authentication required" }));
-  }
+    res.end(JSON.stringify({ ok: true, username: user }));
+  };
 
-  get port() {
-    return this.listenedPort;
-  }
+  const handleLogout = (req, res) => {
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Set-Cookie": `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
+    });
+    res.end(JSON.stringify({ ok: true }));
+  };
 
-  get host() {
-    return this.config.host;
-  }
+  const targetHost = config.targetHost;
+  const targetPort = config.targetPort;
 
-  register(route) {
-    const table = route.kind === "exact" ? this.exact : this.prefixes;
-    if (table.has(route.path)) {
-      throw new Error(`webserver: duplicate ${route.kind} route "${route.path}"`);
+  const proxyRequest = (req, res) => {
+    const headers = { ...req.headers };
+    // Hop-by-hop request headers must not be forwarded to the upstream.
+    for (const h of ["connection", "keep-alive", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"]) {
+      delete headers[h];
     }
-    table.set(route.path, route);
-    return () => {
-      table.delete(route.path);
-    };
-  }
-
-  registerUpgrade(route) {
-    if (this.upgrades.has(route.path)) {
-      throw new Error(`webserver: duplicate upgrade route "${route.path}"`);
+    headers.host = `${targetHost}:${targetPort}`;
+    const remote = req.socket?.remoteAddress;
+    if (remote) {
+      headers["x-forwarded-for"] = headers["x-forwarded-for"]
+        ? `${headers["x-forwarded-for"]}, ${remote}`
+        : remote;
     }
-    this.upgrades.set(route.path, route);
-    return () => {
-      this.upgrades.delete(route.path);
-    };
-  }
 
-  registerFallback(handler) {
-    if (this.fallback !== undefined) {
-      throw new Error("webserver: fallback already registered");
-    }
-    this.fallback = handler;
-    return () => {
-      this.fallback = undefined;
-    };
-  }
-
-  tapIndex(transform) {
-    this.indexTaps.push(transform);
-    return () => {
-      const index = this.indexTaps.indexOf(transform);
-      if (index !== -1) this.indexTaps.splice(index, 1);
-    };
-  }
-
-  match(pathname) {
-    const exact = this.exact.get(pathname);
-    if (exact !== undefined) return exact;
-    let best;
-    for (const [prefix, route] of this.prefixes) {
-      if (pathname !== prefix && !pathname.startsWith(`${prefix}/`)) continue;
-      if (best === undefined || prefix.length > best.path.length) best = route;
-    }
-    return best;
-  }
-
-  applyIndexTaps(html) {
-    let output = html;
-    for (const transform of this.indexTaps) output = transform(output);
-
-    const polyfill = `<script>
-(function() {
-  var c = window.crypto || (window.crypto = {});
-  if (typeof c.randomUUID !== 'function') {
-    c.randomUUID = function() {
-      if (typeof c.getRandomValues === 'function') {
-        return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, function(ch) {
-          return (ch ^ c.getRandomValues(new Uint8Array(1))[0] & 15 >> ch / 4).toString(16);
-        });
+    const proxyReq = request({
+      hostname: targetHost,
+      port: targetPort,
+      path: req.url,
+      method: req.method,
+      headers,
+    }, (proxyRes) => {
+      const resHeaders = { ...proxyRes.headers };
+      for (const h of ["connection", "keep-alive", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"]) {
+        delete resHeaders[h];
       }
-      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(ch) {
-        var r = Math.random() * 16 | 0, v = ch === 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-      });
-    };
-  }
-})();
-</script>`;
-    if (output.includes("<head>")) {
-      output = output.replace("<head>", `<head>${polyfill}`);
-    } else {
-      output = `${polyfill}${output}`;
-    }
-    return output;
+      res.writeHead(proxyRes.statusCode, resHeaders);
+      proxyRes.pipe(res);
+    });
+    proxyReq.on("error", (error) => {
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      res.writeHead(502, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: false, error: `upstream unreachable: ${error.code ?? error.message}` }));
+    });
+    req.pipe(proxyReq);
+  };
+
+  const proxyUpgrade = (req, socket, head) => {
+    const headers = { ...req.headers };
+    headers.host = `${targetHost}:${targetPort}`;
+    if (headers.origin) headers.origin = `http://${targetHost}:${targetPort}`;
+    const proxyReq = request({
+      hostname: targetHost,
+      port: targetPort,
+      path: req.url,
+      method: "GET",
+      headers,
+    });
+    proxyReq.on("upgrade", (proxyRes, proxySocket, proxyHead) => {
+      const statusMessage = proxyRes.statusMessage || "Switching Protocols";
+      const lines = [`HTTP/1.1 ${proxyRes.statusCode} ${statusMessage}`];
+      for (const [key, value] of Object.entries(proxyRes.headers)) {
+        if (key.toLowerCase() === "connection" || key.toLowerCase() === "upgrade") continue;
+        if (Array.isArray(value)) {
+          for (const item of value) lines.push(`${key}: ${item}`);
+        } else {
+          lines.push(`${key}: ${value}`);
+        }
+      }
+      lines.push("", "");
+      socket.write(lines.join("\r\n"));
+      if (proxyHead && proxyHead.length) socket.write(proxyHead);
+      proxySocket.pipe(socket).pipe(proxySocket);
+    });
+    proxyReq.on("error", () => {
+      socket.destroy();
+    });
+    proxyReq.end();
+  };
+
+  const servers = [];
+  const addresses = pickAddresses(config);
+  if (addresses.length === 0) {
+    ctx.logger?.warn?.("auth-webserver: no non-loopback network addresses found; LAN gateway is idle");
   }
 
-  async [Service.init]() {
-    const credentials = this.credentials();
-    if (!credentials.pass) {
-      throw new Error(
-        "auth-webserver: a password is required before listening on the network; set DSH_AUTH_PASS/AUTH_PASS, row config password, or plugin state",
-      );
-    }
-
-    const handle = async (req, res) => {
+  for (const address of addresses) {
+    const server = createServer((req, res) => {
       const rawPath = new URL(req.url ?? "/", "http://x").pathname;
-      if (rawPath === "/api/auth.login" || rawPath === "/api/auth.logout") {
-        const route = this.exact.get(rawPath);
-        if (route !== undefined) {
-          await route.handler(req, res);
-          return;
-        }
-      }
-
-      if (!this.checkAuth(req)) {
-        this.sendUnauthorized(req, res, rawPath);
+      if (rawPath === "/api/auth.login") {
+        handleLogin(req, res);
         return;
       }
-
-      const route = this.match(rawPath);
-      if (route !== undefined) {
-        await route.handler(req, res);
+      if (rawPath === "/api/auth.logout") {
+        handleLogout(req, res);
         return;
       }
-      const fallback = this.fallback;
-      if (fallback === undefined) {
-        res.writeHead(404);
-        res.end();
+      if (!checkAuth(req)) {
+        sendUnauthorized(req, res, credentials().realm, rawPath);
         return;
       }
-      await fallback(req, res);
-    };
-
-    this.server = createServer((req, res) => {
-      handle(req, res).catch((error) => {
-        this.ctx.logger?.warn(error instanceof Error ? error : new Error(String(error)));
-        if (res.headersSent) {
-          res.destroy();
-          return;
-        }
-        res.writeHead(400);
-        res.end();
-      });
+      proxyRequest(req, res);
     });
 
-    this.server.on("upgrade", (req, socket, head) => {
-      const onError = (error) => {
-        this.ctx.logger?.warn(error);
-        socket.destroy();
-      };
-      socket.on("error", onError);
-      socket.once("close", () => {
-        socket.off("error", onError);
-        this.upgradedSockets.delete(socket);
-      });
-
-      if (!this.checkAuth(req)) {
+    server.on("upgrade", (req, socket, head) => {
+      if (!checkAuth(req)) {
         socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
         socket.destroy();
         return;
       }
-
-      let route;
-      try {
-        route = this.upgrades.get(new URL(req.url ?? "/", "http://x").pathname);
-      } catch (error) {
-        this.ctx.logger?.warn(error instanceof Error ? error : new Error(String(error)));
-        socket.destroy();
-        return;
-      }
-      if (route === undefined) {
-        socket.destroy();
-        return;
-      }
-      this.upgradedSockets.add(socket);
-      try {
-        Promise.resolve(route.handler(req, socket, head)).catch((error) => {
-          this.ctx.logger?.warn(error instanceof Error ? error : new Error(String(error)));
-          socket.destroy();
-        });
-      } catch (error) {
-        this.ctx.logger?.warn(error instanceof Error ? error : new Error(String(error)));
-        socket.destroy();
-      }
+      proxyUpgrade(req, socket, head);
     });
 
-    await new Promise((resolvePromise, rejectPromise) => {
-      this.server.once("error", rejectPromise);
-      this.server.listen(this.config.port, this.config.host, () => {
-        this.server.off("error", rejectPromise);
-        this.server.on("error", (error) => {
-          this.ctx.logger?.error(error);
-        });
-        this.listenedPort = this.server.address().port;
-        resolvePromise();
-      });
+    server.on("error", (error) => {
+      ctx.logger?.warn?.(`auth-webserver: failed to listen on ${address}:${config.port}`, error);
     });
 
-    this.ctx.effect(() => async () => {
-      const serverClosed = new Promise((resolvePromise) => {
-        this.server.close(() => {
-          resolvePromise();
-        });
-      });
-      this.server.closeAllConnections();
-      const upgradedClosed = [...this.upgradedSockets].map((socket) => new Promise((resolvePromise) => {
-        socket.once("close", () => {
-          resolvePromise();
-        });
-        socket.destroy();
-      }));
-      await Promise.all([serverClosed, ...upgradedClosed]);
-    }, "webServer.listen");
+    server.listen(config.port, address);
+    servers.push({ address, server });
+    ctx.logger?.info?.(`auth-webserver: LAN gateway listening on http://${address}:${config.port} -> http://${targetHost}:${targetPort}`);
   }
-}
 
-export default AuthWebServer;
+  ctx.effect(() => () => {
+    for (const { server } of servers) {
+      try {
+        server.closeAllConnections?.();
+      } catch (_e) {
+        // Best-effort teardown.
+      }
+      try {
+        server.close();
+      } catch (_e) {
+        // Already closed.
+      }
+    }
+  });
+}

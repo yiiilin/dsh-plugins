@@ -1,18 +1,20 @@
 # dsh-plugin-auth-webserver bundle patch.
 #
-# Disable the stock webserver and provide the compatible `webServer` service
-# from this package instead. The replacement defaults to 0.0.0.0:3080 while
-# still honoring `dsh web --port ...`; pass `--host` only for 127.0.0.1 because
-# the stock CLI intentionally rejects `--host 0.0.0.0`.
-
-- id: webserver
-  disabled: true
+# The stock webserver stays enabled and keeps serving 127.0.0.1:<port> (no
+# auth). This bundle instead mounts an auth-gated reverse proxy on every
+# non-loopback NIC address at the same port, forwarding accepted requests to
+# 127.0.0.1:<port> — so LAN clients get the full DSH web UI behind Basic auth
+# or the login cookie while the default loopback behavior is untouched.
 
 - insert:
     - id: webserver-auth
       name: 'dsh-plugin-auth-webserver'
       inject:
         - webStartup
+        - webServer
       config:
-        host: !!js ctx.webStartup.host ?? '0.0.0.0'
         port: !!js ctx.webStartup.port ?? 3080
+        targetHost: '127.0.0.1'
+        targetPort: !!js ctx.webStartup.port ?? 3080
+        username: 'admin'
+        password: ''

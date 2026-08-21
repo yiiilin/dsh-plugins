@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-auth-webserver",
   "version": "0.1.0",
-  "description": "DSH web bundle that binds 0.0.0.0 and gates the GUI with HTTP Basic Auth and an HMAC login cookie.",
+  "description": "DSH web bundle: an auth-gated reverse proxy on every non-loopback NIC that forwards to the stock 127.0.0.1 web server.",
   "type": "module",
   "main": "index.js",
   "types": "index.d.ts",

@@ -1,23 +1,107 @@
 # dsh-plugin-auth-webserver
 
-A DSH `dsh.bundle` that:
+A DSH `dsh.bundle` that keeps the stock webserver untouched and adds an
+**auth-gated reverse proxy** for LAN access:
 
-- disables the stock DSH webserver;
-- provides a compatible `webServer` service;
-- listens on `0.0.0.0:3080` by default;
-- requires HTTP Basic Auth or an HMAC login cookie before serving the GUI.
+- the stock `dsh web` server stays on `127.0.0.1:3080` (loopback, no auth);
+- this bundle listens on every **non-loopback NIC address** at the same port
+  (e.g. `192.168.1.5:3080`);
+- it requires HTTP Basic Auth or an HMAC login cookie;
+- every accepted request — including WebSocket upgrades — is proxied to the
+  stock `127.0.0.1:3080` server.
+
+So the default web module is a *new* module instead of a replacement: local
+access behaves exactly like stock DSH, and LAN clients get the full GUI behind
+authentication.
 
 ## Install
 
-From the plugin checkout:
+The plugin is plain JavaScript source; there is no build step.
+
+### Local source directory
+
+If you have this checkout (or unpacked source), install it directly:
 
 ```bash
-dsh plugin --profile web add /usr/local/src/project/dsh-plugin
+dsh plugin --profile web add file:/path/to/dsh-plugin-auth-webserver
+```
+
+### Tarball
+
+Pack the plugin, then install the `.tgz` on the target machine:
+
+```bash
+cd /path/to/dsh-plugin-auth-webserver
+pnpm pack
+```
+
+```bash
+dsh plugin --profile web add ./dsh-plugin-auth-webserver-0.1.0.tgz
+```
+
+The tarball already contains the runnable source. A user can also unpack it,
+edit the source, repack with `pnpm pack`, and install the new tarball.
+
+### npm package
+
+Publish the directory, then install by name:
+
+```bash
+cd /path/to/dsh-plugin-auth-webserver
+npm publish
+```
+
+```bash
+dsh plugin --profile web add dsh-plugin-auth-webserver
+```
+
+Pin a version if you want reproducible installs:
+
+```bash
+dsh plugin --profile web add dsh-plugin-auth-webserver@0.1.0
+```
+
+### Direct GitHub
+
+Direct GitHub URL installs only work when the GitHub repository root is the
+plugin package itself. This repo keeps each plugin in a subdirectory, so use
+npm publish or a plugin tarball for distribution. If this plugin is later kept
+in its own repository, pin the commit:
+
+```bash
+dsh plugin --profile web add github:<owner>/dsh-plugin-auth-webserver#<commit-sha>
 ```
 
 The profile must already be the `web` profile, and the package must be started
-with `dsh web` (or `dsh --profile web`). The stock `dsh web` parser rejects
-`--host 0.0.0.0`, so do not pass that flag; this bundle defaults to it.
+with `dsh web` (or `dsh --profile web`). Do not pass `--host 0.0.0.0`: the
+stock CLI rejects it, and the gateway discovers LAN NIC addresses itself.
+
+## Versioning
+
+The plugin version is defined by the `version` field in `package.json`:
+
+```json
+{
+  "name": "dsh-plugin-auth-webserver",
+  "version": "0.1.0"
+}
+```
+
+Semantic versioning is recommended:
+
+- `0.1.0` -> `0.1.1` for a bug fix
+- `0.1.0` -> `0.2.0` for a backward-compatible feature
+- `0.2.0` -> `1.0.0` for a breaking change
+
+The selected version is used for:
+
+- npm registry resolution, e.g. `dsh-plugin-auth-webserver@0.1.0`
+- the generated tarball name, e.g. `dsh-plugin-auth-webserver-0.1.0.tgz`
+- the metadata inside the tarball/npm package
+
+A `file:` source install uses the version that is currently in the source tree;
+no registry pinning applies. A direct GitHub install is pinned by the commit or
+branch after `#`, not by `package.json` alone.
 
 ## Configure
 
@@ -27,28 +111,52 @@ Credentials are resolved in this order:
 2. the `webserver-auth` row config
 3. `$DSH_HOME/plugins/dsh-plugin-auth-webserver/state.json`
 
-The server refuses to listen when no password is configured. Example startup:
+The gateway refuses to authenticate anyone when no password is configured
+(but the stock loopback server keeps working). A home-level `$DSH_HOME/.env`
+works for `AUTH_*` (DSH reserves the `DSH_` prefix):
+
+```bash
+# $DSH_HOME/.env
+AUTH_USER=admin
+AUTH_PASS='change-me'
+```
+
+Or start it explicitly:
 
 ```bash
 DSH_AUTH_USER=admin DSH_AUTH_PASS='change-me' dsh web --no-open
 ```
 
 The browser login form sets a 7-day HttpOnly cookie. CLI and automation clients
-can use a standard Basic Auth header:
+can use a standard Basic Auth header against a LAN address:
 
 ```bash
-curl -u admin:'change-me' http://your-server:3080/
+curl -u admin:'change-me' http://192.168.1.5:3080/
 ```
 
-## Override host or port
+## Override target or port
 
 Edit `$DSH_HOME/profiles/web/cordis.patch.yml` after installing:
 
 ```yaml
 - id: webserver-auth
   config:
-    host: '0.0.0.0'
-    port: 3080
+    port: 3080          # gateway port on each non-loopback NIC
+    targetHost: '127.0.0.1'
+    targetPort: 3080    # the stock DSH web server port
+    addresses: []       # optional explicit bind list; empty = auto-detect NICs
     username: 'admin'
     password: 'your-password'
 ```
+
+`port`/`targetPort` default to the stock web port (`dsh web --port ...`).
+The gateway binds each non-loopback IPv4 address separately — it never binds
+`0.0.0.0`, because that would collide with the stock loopback listener.
+
+## Notes
+
+Plain `http://` LAN addresses are not secure contexts, so browsers there lack
+`crypto.randomUUID`, which the DSH client RPC layer needs. This bundle
+registers an index tap on the stock webserver that injects a
+`crypto.randomUUID` polyfill into every served index page (loopback included),
+keeping the GUI usable over plain HTTP on LAN addresses.
