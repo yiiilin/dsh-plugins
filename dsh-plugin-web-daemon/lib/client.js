@@ -78,14 +78,21 @@ window.__ModuleLoader__.load({
 			const [busy, setBusy] = React.useState(false);
 			const [error, setError] = React.useState(null);
 			const [notice, setNotice] = React.useState(null);
+			const failuresRef = React.useRef(0);
 
 			const refresh = React.useCallback(async () => {
 				try {
 					const next = await api("/_dsh/web-daemon/state");
+					failuresRef.current = 0;
 					setSnapshot(next);
 					setError(null);
 				} catch (err) {
-					setError(err && err.message ? err.message : String(err));
+					// Transient loss is normal right after a self-restart: stay
+					// quiet until the daemon misses several polls in a row.
+					failuresRef.current += 1;
+					if (failuresRef.current >= 3) {
+						setError("Lost contact with the daemon API — retrying...");
+					}
 				}
 			}, []);
 
@@ -115,6 +122,13 @@ window.__ModuleLoader__.load({
 						setSnapshot(result);
 						setDraft(null);
 						setNotice("Daemon settings saved.");
+					} else if (action === "restart" && snapshot?.nested) {
+						// The worker kills itself as part of `systemctl restart`,
+						// so this request never gets a response — fire it and let
+						// polling reconnect to the fresh process.
+						api("/_dsh/web-daemon/restart", {}).catch(() => {});
+						setNotice("Restart requested — waiting for the service to come back...");
+						window.setTimeout(() => void refresh(), 3000);
 					} else {
 						const result = await api(`/_dsh/web-daemon/${action}`, {});
 						setSnapshot(result);
@@ -144,7 +158,7 @@ window.__ModuleLoader__.load({
 			}
 
 			const status = snapshot.status || "unknown";
-			const disabled = busy || !snapshot.writable;
+			const disabled = busy || !snapshot.writable || snapshot.nested;
 			const changed = draft !== null;
 			const unit = snapshot.unit || {};
 
@@ -172,12 +186,12 @@ window.__ModuleLoader__.load({
 						{ className: "dwd-actions" },
 						React.createElement("button", { type: "button", className: "dwd-btn primary", disabled: busy || snapshot.nested, onClick: () => void run("start") }, "Start"),
 						React.createElement("button", { type: "button", className: "dwd-btn danger", disabled: busy || snapshot.nested, onClick: () => void run("stop") }, "Stop"),
-						React.createElement("button", { type: "button", className: "dwd-btn", disabled: busy || snapshot.nested, onClick: () => void run("restart") }, "Restart"),
+						React.createElement("button", { type: "button", className: "dwd-btn", disabled: busy, onClick: () => void run("restart") }, "Restart"),
 						React.createElement("button", { type: "button", className: "dwd-btn", disabled: busy || snapshot.nested, onClick: () => void run("reset") }, "Reset failed state"),
 					),
 				),
 				snapshot.nested
-					? React.createElement("div", { className: "dwd-notice", role: "status" }, "This process is the managed worker; daemon control lives on the supervisor's GUI.")
+					? React.createElement("div", { className: "dwd-notice", role: "status" }, "This process is the managed worker. Restart is available here (e.g. after plugin updates); Start/Stop and configuration live on the unit owner.")
 					: null,
 				error === null ? null : React.createElement("div", { className: "dwd-error", role: "alert" }, error),
 				notice === null ? null : React.createElement("div", { className: "dwd-notice", role: "status" }, notice),
@@ -238,7 +252,7 @@ window.__ModuleLoader__.load({
 				React.createElement(
 					"div",
 					{ className: "dwd-actions" },
-					React.createElement("button", { type: "button", className: "dwd-btn primary", disabled: busy || !changed || !snapshot.writable, onClick: () => void run("save") }, "Save settings"),
+					React.createElement("button", { type: "button", className: "dwd-btn primary", disabled: busy || !changed || !snapshot.writable || snapshot.nested, onClick: () => void run("save") }, "Save settings"),
 					changed
 						? React.createElement("button", { type: "button", className: "dwd-btn", disabled: busy, onClick: () => setDraft(null) }, "Discard")
 						: null,

@@ -256,7 +256,9 @@ function createWebDaemonManager(ctx, settings, config) {
 
   const snapshotOf = () => {
     const cfg = state.config;
-    const status = isWorker ? null : readSystemdStatus(cfg);
+    // Nested workers read the unit status too, so the managed GUI shows the
+    // real PID/restart counters of the unit it runs under.
+    const status = readSystemdStatus(cfg);
     let revision = state.revision;
     let savedConfig = clone(cfg);
     let writable = false;
@@ -326,6 +328,15 @@ function createWebDaemonManager(ctx, settings, config) {
     runSystemctl(state.config, ["restart", systemdUnitName(state.config)]);
   };
 
+  // Restart issued from inside the managed worker itself (e.g. after a plugin
+  // update). systemd stops this very process as part of the job — which is why
+  // this must be a systemctl restart, never a self-exit: under
+  // `Restart=on-failure` a clean exit would leave the unit down. The HTTP
+  // response is never delivered; the browser reconnects to the new process.
+  const restartSelf = () => {
+    runSystemctl(state.config, ["restart", systemdUnitName(state.config)]);
+  };
+
   const resetFailed = () => {
     try {
       runSystemctl(state.config, ["reset-failed", systemdUnitName(state.config)]);
@@ -387,6 +398,7 @@ function createWebDaemonManager(ctx, settings, config) {
     startUnit,
     stopUnit,
     restartUnit,
+    restartSelf,
     resetFailed,
     applyConfig,
     rememberRevision,
@@ -425,11 +437,18 @@ function apply(ctx, config = {}) {
       }
 
       const snapshot = manager.getSnapshot();
-      if (snapshot.nested) {
+      if (snapshot.nested && action !== "restart") {
+        // A managed worker may only ask systemd to restart its own unit;
+        // Start/Stop/config changes stay with the unit owner.
         sendJson(res, 403, {
           ok: false,
-          error: "daemon control is disabled inside a managed worker process",
+          error: "inside a managed worker only Restart is available",
         });
+        return;
+      }
+      if (action === "restart" && snapshot.nested) {
+        manager.restartSelf();
+        sendJson(res, 200, { ok: true });
         return;
       }
 

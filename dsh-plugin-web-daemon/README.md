@@ -20,7 +20,10 @@ child-process supervisor and no plugin-side restart logic.
 - The worker runs `dsh web --profile <profile> --no-open --port <port>` bound
   to loopback; LAN exposure is the job of `dsh-plugin-auth-webserver`.
 - The unit gets `DSH_WEB_DAEMON_WORKER=1`; a daemonized GUI detects this and
-  hides its own daemon controls so it cannot manage itself recursively.
+  keeps only **Restart** available (e.g. to pick up plugin updates) — it asks
+  systemd to restart its own unit, so the fresh process comes up even though
+  the requesting one dies mid-request. Start/Stop and configuration stay with
+  the unit owner's GUI.
 
 ## Install
 
