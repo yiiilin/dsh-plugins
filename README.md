@@ -7,16 +7,85 @@ own directory.
 
 | Plugin | Purpose |
 | --- | --- |
-| [`dsh-plugin-auth-webserver`](./dsh-plugin-auth-webserver) | Replace the stock webserver with an auth-gated webserver bound to `0.0.0.0`. |
+| [`dsh-plugin-auth-webserver`](./dsh-plugin-auth-webserver) | Auth-gated reverse proxy on every non-loopback NIC, forwarding to the stock `127.0.0.1:3080` web server. |
+| [`dsh-plugin-file-explorer`](./dsh-plugin-file-explorer) | Replace the Web GUI details column with a workspace file explorer. |
 | [`dsh-plugin-model-config-remote`](./dsh-plugin-model-config-remote) | Self-contained remote model configuration page backed by the Host settings service. |
 | [`dsh-plugin-original-models-page-patch`](./dsh-plugin-original-models-page-patch) | Makes the original Models settings page writable from non-loopback addresses. |
+| [`dsh-plugin-web-daemon`](./dsh-plugin-web-daemon) | Supervises `dsh web` as a systemd-style daemon and edits its config from the GUI Settings section. |
 
 ## Install
 
-Each package is installed per-profile, for example:
+Each package is installed per-profile. Replace `<path-or-spec>` with one of the
+formats below.
 
 ```bash
-dsh plugin --profile web add /path/to/dsh-plugin-auth-webserver
-dsh plugin --profile web add /path/to/dsh-plugin-model-config-remote
-dsh plugin --profile web add /path/to/dsh-plugin-original-models-page-patch
+dsh plugin --profile web add <path-or-spec>
 ```
+
+Supported install formats:
+
+- **Source directory.** Clone or download the repo, then point DSH at one
+  plugin directory:
+
+  ```bash
+  dsh plugin --profile web add /path/to/dsh-plugin-auth-webserver
+  ```
+
+- **Tarball.** Pack one plugin directory, then install the `.tgz`:
+
+  ```bash
+  cd /path/to/dsh-plugin-auth-webserver && pnpm pack
+  dsh plugin --profile web add ./dsh-plugin-auth-webserver-0.1.0.tgz
+  ```
+
+- **npm package.** Publish one plugin directory, then install by name:
+
+  ```bash
+  cd /path/to/dsh-plugin-auth-webserver && npm publish
+  dsh plugin --profile web add dsh-plugin-auth-webserver
+  ```
+
+- **Direct GitHub URL.** Works only when the GitHub repository root is the
+  plugin package itself:
+
+  ```bash
+  dsh plugin --profile web add github:<owner>/<plugin-repo>#<commit-sha>
+  ```
+
+## Versioning
+
+All bundle plugins in this repo currently use `0.1.0`. Each plugin's version
+is the `version` field in its own `package.json`. Semantic versioning is
+recommended: patch for fixes, minor for additive features, major for breaking
+changes.
+
+The version controls npm ranges, tarball file names, and package metadata.
+A `file:` source install uses the source tree as-is. A direct GitHub install
+is pinned by the commit or branch after `#`, not by `package.json` alone.
+
+## Distributing a plugin
+
+`dsh plugin` forwards pnpm dependency specs, so a plugin in this repo can be
+shared three ways:
+
+- **npm package (recommended).** Publish one plugin directory, then install by
+  name:
+
+  ```bash
+  cd dsh-plugin-auth-webserver && npm publish
+  dsh plugin --profile web add dsh-plugin-auth-webserver
+  ```
+
+- **Tarball.** Pack one plugin directory and hand out the `.tgz`:
+
+  ```bash
+  cd dsh-plugin-auth-webserver && pnpm pack
+  dsh plugin --profile web add ./dsh-plugin-auth-webserver-0.1.0.tgz
+  ```
+
+- **Direct GitHub URL.** This works only when the repository root itself is the
+  plugin package (a single-plugin repo). This repo keeps each plugin in a
+  subdirectory and its root is not a `package.json`, so
+  `github:user/repo#ref` installs a root package instead of a plugin here.
+  If you want GitHub-only installs, publish each plugin as its own repository,
+  or point `dependencies` at a plugin tarball URL.
