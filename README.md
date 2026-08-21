@@ -9,8 +9,6 @@ own directory.
 | --- | --- |
 | [`dsh-plugin-auth-webserver`](./dsh-plugin-auth-webserver) | Auth-gated reverse proxy on every non-loopback NIC, forwarding to the stock `127.0.0.1:3080` web server. |
 | [`dsh-plugin-file-explorer`](./dsh-plugin-file-explorer) | Replace the Web GUI details column with a workspace file explorer. |
-| [`dsh-plugin-model-config-remote`](./dsh-plugin-model-config-remote) | Self-contained remote model configuration page backed by the Host settings service. |
-| [`dsh-plugin-original-models-page-patch`](./dsh-plugin-original-models-page-patch) | Makes the original Models settings page writable from non-loopback addresses. |
 | [`dsh-plugin-web-daemon`](./dsh-plugin-web-daemon) | Manages `dsh web` as a real systemd unit and edits its configuration from the GUI Settings section. |
 
 ## Install
