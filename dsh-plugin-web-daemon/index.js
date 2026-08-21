@@ -202,7 +202,7 @@ function workerCommandFor(cfg) {
 }
 
 /**
- * Render one simple on-failure unit. Logs go to the journal; restart pacing
+ * Render one always-restart unit. Logs go to the journal; restart pacing
  * and start limits are left to systemd's own defaults.
  */
 function renderSystemdUnit(cfg) {
@@ -217,7 +217,7 @@ function renderSystemdUnit(cfg) {
     "[Service]",
     "Type=simple",
     `ExecStart=${workerCommandFor(cfg)}`,
-    "Restart=on-failure",
+    "Restart=always",
     "RestartSec=2",
     `Environment=${systemdQuote(`${WORKER_FLAG}=1`)}`,
     `Environment=${systemdQuote(`DSH_HOME=${dshHome()}`)}`,
@@ -329,10 +329,11 @@ function createWebDaemonManager(ctx, settings, config) {
   };
 
   // Restart issued from inside the managed worker itself (e.g. after a plugin
-  // update). systemd stops this very process as part of the job — which is why
-  // this must be a systemctl restart, never a self-exit: under
-  // `Restart=on-failure` a clean exit would leave the unit down. The HTTP
-  // response is never delivered; the browser reconnects to the new process.
+  // update). systemd stops this very process as part of the job — so this
+  // must be an explicit `systemctl restart` job rather than a self-exit,
+  // which would race with the unit's own restart handling and gives no
+  // control over the stop sequence. The HTTP response is never delivered;
+  // the browser reconnects to the new process.
   const restartSelf = () => {
     runSystemctl(state.config, ["restart", systemdUnitName(state.config)]);
   };

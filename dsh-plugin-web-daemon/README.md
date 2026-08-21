@@ -5,7 +5,8 @@ plugin generates the unit file, maps the GUI buttons onto
 `systemctl start/stop/restart/reset-failed`, and lets the Settings page edit
 the few fields that matter.
 
-Crash recovery (`Restart=on-failure`), boot autostart (`systemctl enable`),
+Crash recovery (`Restart=always` — it keeps restarting unless explicitly
+stopped with `systemctl stop`), boot autostart (`systemctl enable`),
 and logs (journald) are handled by systemd itself — there is no built-in
 child-process supervisor and no plugin-side restart logic.
 
@@ -48,7 +49,7 @@ Open **Settings > Web daemon** in the GUI. There are five fields:
 - `profile`: DSH profile the worker runs.
 - `port`: worker listen port on loopback.
 
-Everything else is intentionally fixed: `Restart=on-failure` with
+Everything else is intentionally fixed: `Restart=always` with
 `RestartSec=2`, start-rate limiting left to systemd's defaults, logs in the
 journal (`journalctl -u <unit> -f`). Saving rewrites the unit, reloads the
 daemon, and restarts the worker if it was running.
