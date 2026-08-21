@@ -13,6 +13,10 @@ GUI with a workspace file explorer.
   second-click confirm.
 - The column is a real layout column: it squeezes the conversation and its
   width can be dragged between 300–520px with the native splitter handle.
+- The chosen width persists across sessions and page reloads (localStorage):
+  the plugin captures the shell layout store actions when the root entry wires
+  them, restores the saved width right after `openDetails()`, and saves the
+  column width after every resizer drag.
 
 ## Layout
 

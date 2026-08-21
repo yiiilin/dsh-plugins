@@ -296,6 +296,55 @@ window.__ModuleLoader__.load({
 `;
 			document.head.append(style);
 
+			// --- details-column width persistence ---------------------------------
+			// The shell's layout store is transient: openDetails() resets the column
+			// to its 360px contract default on every mount and session switch. The
+			// bound store actions reach the LayoutController after every client
+			// module has applied (the root entry's inject hook fires on first
+			// render and again on re-register), so wrapping attachPanels on the
+			// prototype captures them reliably. setDetails then restores the last
+			// user-chosen width, and a document-level pointerup listener persists
+			// the column width after each resizer drag.
+			const WIDTH_KEY = "dsh-plugin-file-explorer.detailsWidth";
+			const WIDTH_MIN = 300; // the layout contract's clamp floor
+			let panelActions = null;
+			let savedWidth = 0;
+			try { savedWidth = Number(window.localStorage.getItem(WIDTH_KEY)) || 0 } catch (_e) { }
+
+			const findDetailsColumn = () => {
+				const handle = document.querySelector('[data-side="details"]')
+				if (handle !== null && handle.previousElementSibling !== null) return handle.previousElementSibling
+				return document.querySelector('[class*="detailsCol"]')
+			}
+			const persistWidth = () => {
+				const column = findDetailsColumn()
+				if (column === null) return
+				const width = Math.round(column.getBoundingClientRect().width)
+				if (width < WIDTH_MIN) return
+				try { window.localStorage.setItem(WIDTH_KEY, String(width)) } catch (_e) { }
+			}
+			const onDocumentPointerUp = () => { persistWidth() }
+			document.addEventListener("pointerup", onDocumentPointerUp, true)
+			ctx.effect(() => () => document.removeEventListener("pointerup", onDocumentPointerUp, true))
+
+			if (layout !== undefined) {
+				const proto = Object.getPrototypeOf(layout)
+				if (proto !== null && typeof proto.attachPanels === "function") {
+					const originalAttach = proto.attachPanels
+					proto.attachPanels = function (actions) {
+						panelActions = actions
+						return originalAttach.call(this, actions)
+					}
+					ctx.effect(() => () => { proto.attachPanels = originalAttach })
+				}
+			}
+			const restoreWidth = () => {
+				if (savedWidth < WIDTH_MIN) return
+				if (panelActions === null || typeof panelActions.setDetails !== "function") return
+				try { panelActions.setDetails(savedWidth) } catch (_e) { }
+			}
+			// -----------------------------------------------------------------------
+
 			async function api(method, payload) {
 				const options = { headers: { "content-type": "application/json" } };
 				options.method = "POST";
@@ -402,6 +451,9 @@ window.__ModuleLoader__.load({
         if (layout !== undefined) {
           try { layout.openDetails() } catch (_e) { }
         }
+        // Same-tick store updates batch in React, so restoring right after
+        // openDetails() replaces the 360px default without a visible jump.
+        restoreWidth()
       }, [sessionId])
 
       React.useEffect(() => {
