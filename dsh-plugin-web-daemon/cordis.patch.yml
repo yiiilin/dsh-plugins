@@ -1,0 +1,29 @@
+# dsh-plugin-web-daemon bundle patch.
+#
+# Mounts the Web daemon host row and, through the package's dsh.client
+# declaration, the browser Settings section that edits the same namespace.
+
+- insert:
+    - id: web-daemon
+      name: 'dsh-plugin-web-daemon'
+      inject:
+        - webServer
+        - settings
+      config:
+        enabled: false
+        profile: web
+        host: 127.0.0.1
+        port: 3081
+        noOpen: true
+        trustedHosts: []
+        restart: always
+        restartSec: 2
+        startLimitIntervalSec: 60
+        startLimitBurst: 5
+        extraArgs: []
+        environment: []
+        logDir: logs/web-daemon
+        pidFile: run/web-daemon.pid
+        systemd: false
+        systemdUnit: dsh-web.service
+        systemdScope: system

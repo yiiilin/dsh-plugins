@@ -1,0 +1,11 @@
+# dsh-plugin-file-explorer bundle patch.
+#
+# Adds the host row that serves the browser bundle's /_dsh/file-explorer API.
+# The client half is declared by dsh.client and loaded with the web profile.
+
+- insert:
+    - id: dsh-file-explorer
+      name: 'dsh-plugin-file-explorer'
+      inject:
+        - webServer
+      config: {}
