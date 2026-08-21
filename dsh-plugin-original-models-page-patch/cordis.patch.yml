@@ -6,3 +6,7 @@
 - insert:
     - id: original-models-page-patch
       name: 'dsh-plugin-original-models-page-patch'
+      inject:
+        - settings
+        - webServer
+        - clientModules
