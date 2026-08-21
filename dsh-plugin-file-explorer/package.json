@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-file-explorer",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "DSH bundle plugin that replaces the Web GUI details column with a workspace file explorer.",
   "type": "module",
   "main": "index.js",

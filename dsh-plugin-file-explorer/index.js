@@ -194,16 +194,19 @@ export function apply(ctx) {
     try {
       const target = await fs.resolve(req.path)
       const info = await fs.stat(target)
-      if (!info || info.type !== 'file') {
-        sendJson(res, 200, { ok: false, error: info ? 'only regular files can be deleted here' : 'file does not exist' })
+      if (!info) {
+        sendJson(res, 200, { ok: false, error: 'file does not exist' })
         return
       }
+      // Directories are removed recursively; the UI gates this behind a
+      // second-click confirm before the request is ever sent.
+      const args = info.type === 'directory' ? ['rm', '-rf', '--'] : ['rm', '-f', '--']
       const path = fs.processPath(target)
       const handle = subprocess.spawn({
-        argv: ['rm', '-f', '--', path],
+        argv: [...args, path],
         cwd: '/',
         stdio: { stdin: 'ignore', stdout: { maxBytes: 4096 }, stderr: { maxBytes: 4096 } },
-        graceMs: 5000,
+        graceMs: 30000,
       })
       const outcome = await handle.done
       if (outcome.exitCode !== 0) {

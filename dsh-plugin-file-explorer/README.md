@@ -68,8 +68,10 @@ apply the new profile composition.
   and returns `{ ok, path, parent, entries }` JSON — never live objects.
 - `read` previews up to 256 KiB of UTF-8 text; `download` returns a base64
   data URL (64 MiB cap) that the browser triggers with `<a download>`.
-- `delete` only removes regular files and is called after a second-click
-  confirm in the UI.
+- `delete` removes regular files (`rm -f`) and directories recursively
+  (`rm -rf`); both are called only after a second-click confirm in the UI.
+- Rows have a fixed 34px height, so the hover action swap never changes the
+  row height; directories reveal a delete-only action set on hover.
 - The browser module uses the `details` slot (scope: session), registering at
   priority `-6` to shadow the built-in tool-details occupant (priority `0`),
   the `layout` service (`openDetails` / `closeDetails`), the standard

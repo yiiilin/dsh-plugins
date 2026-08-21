@@ -140,10 +140,11 @@ window.__ModuleLoader__.load({
 }
 .dsh-fe-row {
   width: 100%;
+  height: 34px;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 8px;
+  padding: 0 8px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -655,34 +656,30 @@ window.__ModuleLoader__.load({
                       }, svgIcon(isDir ? folderIcon : fileIcon, 16)),
                       React.createElement('span', { className: 'dsh-fe-name' }, entry.name),
                       React.createElement('span', { className: 'dsh-fe-meta' },
-                        isDir
-                          ? React.createElement('span', { className: 'dsh-fe-size' }, '')
-                          : React.createElement(React.Fragment, null,
-                            React.createElement('span', { className: 'dsh-fe-size' }, formatSize(entry.size)),
-                            React.createElement('span', { className: 'dsh-fe-actions' },
-                              React.createElement('button', {
-                                type: 'button',
-                                className: 'dsh-fe-action',
-                                onClick: (event) => { event.stopPropagation(); openPreview(entry) },
-                                'aria-label': `View ${entry.name}`,
-                                title: 'View',
-                              }, svgIcon(eyeIcon, 14)),
-                              React.createElement('button', {
-                                type: 'button',
-                                className: 'dsh-fe-action',
-                                onClick: (event) => { event.stopPropagation(); downloadFile(entry) },
-                                'aria-label': `Download ${entry.name}`,
-                                title: 'Download',
-                              }, svgIcon(downloadIcon, 14)),
-                              React.createElement('button', {
-                                type: 'button',
-                                className: pendingDelete === entry.path ? 'dsh-fe-action dsh-fe-action-confirm' : 'dsh-fe-action dsh-fe-action-danger',
-                                onClick: (event) => { event.stopPropagation(); requestDelete(entry) },
-                                'aria-label': pendingDelete === entry.path ? `Confirm deleting ${entry.name}` : `Delete ${entry.name}`,
-                                title: pendingDelete === entry.path ? 'Click again to delete' : 'Delete',
-                              }, svgIcon(trashIcon, 14)),
-                            ),
-                          ),
+                        React.createElement('span', { className: 'dsh-fe-size' }, isDir ? '' : formatSize(entry.size)),
+                        React.createElement('span', { className: 'dsh-fe-actions' },
+                          !isDir && React.createElement('button', {
+                            type: 'button',
+                            className: 'dsh-fe-action',
+                            onClick: (event) => { event.stopPropagation(); openPreview(entry) },
+                            'aria-label': `View ${entry.name}`,
+                            title: 'View',
+                          }, svgIcon(eyeIcon, 14)),
+                          !isDir && React.createElement('button', {
+                            type: 'button',
+                            className: 'dsh-fe-action',
+                            onClick: (event) => { event.stopPropagation(); downloadFile(entry) },
+                            'aria-label': `Download ${entry.name}`,
+                            title: 'Download',
+                          }, svgIcon(downloadIcon, 14)),
+                          React.createElement('button', {
+                            type: 'button',
+                            className: pendingDelete === entry.path ? 'dsh-fe-action dsh-fe-action-confirm' : 'dsh-fe-action dsh-fe-action-danger',
+                            onClick: (event) => { event.stopPropagation(); requestDelete(entry) },
+                            'aria-label': pendingDelete === entry.path ? `Confirm deleting ${entry.name}` : `Delete ${entry.name}`,
+                            title: pendingDelete === entry.path ? 'Click again to delete' : 'Delete',
+                          }, svgIcon(trashIcon, 14)),
+                        ),
                       ),
                     )
                   }),
