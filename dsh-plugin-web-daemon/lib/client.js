@@ -42,7 +42,6 @@ window.__ModuleLoader__.load({
 .dwd-hint{font-size:11px;line-height:15px;color:var(--dsw-alias-label-tertiary, #78716c)}
 .dwd-input{box-sizing:border-box;width:100%;min-height:32px;padding:4px 8px;border:1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.22));border-radius:6px;background:var(--dsw-alias-bg-input, #fff);color:var(--dsw-alias-label-primary, #111827);font:13px/18px inherit}
 .dwd-input:focus{outline:2px solid rgba(59,130,246,.35);outline-offset:1px}
-textarea.dwd-input{min-height:64px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .dwd-check{display:flex;gap:8px;align-items:center;min-height:32px}
 .dwd-check input{width:16px;height:16px;accent-color:var(--dsw-alias-brand-primary, #2563eb)}
 .dwd-command{max-width:100%;margin:0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.16));border-radius:6px;background:var(--dsw-alias-bg-code, rgba(0,0,0,.04));color:var(--dsw-alias-label-primary, #111827);font:12px/18px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
@@ -102,11 +101,6 @@ textarea.dwd-input{min-height:64px;resize:vertical;font-family:ui-monospace,SFMo
 				setDraft((current) => ({ ...(current ?? snapshot?.config ?? {}), [key]: value }));
 			};
 
-			const updateList = (key, text) => {
-				const lines = text.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
-				update(key, lines);
-			};
-
 			const run = async (action) => {
 				setBusy(true);
 				setError(null);
@@ -149,11 +143,10 @@ textarea.dwd-input{min-height:64px;resize:vertical;font-family:ui-monospace,SFMo
 				);
 			}
 
-			const worker = snapshot.worker || {};
-			const status = worker.status || "unknown";
-			const lines = (value) => (Array.isArray(value) ? value.join("\n") : "");
+			const status = snapshot.status || "unknown";
 			const disabled = busy || !snapshot.writable;
 			const changed = draft !== null;
+			const unit = snapshot.unit || {};
 
 			return React.createElement(
 				"div",
@@ -169,23 +162,23 @@ textarea.dwd-input{min-height:64px;resize:vertical;font-family:ui-monospace,SFMo
 					React.createElement(
 						"span",
 						{ className: "dwd-meta" },
-						React.createElement("span", null, "PID: ", React.createElement("b", null, worker.pid || "-")),
-						React.createElement("span", null, "restarts: ", React.createElement("b", null, worker.restarts || 0)),
-						React.createElement("span", null, "started: ", React.createElement("b", null, worker.startedAt || "-")),
-						React.createElement("span", null, "log: ", React.createElement("b", null, worker.logPath || "-")),
-						snapshot.systemd && snapshot.systemd.unit
-							? React.createElement("span", null, "unit: ", React.createElement("b", null, snapshot.systemd.unit), " (", snapshot.systemd.active || "unknown", ")")
-							: null,
+						React.createElement("span", null, "PID: ", React.createElement("b", null, snapshot.pid || "-")),
+						React.createElement("span", null, "restarts: ", React.createElement("b", null, snapshot.restarts || 0)),
+						React.createElement("span", null, "started: ", React.createElement("b", null, snapshot.startedAt || "-")),
+						React.createElement("span", null, "unit: ", React.createElement("b", null, unit.name || "-"), " (", unit.activeState || "unknown", ")"),
 					),
 					React.createElement(
 						"div",
 						{ className: "dwd-actions" },
-						React.createElement("button", { type: "button", className: "dwd-btn primary", disabled: busy, onClick: () => void run("start") }, "Start"),
-						React.createElement("button", { type: "button", className: "dwd-btn danger", disabled: busy, onClick: () => void run("stop") }, "Stop"),
-						React.createElement("button", { type: "button", className: "dwd-btn", disabled: busy, onClick: () => void run("restart") }, "Restart"),
-						React.createElement("button", { type: "button", className: "dwd-btn", disabled: busy, onClick: () => void run("reset") }, "Reset failed state"),
+						React.createElement("button", { type: "button", className: "dwd-btn primary", disabled: busy || snapshot.nested, onClick: () => void run("start") }, "Start"),
+						React.createElement("button", { type: "button", className: "dwd-btn danger", disabled: busy || snapshot.nested, onClick: () => void run("stop") }, "Stop"),
+						React.createElement("button", { type: "button", className: "dwd-btn", disabled: busy || snapshot.nested, onClick: () => void run("restart") }, "Restart"),
+						React.createElement("button", { type: "button", className: "dwd-btn", disabled: busy || snapshot.nested, onClick: () => void run("reset") }, "Reset failed state"),
 					),
 				),
+				snapshot.nested
+					? React.createElement("div", { className: "dwd-notice", role: "status" }, "This process is the managed worker; daemon control lives on the supervisor's GUI.")
+					: null,
 				error === null ? null : React.createElement("div", { className: "dwd-error", role: "alert" }, error),
 				notice === null ? null : React.createElement("div", { className: "dwd-notice", role: "status" }, notice),
 				React.createElement(
@@ -199,46 +192,28 @@ textarea.dwd-input{min-height:64px;resize:vertical;font-family:ui-monospace,SFMo
 							"label",
 							{ className: "dwd-check" },
 							React.createElement("input", { type: "checkbox", checked: Boolean(config.enabled), disabled: disabled, onChange: (event) => update("enabled", event.target.checked) }),
-							"auto start and supervise",
+							"start on boot and keep running",
 						),
-						React.createElement("span", { className: "dwd-hint" }, "Disabled keeps the worker stopped unless started manually."),
+						React.createElement("span", { className: "dwd-hint" }, "Maps to systemctl enable/disable; Start/Stop still work while disabled."),
 					),
 					React.createElement(
 						"label",
 						{ className: "dwd-field" },
-						React.createElement("span", { className: "dwd-label" }, "Supervisor"),
+						React.createElement("span", { className: "dwd-label" }, "Systemd scope"),
 						React.createElement(
 							"select",
-							{ className: "dwd-input", value: config.systemd ? "systemd" : "child", disabled: disabled, onChange: (event) => update("systemd", event.target.value === "systemd") },
-							React.createElement("option", { value: "child" }, "Child process (plugin-managed)"),
-							React.createElement("option", { value: "systemd" }, "systemd unit"),
+							{ className: "dwd-input", value: config.systemdScope || "system", disabled: disabled, onChange: (event) => update("systemdScope", event.target.value) },
+							React.createElement("option", { value: "system" }, "system"),
+							React.createElement("option", { value: "user" }, "user"),
 						),
-						React.createElement("span", { className: "dwd-hint" }, "systemd registers a real unit: boot autostart and crash recovery are handled by the OS."),
+						React.createElement("span", { className: "dwd-hint" }, "system needs root; user units use --user."),
 					),
-					config.systemd
-						? React.createElement(
-								React.Fragment,
-								null,
-								React.createElement(
-									"label",
-									{ className: "dwd-field" },
-									React.createElement("span", { className: "dwd-label" }, "Systemd unit"),
-									React.createElement("input", { className: "dwd-input", value: config.systemdUnit || "dsh-web.service", disabled: disabled, onChange: (event) => update("systemdUnit", event.target.value) }),
-								),
-								React.createElement(
-									"label",
-									{ className: "dwd-field" },
-									React.createElement("span", { className: "dwd-label" }, "Systemd scope"),
-									React.createElement(
-										"select",
-										{ className: "dwd-input", value: config.systemdScope || "system", disabled: disabled, onChange: (event) => update("systemdScope", event.target.value) },
-										React.createElement("option", { value: "system" }, "system"),
-										React.createElement("option", { value: "user" }, "user"),
-									),
-									React.createElement("span", { className: "dwd-hint" }, "system needs root; user units use --user."),
-								),
-							)
-						: null,
+					React.createElement(
+						"label",
+						{ className: "dwd-field" },
+						React.createElement("span", { className: "dwd-label" }, "Systemd unit"),
+						React.createElement("input", { className: "dwd-input", value: config.systemdUnit || "dsh-web.service", disabled: disabled, onChange: (event) => update("systemdUnit", event.target.value) }),
+					),
 					React.createElement(
 						"label",
 						{ className: "dwd-field" },
@@ -249,105 +224,16 @@ textarea.dwd-input{min-height:64px;resize:vertical;font-family:ui-monospace,SFMo
 					React.createElement(
 						"label",
 						{ className: "dwd-field" },
-						React.createElement("span", { className: "dwd-label" }, "Host"),
-						React.createElement("input", { className: "dwd-input", value: config.host || "", disabled: disabled, onChange: (event) => update("host", event.target.value) }),
-						React.createElement("span", { className: "dwd-hint" }, "0.0.0.0 is passed to the webserver layer, not the CLI."),
-					),
-					React.createElement(
-						"label",
-						{ className: "dwd-field" },
 						React.createElement("span", { className: "dwd-label" }, "Port"),
 						React.createElement("input", { type: "number", min: "0", max: "65535", className: "dwd-input", value: config.port ?? 3081, disabled: disabled, onChange: (event) => update("port", Number(event.target.value)) }),
-						React.createElement("span", { className: "dwd-hint" }, "Port listened on by the daemonized web process."),
-					),
-					React.createElement(
-						"label",
-						{ className: "dwd-field" },
-						React.createElement("span", { className: "dwd-label" }, "Do not open browser"),
-						React.createElement(
-							"label",
-							{ className: "dwd-check" },
-							React.createElement("input", { type: "checkbox", checked: Boolean(config.noOpen), disabled: disabled, onChange: (event) => update("noOpen", event.target.checked) }),
-							"--no-open",
-						),
-					),
-					React.createElement(
-						"label",
-						{ className: "dwd-field" },
-						React.createElement("span", { className: "dwd-label" }, "Trusted hosts"),
-						React.createElement("textarea", { className: "dwd-input", value: lines(config.trustedHosts), disabled: disabled, onChange: (event) => updateList("trustedHosts", event.target.value), placeholder: "host or host:port per line" }),
-						React.createElement("span", { className: "dwd-hint" }, "Extra authorities accepted by the browser trust fence."),
-					),
-					React.createElement(
-						"label",
-						{ className: "dwd-field" },
-						React.createElement("span", { className: "dwd-label" }, "Restart policy"),
-						React.createElement(
-							"select",
-							{ className: "dwd-input", value: config.restart || "always", disabled: disabled, onChange: (event) => update("restart", event.target.value) },
-							React.createElement("option", { value: "always" }, "always"),
-							React.createElement("option", { value: "on-failure" }, "on-failure"),
-							React.createElement("option", { value: "no" }, "no"),
-						),
-						React.createElement("span", { className: "dwd-hint" }, "When the worker exits, whether the supervisor restarts it."),
-					),
-					React.createElement(
-						"label",
-						{ className: "dwd-field" },
-						React.createElement("span", { className: "dwd-label" }, "Restart delay (seconds)"),
-						React.createElement("input", { type: "number", min: "0", className: "dwd-input", value: config.restartSec ?? 2, disabled: disabled, onChange: (event) => update("restartSec", Number(event.target.value)) }),
-					),
-					React.createElement(
-						"label",
-						{ className: "dwd-field" },
-						React.createElement("span", { className: "dwd-label" }, "Start limit window (seconds)"),
-						React.createElement("input", { type: "number", min: "0", className: "dwd-input", value: config.startLimitIntervalSec ?? 60, disabled: disabled, onChange: (event) => update("startLimitIntervalSec", Number(event.target.value)) }),
-					),
-					React.createElement(
-						"label",
-						{ className: "dwd-field" },
-						React.createElement("span", { className: "dwd-label" }, "Start limit burst"),
-						React.createElement("input", { type: "number", min: "1", className: "dwd-input", value: config.startLimitBurst ?? 5, disabled: disabled, onChange: (event) => update("startLimitBurst", Number(event.target.value)) }),
-						React.createElement("span", { className: "dwd-hint" }, "Maximum starts inside the window before failing."),
-					),
-					React.createElement(
-						"label",
-						{ className: "dwd-field" },
-						React.createElement("span", { className: "dwd-label" }, "Working directory"),
-						React.createElement("input", { className: "dwd-input", value: config.workingDirectory || "", disabled: disabled, onChange: (event) => update("workingDirectory", event.target.value || "") }),
-						React.createElement("span", { className: "dwd-hint" }, "Blank uses the current DSH working directory."),
-					),
-					React.createElement(
-						"label",
-						{ className: "dwd-field" },
-						React.createElement("span", { className: "dwd-label" }, "Log directory"),
-						React.createElement("input", { className: "dwd-input", value: config.logDir || "", disabled: disabled, onChange: (event) => update("logDir", event.target.value) }),
-						React.createElement("span", { className: "dwd-hint" }, "Relative paths resolve under DSH_HOME."),
-					),
-					React.createElement(
-						"label",
-						{ className: "dwd-field" },
-						React.createElement("span", { className: "dwd-label" }, "PID file"),
-						React.createElement("input", { className: "dwd-input", value: config.pidFile || "", disabled: disabled, onChange: (event) => update("pidFile", event.target.value) }),
-						React.createElement("span", { className: "dwd-hint" }, "Relative paths resolve under DSH_HOME."),
-					),
-					React.createElement(
-						"label",
-						{ className: "dwd-field full" },
-						React.createElement("span", { className: "dwd-label" }, "Extra CLI args"),
-						React.createElement("textarea", { className: "dwd-input", value: lines(config.extraArgs), disabled: disabled, onChange: (event) => updateList("extraArgs", event.target.value), placeholder: "one argument per line" }),
-						React.createElement("span", { className: "dwd-hint" }, "Appended after --port and --trusted-host."),
-					),
-					React.createElement(
-						"label",
-						{ className: "dwd-field full" },
-						React.createElement("span", { className: "dwd-label" }, "Worker environment"),
-						React.createElement("textarea", { className: "dwd-input", value: lines(config.environment), disabled: disabled, onChange: (event) => updateList("environment", event.target.value), placeholder: "KEY=VALUE per line" }),
-						React.createElement("span", { className: "dwd-hint" }, "Additional environment for the worker process."),
+						React.createElement("span", { className: "dwd-hint" }, "Worker always binds loopback; LAN access is handled by dsh-plugin-auth-webserver."),
 					),
 				),
-				worker.command
-					? React.createElement("pre", { className: "dwd-command" }, worker.command)
+				snapshot.command
+					? React.createElement("pre", { className: "dwd-command" }, snapshot.command)
+					: null,
+				unit.name
+					? React.createElement("p", { className: "dwd-hint" }, "Logs go to the systemd journal: journalctl -u ", unit.name, " -f")
 					: null,
 				React.createElement(
 					"div",

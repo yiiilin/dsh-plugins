@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-web-daemon",
-  "version": "0.1.1",
-  "description": "DSH plugin that supervises `dsh web` as a systemd-style daemon and exposes its settings in the Web GUI.",
+  "version": "0.2.0",
+  "description": "DSH plugin that manages `dsh web` as a real systemd unit and exposes its settings in the Web GUI.",
   "type": "module",
   "main": "index.js",
   "exports": {
