@@ -371,6 +371,12 @@ export function apply(ctx, config) {
       delete headers[h];
     }
     headers.host = `${targetHost}:${targetPort}`;
+    // The upstream API guard accepts a request only when its Origin matches
+    // the (rewritten) Host header, so a LAN Origin must be rewritten too —
+    // otherwise every stateful /api call comes back 403 from the stock server.
+    if (headers.origin !== undefined) {
+      headers.origin = `http://${targetHost}:${targetPort}`;
+    }
     const remote = req.socket?.remoteAddress;
     if (remote) {
       headers["x-forwarded-for"] = headers["x-forwarded-for"]
@@ -416,7 +422,11 @@ export function apply(ctx, config) {
     });
     proxyReq.on("upgrade", (proxyRes, proxySocket, proxyHead) => {
       const statusMessage = proxyRes.statusMessage || "Switching Protocols";
+      // A 101 response is only valid for the browser when it carries the
+      // Connection/Upgrade hop-by-hop headers, so re-add them explicitly.
       const lines = [`HTTP/1.1 ${proxyRes.statusCode} ${statusMessage}`];
+      lines.push(`Upgrade: ${proxyRes.headers.upgrade ?? "websocket"}`);
+      lines.push("Connection: Upgrade");
       for (const [key, value] of Object.entries(proxyRes.headers)) {
         if (key.toLowerCase() === "connection" || key.toLowerCase() === "upgrade") continue;
         if (Array.isArray(value)) {
@@ -429,6 +439,22 @@ export function apply(ctx, config) {
       socket.write(lines.join("\r\n"));
       if (proxyHead && proxyHead.length) socket.write(proxyHead);
       proxySocket.pipe(socket).pipe(proxySocket);
+    });
+    // Upstream refused the upgrade (e.g. 403): relay that response instead of
+    // leaving the browser socket hanging without a handshake answer.
+    proxyReq.on("response", (proxyRes) => {
+      const statusMessage = proxyRes.statusMessage || "";
+      const lines = [`HTTP/1.1 ${proxyRes.statusCode} ${statusMessage}`.trimEnd()];
+      for (const [key, value] of Object.entries(proxyRes.headers)) {
+        if (Array.isArray(value)) {
+          for (const item of value) lines.push(`${key}: ${item}`);
+        } else {
+          lines.push(`${key}: ${value}`);
+        }
+      }
+      lines.push("", "");
+      socket.write(lines.join("\r\n"));
+      proxyRes.pipe(socket);
     });
     proxyReq.on("error", () => {
       socket.destroy();
