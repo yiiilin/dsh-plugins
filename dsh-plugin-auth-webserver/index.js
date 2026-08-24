@@ -25,6 +25,11 @@ import z from "@deepseek-ai/schemastery";
 
 export const name = "auth-webserver";
 
+// Hard dependency on the settings service: the GUI card and this plugin share
+// one namespace ("auth-webserver"), so apply must wait until the service is
+// up instead of reading it with ctx.get at an arbitrary boot moment.
+export const inject = ["settings"];
+
 const NS = settingsNamespace("auth-webserver");
 
 const COOKIE_NAME = "dsh_auth_token";
@@ -381,7 +386,10 @@ function registerHeadlessOpenGuard(ctx, webServer) {
         // refused before anything reaches the RPC layer.
         if (req.method !== "POST") {
           res.writeHead(405, { "content-type": "application/json; charset=utf-8" });
-          res.end(JSON.stringify({ type: "server-response", rpcId: "invalid-request", result: { ok: false, error: { code: "method-not-allowed", message: "method not allowed", details: {} } } }));
+          // `internal` is the generic wire code the DSH client schema accepts
+          // (rpcErrorSchema is a closed enumerable union); a custom or
+          // non-POST-specific code would fail client-side validation.
+          res.end(JSON.stringify({ type: "server-response", rpcId: "invalid-request", result: { ok: false, error: { code: "internal", message: "method not allowed", details: {} } } }));
           return;
         }
         if (!isTrustedApiRequest(req)) {
@@ -652,9 +660,24 @@ export function apply(ctx, config) {
 
   const targetHost = config.targetHost;
   const targetPort = config.targetPort;
+  const CONNECTION_CLIENT_PATH = "/plugins/@deepseek-ai/dsh-client-connection/client.js";
+  const LOOPBACK_ASSIGNMENT = /isLoopback:\s*pageLocation\s*===\s*void 0\s*\|\|\s*isLoopbackHostname\(pageLocation\.hostname\)/;
+  let connectionPatchWarned = false;
+
+  const patchConnectionClient = (source) => {
+    const patched = source.replace(LOOPBACK_ASSIGNMENT, "isLoopback: true");
+    if (patched === source && !connectionPatchWarned) {
+      connectionPatchWarned = true;
+      ctx.logger?.warn?.("auth-webserver: official connection client marker was not found; LAN settings patch was not applied");
+    }
+    return patched;
+  };
 
   const proxyRequest = (req, res) => {
+    const rawPath = new URL(req.url ?? "/", "http://x").pathname;
+    const shouldPatchConnectionClient = req.method === "GET" && rawPath === CONNECTION_CLIENT_PATH;
     const headers = { ...req.headers };
+    if (shouldPatchConnectionClient) headers["accept-encoding"] = "identity";
     // Hop-by-hop request headers must not be forwarded to the upstream.
     for (const h of ["connection", "keep-alive", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"]) {
       delete headers[h];
@@ -684,8 +707,28 @@ export function apply(ctx, config) {
       for (const h of ["connection", "keep-alive", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"]) {
         delete resHeaders[h];
       }
-      res.writeHead(proxyRes.statusCode, resHeaders);
-      proxyRes.pipe(res);
+      if (!shouldPatchConnectionClient || proxyRes.statusCode !== 200) {
+        res.writeHead(proxyRes.statusCode, resHeaders);
+        proxyRes.pipe(res);
+        return;
+      }
+      const chunks = [];
+      proxyRes.on("data", (chunk) => chunks.push(chunk));
+      proxyRes.on("end", () => {
+        const source = Buffer.concat(chunks).toString("utf8");
+        const body = patchConnectionClient(source);
+        delete resHeaders["content-encoding"];
+        delete resHeaders["content-length"];
+        delete resHeaders.etag;
+        resHeaders["cache-control"] = "no-store";
+        resHeaders["content-length"] = Buffer.byteLength(body);
+        res.writeHead(proxyRes.statusCode, resHeaders);
+        res.end(body);
+      });
+      proxyRes.on("error", () => {
+        if (!res.headersSent) res.writeHead(502, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ ok: false, error: "upstream connection client response failed" }));
+      });
     });
     proxyReq.on("error", (error) => {
       if (res.headersSent) {

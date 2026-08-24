@@ -12,6 +12,7 @@
       inject:
         - webStartup
         - webServer
+        - settings
       config:
         port: !!js ctx.webStartup.port ?? 3080
         targetHost: '127.0.0.1'
