@@ -12,12 +12,14 @@ child-process supervisor and no plugin-side restart logic.
 
 ## What it does
 
-- Adds a Settings section named **Web daemon** with live unit status
-  (active state, PID, restart count) and Start/Stop/Restart/Reset buttons.
+- Adds a **Web daemon** card under Settings > Plugins > Plugin configuration
+  with live unit status (active state, PID, restart count) and
+  Start/Stop/Restart/Reset buttons plus the editable fields.
 - Generates `/etc/systemd/system/<unit>` (system scope, needs root) or
   `~/.config/systemd/user/<unit>` (`user` scope) on save/start.
 - Exposes daemon state through `/_dsh/web-daemon/*` JSON routes.
-- Registers the `web-daemon` settings namespace in the Host settings service.
+- Registers the `web-daemon` settings namespace in the Host settings service
+  (the card is keyed by that namespace on `settings.plugin.item`).
 - The worker runs `dsh web --profile <profile> --no-open --port <port>` bound
   to loopback; LAN exposure is the job of `dsh-plugin-auth-webserver`.
 - The unit gets `DSH_WEB_DAEMON_WORKER=1`; a daemonized GUI detects this and
@@ -35,13 +37,14 @@ dsh plugin --profile web add file:/usr/local/src/project/dsh-plugin/dsh-plugin-w
 ```
 
 The package is a dual-face plugin: its host row talks to systemd and its
-`dsh.client` export registers the Settings section. Client module changes need
-a page refresh; the running `dsh web` process does need to be restarted once so
-the host row is composed into the profile.
+`dsh.client` export registers the Settings plugin-configuration card. Client
+module changes need a page refresh; the running `dsh web` process does need to
+be restarted once so the host row is composed into the profile.
 
 ## Configure
 
-Open **Settings > Web daemon** in the GUI. There are five fields:
+Open **Settings > Plugins > Plugin configuration > Web daemon** in the GUI.
+There are five fields:
 
 - `enabled`: maps to `systemctl enable/disable` plus start on boot.
 - `systemdScope`: `system` or `user`.
@@ -59,5 +62,5 @@ daemon, and restarts the worker if it was running.
 | File | Content |
 | --- | --- |
 | `index.js` | Host half: systemd unit generation, systemctl actions, settings namespace, JSON API. |
-| `lib/client.js` | Browser half: Settings section for daemon status and configuration. |
+| `lib/client.js` | Browser half: Settings plugin-configuration card (settings.plugin.item keyed by `web-daemon`) for daemon status and configuration. |
 | `cordis.patch.yml` | Adds the host row and default configuration to the composed profile. |

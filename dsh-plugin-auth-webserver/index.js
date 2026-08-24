@@ -10,18 +10,22 @@
  * accepted request — including WebSocket upgrades — to 127.0.0.1:3080.
  *
  * Credential precedence is DSH_AUTH_USER/DSH_AUTH_PASS (or AUTH_USER/AUTH_PASS)
- * > cordis row config > plugin state at
- * $DSH_HOME/plugins/dsh-plugin-auth-webserver/state.json.
+ * > the settings user document (namespace `auth-webserver`, written by the GUI
+ * card) > the cordis row config (the composed base layer). A legacy
+ * state.json from older releases is migrated into the settings namespace once.
  */
 
 import { createServer, request } from "node:http";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, networkInterfaces } from "node:os";
+import { homedir, networkInterfaces, release } from "node:os";
 import { join, resolve } from "node:path";
+import { settingsNamespace } from "@deepseek-ai/dsh-settings";
 import z from "@deepseek-ai/schemastery";
 
 export const name = "auth-webserver";
+
+const NS = settingsNamespace("auth-webserver");
 
 const COOKIE_NAME = "dsh_auth_token";
 const SESSION_MAX_AGE_SECONDS = 7 * 24 * 3600;
@@ -103,23 +107,54 @@ export const Config = z.object({
   /** Explicit bind addresses; when empty, all non-loopback NIC addresses are used. */
   addresses: z.array(z.string()).default([]),
   username: z.string().default("admin"),
-  password: z.string().default(""),
+  password: z.string().role("secret").default(""),
   realm: z.string().default("DeepSeek Harness Authentication"),
+});
+
+/**
+ * The settings namespace schema. Password is a secret-role field: it never
+ * rides a describe response, and the GUI card treats it as write-only.
+ */
+const SettingsSchema = z.object({
+  username: z.string().min(1).default("admin"),
+  password: z.string().role("secret").default(""),
+  realm: z.string().min(1).default("DeepSeek Harness Authentication"),
 });
 
 function stateFile() {
   return join(stateDir(), "state.json");
 }
 
-function loadStateInto(target) {
+/**
+ * One-time migration from the pre-settings state.json (written by older
+ * releases of this plugin) into the auth-webserver settings namespace. Runs
+ * only when the user document does not already carry credentials, so a
+ * settings-level override made by the user is never clobbered. The legacy file
+ * is left in place as a backup; later releases may drop it.
+ */
+function migrateLegacyState(ctx, settings, scope) {
   try {
+    if (!existsSync(stateFile())) return;
+    const descriptor = settings
+      .describe({ redactSecrets: true })
+      .find((entry) => entry.ns === NS);
+    if (descriptor === undefined) return;
+    const userHasCredential = (descriptor.user !== undefined &&
+      Object.keys(descriptor.user).length > 0) ||
+      (descriptor.secrets ?? []).some((entry) => entry.path?.[0] === "password" && entry.set);
+    if (userHasCredential) return;
     const state = JSON.parse(readFileSync(stateFile(), "utf8"));
     if (state === null || typeof state !== "object") return;
-    if (typeof state.username === "string") target.username = state.username;
-    if (typeof state.password === "string") target.password = state.password;
-    if (typeof state.realm === "string") target.realm = state.realm;
+    const next = {};
+    if (typeof state.username === "string") next.username = state.username;
+    if (typeof state.password === "string") next.password = state.password;
+    if (typeof state.realm === "string") next.realm = state.realm;
+    if (Object.keys(next).length === 0) return;
+    void settings.update(NS, next, descriptor.revision).catch((error) => {
+      ctx.logger?.warn?.("auth-webserver: legacy state migration failed: %s", error);
+    });
   } catch {
-    // No persisted state yet; config/env values stand.
+    // Keep the old file untouched; env variables and row config still stand.
   }
 }
 
@@ -225,6 +260,144 @@ function renderLoginPage(realm) {
 </html>`;
 }
 
+/**
+ * Headless-host probe mirroring DSH's own `canOpenNativePath`: Linux without
+ * WSL and without a display server cannot open files natively (xdg-open has
+ * no viewer). Auth-webserver is the gateway a remote/headless deployment
+ * uses, so it owns the headless guard for the file-open RPCs.
+ */
+function isHeadlessHost() {
+  if (process.platform !== "linux") return false;
+  if (process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP) return false;
+  if (process.env.DISPLAY || process.env.WAYLAND_DISPLAY) return false;
+  try {
+    if (release().toLowerCase().includes("microsoft")) return false;
+  } catch {
+    // release() is always available; ignore a defensive failure.
+  }
+  return true;
+}
+
+/** Whet her one request may reach the /api RPC bridge, mirroring DSH's fence. */
+function isTrustedApiRequest(req) {
+  const host = req.headers?.host;
+  if (typeof host !== "string" || host === "") return false;
+  let hostUrl;
+  try {
+    hostUrl = new URL(`http://${host}`);
+  } catch {
+    return false;
+  }
+  const hostname = hostUrl.hostname;
+  const loopback = hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1" || hostname === "[::1]";
+  if (!loopback) return false;
+  if (req.headers?.["sec-fetch-site"] === "cross-site") return false;
+  const origin = req.headers?.origin;
+  if (origin === undefined) return true;
+  try {
+    return new URL(origin).host === hostUrl.host;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read one RPC client-request envelope and answer it with a server-response.
+ * Returns null and sends the raw JSON server-response when the request is not
+ * an open intent we own (unknown method, malformed envelope).
+ */
+function readRpcEnvelope(req, res) {
+  const body = [];
+  let size = 0;
+  const LIMIT = 262144;
+  return new Promise((resolvePromise) => {
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > LIMIT) {
+        res.writeHead(413, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "request body too large" }));
+        resolvePromise(null);
+        req.destroy();
+        return;
+      }
+      body.push(chunk);
+    });
+    req.on("end", () => {
+      let parsed;
+      try {
+        parsed = JSON.parse(Buffer.concat(body).toString("utf8"));
+      } catch {
+        resolvePromise(null);
+        return;
+      }
+      if (parsed === null || typeof parsed !== "object" || parsed.type !== "client-request" || typeof parsed.rpcId !== "string") {
+        resolvePromise(null);
+        return;
+      }
+      resolvePromise(parsed);
+    });
+    req.on("error", () => resolvePromise(null));
+  });
+}
+
+/** Write one JSON response with a content-length header. */
+function sendJson(res, status, payload) {
+  const body = JSON.stringify(payload);
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": Buffer.byteLength(body),
+  });
+  res.end(body);
+}
+
+/** Answer one open-intent RPC with a readable headless-host refusal. */
+function answerHeadlessOpen(res, envelope) {
+  sendJson(res, 200, {
+    type: "server-response",
+    rpcId: envelope.rpcId,
+    result: {
+      ok: false,
+      error: {
+        // `internal` is the generic wire code the DSH client schema accepts
+        // (rpcErrorSchema is a closed enumerable union); a custom code would
+        // fail the client-side validation with an `invalid_union` error.
+        code: "internal",
+        message: "this server has no graphical environment, so it cannot open files natively — use the file explorer panel to preview or download the file instead",
+        details: {},
+      },
+    },
+  });
+}
+
+/** Intercept the Host file-open RPCs on a headless host. */
+function registerHeadlessOpenGuard(ctx, webServer) {
+  if (!isHeadlessHost()) return;
+  for (const endpoint of ["/api/host.openPath", "/api/host.openTextFile"]) {
+    ctx.effect(() => webServer.register({
+      kind: "exact",
+      path: endpoint,
+      handler: async (req, res) => {
+        // Match the upstream /api prefix fence: untrusted requests are
+        // refused before anything reaches the RPC layer.
+        if (req.method !== "POST") {
+          res.writeHead(405, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ type: "server-response", rpcId: "invalid-request", result: { ok: false, error: { code: "method-not-allowed", message: "method not allowed", details: {} } } }));
+          return;
+        }
+        if (!isTrustedApiRequest(req)) {
+          res.writeHead(403);
+          res.end("forbidden");
+          return;
+        }
+        const envelope = await readRpcEnvelope(req, res);
+        if (envelope === null) return;
+        answerHeadlessOpen(res, envelope);
+      },
+    }), `auth-webserver: headless open guard ${endpoint}`);
+  }
+  ctx.logger?.info?.("auth-webserver: headless host detected — native file-open RPCs are refused with a readable message (xdg-open guard)");
+}
+
 function sendUnauthorized(req, res, realm, rawPath) {
   const accept = req.headers.accept ?? "";
   const wantsHtml = rawPath === "/" || rawPath === "/index.html"
@@ -245,13 +418,6 @@ function sendUnauthorized(req, res, realm, rawPath) {
 }
 
 export function apply(ctx, config) {
-  const state = {
-    username: config.username,
-    password: config.password,
-    realm: config.realm,
-  };
-  loadStateInto(state);
-
   const secret = loadOrCreateSecret();
 
   // In non-secure contexts (plain http on a LAN address) `crypto.randomUUID`
@@ -269,11 +435,134 @@ export function apply(ctx, config) {
     }));
   }
 
-  const credentials = () => ({
-    user: process.env.DSH_AUTH_USER || process.env.AUTH_USER || state.username || "admin",
-    pass: process.env.DSH_AUTH_PASS || process.env.AUTH_PASS || state.password || "",
-    realm: state.realm || "DeepSeek Harness Authentication",
-  });
+  // Settings namespace: the row config acts as the composed base layer and
+  // the settings document (settings.yaml) overrides it; env vars outrank both
+  // at read time. The GUI card reads/writes this namespace through the shared
+  // settings service, so no plugin-specific state file is needed anymore.
+  const settings = ctx.get("settings");
+  let settingsScope;
+  if (settings !== undefined) {
+    settingsScope = settings.register(NS, SettingsSchema, {
+      base: {
+        ...(config.username !== undefined ? { username: config.username } : {}),
+        ...(config.password !== undefined ? { password: config.password } : {}),
+        ...(config.realm !== undefined ? { realm: config.realm } : {}),
+      },
+      applies: "live",
+    });
+    migrateLegacyState(ctx, settings, settingsScope);
+  }
+
+  const envUser = process.env.DSH_AUTH_USER || process.env.AUTH_USER;
+  const envPass = process.env.DSH_AUTH_PASS || process.env.AUTH_PASS;
+  const resolved = () => settingsScope?.get() ?? {
+    username: config.username,
+    password: config.password,
+    realm: config.realm,
+  };
+  const description = () => settings
+    ?.describe({ redactSecrets: true })
+    .find((entry) => entry.ns === NS);
+  const userLayerHasCredential = (descriptor) => (descriptor?.user !== undefined &&
+    Object.keys(descriptor.user).length > 0) ||
+    (descriptor?.secrets ?? []).some((entry) => entry.path?.[0] === "password" && entry.set);
+  const snapshot = () => {
+    const value = resolved();
+    return {
+      username: value.username || "admin",
+      realm: value.realm || "DeepSeek Harness Authentication",
+      hasPassword: Boolean(value.password),
+      overriddenByEnv: Boolean(envUser || envPass),
+      overriddenByConfig: Boolean(config.username || config.password),
+      overriddenBySettings: userLayerHasCredential(description()),
+    };
+  };
+
+  const handleState = (req, res) => {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      sendJson(res, 405, { ok: false, error: "Method not allowed" });
+      return;
+    }
+    sendJson(res, 200, { ok: true, state: snapshot() });
+  };
+
+  const handleSave = async (req, res) => {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { ok: false, error: "Method not allowed" });
+      return;
+    }
+    if (settings === undefined || !settings.writable) {
+      sendJson(res, 400, {
+        ok: false,
+        error: "settings are not writable in this deployment",
+      });
+      return;
+    }
+    let body;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body" });
+      return;
+    }
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      sendJson(res, 400, { ok: false, error: "Invalid request body" });
+      return;
+    }
+
+    const next = {};
+    if (typeof body.username === "string") {
+      if (body.username.trim() === "") {
+        sendJson(res, 400, { ok: false, error: "Username must not be empty" });
+        return;
+      }
+      next.username = body.username.trim();
+    }
+    // An empty/absent password keeps the existing one; pass password: "" only
+    // to leave it untouched. Clearing the password would lock out everyone.
+    if (typeof body.password === "string" && body.password !== "") {
+      next.password = body.password;
+    }
+    if (typeof body.realm === "string" && body.realm.trim() !== "") {
+      next.realm = body.realm.trim();
+    }
+
+    if (Object.keys(next).length === 0) {
+      sendJson(res, 200, { ok: true, state: snapshot() });
+      return;
+    }
+
+    try {
+      await settings.update(NS, next, description()?.revision);
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+    sendJson(res, 200, { ok: true, state: snapshot() });
+  };
+
+  if (webServer !== undefined && typeof webServer.register === "function") {
+    ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/state", handler: handleState }));
+    ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/save", handler: handleSave }));
+  }
+
+  // On a headless Linux host (no DISPLAY/WAYLAND, not WSL) the Host's native
+  // file-open RPCs would run xdg-open into nothing. This gateway owns that
+  // guard: it intercepts the exact RPC endpoints and answers with a readable
+  // message instead of leaking xdg-open's "no method available" stderr.
+  registerHeadlessOpenGuard(ctx, webServer);
+
+  const credentials = () => {
+    const value = resolved();
+    return {
+      user: process.env.DSH_AUTH_USER || process.env.AUTH_USER || value.username || "admin",
+      pass: process.env.DSH_AUTH_PASS || process.env.AUTH_PASS || value.password || "",
+      realm: value.realm || "DeepSeek Harness Authentication",
+    };
+  };
 
   const generateToken = (user, pass) => {
     const now = Date.now();

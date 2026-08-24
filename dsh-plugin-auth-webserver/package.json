@@ -10,21 +10,31 @@
       "types": "./index.d.ts",
       "default": "./index.js"
     },
+    "./client": "./client.js",
     "./package.json": "./package.json"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ],
+      "platform": "web"
     }
   },
   "files": [
     "index.js",
     "index.d.ts",
+    "client.js",
     "cordis.patch.yml",
     "README.md"
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
+    "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.0",
+    "@deepseek-ai/dsh-settings": ">=0.1.0-rc.0",
     "@deepseek-ai/schemastery": ">=3.0.0"
   },
   "engines": {

@@ -108,8 +108,9 @@ branch after `#`, not by `package.json` alone.
 Credentials are resolved in this order:
 
 1. `DSH_AUTH_USER` / `DSH_AUTH_PASS`, or `AUTH_USER` / `AUTH_PASS`
-2. the `webserver-auth` row config
-3. `$DSH_HOME/plugins/dsh-plugin-auth-webserver/state.json`
+2. the settings user document (`$DSH_HOME/settings.yaml`, namespace
+   `auth-webserver`) — what the GUI card writes
+3. the `webserver-auth` row config (the composed base layer)
 
 The gateway refuses to authenticate anyone when no password is configured
 (but the stock loopback server keeps working). A home-level `$DSH_HOME/.env`
@@ -133,6 +134,32 @@ can use a standard Basic Auth header against a LAN address:
 ```bash
 curl -u admin:'change-me' http://192.168.1.5:3080/
 ```
+
+## Configure from the Web GUI
+
+Settings > Plugins > Plugin configuration has an "Auth webserver" card that
+edits the username, password and realm. Saving writes the `auth-webserver`
+namespace of `$DSH_HOME/settings.yaml` (the password is a secret-role field:
+it never leaves the Host unredacted). The `AUTH_*` env vars outrank it, and
+the `webserver-auth` row config acts as the base layer until you save an
+override. Leave the password field empty to keep the current password.
+
+Older releases stored credentials in
+`$DSH_HOME/plugins/dsh-plugin-auth-webserver/state.json`; on first boot the
+plugin migrates an existing file into the settings namespace once (the file is
+kept as a backup and can be deleted afterwards).
+
+## Headless file-open guard
+
+On a Linux host without a display server (no `DISPLAY`/`WAYLAND_DISPLAY`, not
+WSL) there is nothing to run `xdg-open` against, so clicking a file path in a
+conversation would leak `xdg-open: no method available for opening ...`
+stderr into the GUI. Because this plugin is the gateway of exactly those
+remote/headless deployments, it owns the guard: it intercepts the Host
+file-open RPC endpoints (`/api/host.openPath`, `/api/host.openTextFile`) via
+exact routes and answers with a readable message pointing at the file
+explorer panel (preview/download) instead. On machines with a desktop the
+guard is not installed and native opening is untouched.
 
 ## Override target or port
 

@@ -1,8 +1,12 @@
 /**
- * dsh-plugin-web-daemon — browser settings section.
+ * dsh-plugin-web-daemon — browser plugin configuration card.
  *
  * Static DSH client bundle. The node half exposes the daemon API routes under
- * /_dsh/web-daemon; this section is the Settings-side editor for them.
+ * /_dsh/web-daemon; this card appears under Settings > Plugins > Plugin
+ * configuration (settings.plugin.item, keyed by the "web-daemon" settings
+ * namespace). The card chrome (header, disclosure, footer) is implemented
+ * here because the client bundle purity gate forbids importing the official
+ * card chrome as values; only the slot registration protocol is shared.
  */
 window.__ModuleLoader__.load({
 	id: "dsh-plugin-web-daemon",
@@ -20,7 +24,16 @@ window.__ModuleLoader__.load({
 			style.id = STYLE_ID;
 			style.setAttribute("data-plugin", "dsh-plugin-web-daemon");
 			style.textContent = `
-.dwd-section{display:flex;flex-direction:column;gap:18px}
+.dwd-card{display:flex;flex-direction:column;gap:0;border:1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.14));border-radius:8px;background:var(--dsw-alias-bg-layer-1, #fff);overflow:hidden}
+.dwd-cardHeader{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:8px 12px;border:0;background:none;color:var(--dsw-alias-label-primary, #111827);font:inherit;text-align:left;cursor:pointer}
+.dwd-cardHeader:hover{background:var(--dsw-alias-bg-layer-2, #e7e5e4)}
+.dwd-cardHead{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.dwd-cardTitle{font-size:13px;font-weight:600;line-height:18px}
+.dwd-cardDesc{font-size:12px;line-height:16px;color:var(--dsw-alias-label-tertiary, #78716c)}
+.dwd-unsaved{flex:none;font-size:11px;font-weight:600;color:#b45309;background:rgba(245,158,11,.12);border-radius:999px;padding:2px 8px}
+.dwd-chevron{flex:none;width:14px;height:14px;color:var(--dsw-alias-label-tertiary, #78716c);transition:transform .15s ease}
+.dwd-chevron[data-open="true"]{transform:rotate(180deg)}
+.dwd-cardBody{display:flex;flex-direction:column;gap:18px;padding:14px 16px 16px;border-top:1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.14));background:var(--dsw-alias-bg-layer-0, #fafafa)}
 .dwd-status{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-height:38px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.14));border-radius:6px;background:var(--dsw-alias-bg-layer-1, #fff)}
 .dwd-pill{display:inline-flex;align-items:center;gap:6px;min-height:22px;padding:0 8px;border-radius:999px;font-size:12px;font-weight:600}
 .dwd-pill[data-state="running"]{background:rgba(34,197,94,.14);color:#15803d}
@@ -34,6 +47,7 @@ window.__ModuleLoader__.load({
 .dwd-btn:hover{background:var(--dsw-alias-bg-layer-2, #e7e5e4)}
 .dwd-btn:disabled{opacity:.55;cursor:default}
 .dwd-btn.primary{background:var(--dsw-alias-brand-primary, #2563eb);border-color:transparent;color:#fff}
+.dwd-btn.ghost{border-color:transparent;background:none}
 .dwd-btn.danger{border-color:rgba(239,68,68,.35);color:#b91c1c}
 .dwd-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px}
 .dwd-field{display:flex;flex-direction:column;gap:5px;min-width:0}
@@ -44,10 +58,12 @@ window.__ModuleLoader__.load({
 .dwd-input:focus{outline:2px solid rgba(59,130,246,.35);outline-offset:1px}
 .dwd-check{display:flex;gap:8px;align-items:center;min-height:32px}
 .dwd-check input{width:16px;height:16px;accent-color:var(--dsw-alias-brand-primary, #2563eb)}
+.dwd-override{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#b45309}
 .dwd-command{max-width:100%;margin:0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.16));border-radius:6px;background:var(--dsw-alias-bg-code, rgba(0,0,0,.04));color:var(--dsw-alias-label-primary, #111827);font:12px/18px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
 .dwd-error{padding:8px 10px;border:1px solid rgba(239,68,68,.35);border-radius:6px;background:rgba(239,68,68,.08);color:#b91c1c;font-size:13px;line-height:18px}
 .dwd-notice{padding:6px 10px;border:1px solid rgba(34,197,94,.28);border-radius:6px;background:rgba(34,197,94,.08);color:#15803d;font-size:13px;line-height:18px}
 .dwd-empty{color:var(--dsw-alias-label-secondary, #57534e);font-size:13px}
+.dwd-cardFooter{display:flex;align-items:center;justify-content:flex-end;gap:8px;border-top:1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.14));padding-top:12px}
 `;
 
 			document.head.append(style);
@@ -72,7 +88,8 @@ window.__ModuleLoader__.load({
 			return data;
 		}
 
-		function WebDaemonSection() {
+		function WebDaemonCard() {
+			const [open, setOpen] = React.useState(false);
 			const [snapshot, setSnapshot] = React.useState(null);
 			const [draft, setDraft] = React.useState(null);
 			const [busy, setBusy] = React.useState(false);
@@ -145,131 +162,158 @@ window.__ModuleLoader__.load({
 				}
 			};
 
-			if (snapshot === null && error === null) {
-				return React.createElement("div", { className: "dwd-section" }, "Loading daemon status...");
-			}
-
-			if (config === undefined) {
-				return React.createElement(
-					"div",
-					{ className: "dwd-section" },
-					React.createElement("p", { className: "dwd-empty" }, "Daemon status is not available."),
-				);
-			}
-
-			const status = snapshot.status || "unknown";
-			const disabled = busy || !snapshot.writable || snapshot.nested;
 			const changed = draft !== null;
-			const unit = snapshot.unit || {};
+			const status = snapshot?.status || "unknown";
+			const writable = snapshot?.writable !== false;
+			const nested = Boolean(snapshot?.nested);
+			const unit = snapshot?.unit || {};
+			const disabled = busy || !writable || nested;
 
 			return React.createElement(
 				"div",
-				{ className: "dwd-section" },
+				{ className: "dwd-card" },
 				React.createElement(
-					"div",
-					{ className: "dwd-status" },
+					"button",
+					{
+						type: "button",
+						className: "dwd-cardHeader",
+						"aria-expanded": open,
+						onClick: () => setOpen(!open),
+					},
 					React.createElement(
 						"span",
-						{ className: "dwd-pill", "data-state": status, "aria-live": "polite" },
-						status === "running" ? "Running" : status === "failed" ? "Failed" : status === "restarting" ? "Restarting" : status === "starting" ? "Starting" : "Stopped",
+						{ className: "dwd-cardHead" },
+						React.createElement("span", { className: "dwd-cardTitle" }, "Web daemon"),
+						React.createElement("span", { className: "dwd-cardDesc" }, "Manages the dsh web worker as a systemd unit."),
 					),
+					changed ? React.createElement("span", { className: "dwd-unsaved" }, "Unsaved changes") : null,
 					React.createElement(
-						"span",
-						{ className: "dwd-meta" },
-						React.createElement("span", null, "PID: ", React.createElement("b", null, snapshot.pid || "-")),
-						React.createElement("span", null, "restarts: ", React.createElement("b", null, snapshot.restarts || 0)),
-						React.createElement("span", null, "started: ", React.createElement("b", null, snapshot.startedAt || "-")),
-						React.createElement("span", null, "unit: ", React.createElement("b", null, unit.name || "-"), " (", unit.activeState || "unknown", ")"),
-					),
-					React.createElement(
-						"div",
-						{ className: "dwd-actions" },
-						React.createElement("button", { type: "button", className: "dwd-btn primary", disabled: busy || snapshot.nested, onClick: () => void run("start") }, "Start"),
-						React.createElement("button", { type: "button", className: "dwd-btn danger", disabled: busy || snapshot.nested, onClick: () => void run("stop") }, "Stop"),
-						React.createElement("button", { type: "button", className: "dwd-btn", disabled: busy, onClick: () => void run("restart") }, "Restart"),
-						React.createElement("button", { type: "button", className: "dwd-btn", disabled: busy || snapshot.nested, onClick: () => void run("reset") }, "Reset failed state"),
+						"svg",
+						{ className: "dwd-chevron", "data-open": String(open), viewBox: "0 0 14 14", width: 14, height: 14, "aria-hidden": "true" },
+						React.createElement("path", { d: "M3 5l4 4 4-4", fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round", strokeLinejoin: "round" }),
 					),
 				),
-				snapshot.nested
-					? React.createElement("div", { className: "dwd-notice", role: "status" }, "This process is the managed worker. Restart is available here (e.g. after plugin updates); Start/Stop and configuration live on the unit owner.")
+				open
+					? React.createElement(
+							"div",
+							{ className: "dwd-cardBody" },
+							snapshot === null && error === null
+								? React.createElement("div", { className: "dwd-section" }, "Loading daemon status...")
+								: null,
+							config === undefined && snapshot !== null
+								? React.createElement("p", { className: "dwd-empty" }, "Daemon status is not available.")
+								: null,
+							config !== undefined && snapshot !== null
+								? React.createElement(
+										"div",
+										{ className: "dwd-section" },
+										React.createElement(
+											"div",
+											{ className: "dwd-status" },
+											React.createElement(
+												"span",
+												{ className: "dwd-pill", "data-state": status, "aria-live": "polite" },
+												status === "running" ? "Running" : status === "failed" ? "Failed" : status === "restarting" ? "Restarting" : status === "starting" ? "Starting" : "Stopped",
+											),
+											React.createElement(
+												"span",
+												{ className: "dwd-meta" },
+												React.createElement("span", null, "PID: ", React.createElement("b", null, snapshot.pid || "-")),
+												React.createElement("span", null, "restarts: ", React.createElement("b", null, snapshot.restarts || 0)),
+												React.createElement("span", null, "started: ", React.createElement("b", null, snapshot.startedAt || "-")),
+												React.createElement("span", null, "unit: ", React.createElement("b", null, unit.name || "-"), " (", unit.activeState || "unknown", ")"),
+											),
+											React.createElement(
+												"div",
+												{ className: "dwd-actions" },
+												React.createElement("button", { type: "button", className: "dwd-btn primary", disabled: busy || nested, onClick: () => void run("start") }, "Start"),
+												React.createElement("button", { type: "button", className: "dwd-btn danger", disabled: busy || nested, onClick: () => void run("stop") }, "Stop"),
+												React.createElement("button", { type: "button", className: "dwd-btn", disabled: busy, onClick: () => void run("restart") }, "Restart"),
+												React.createElement("button", { type: "button", className: "dwd-btn", disabled: busy || nested, onClick: () => void run("reset") }, "Reset failed state"),
+											),
+										),
+										nested
+											? React.createElement("div", { className: "dwd-notice", role: "status" }, "This process is the managed worker. Restart is available here (e.g. after plugin updates); Start/Stop and configuration live on the unit owner.")
+											: null,
+										error === null ? null : React.createElement("div", { className: "dwd-error", role: "alert" }, error),
+										notice === null ? null : React.createElement("div", { className: "dwd-notice", role: "status" }, notice),
+										React.createElement(
+											"div",
+											{ className: "dwd-grid" },
+											React.createElement(
+												"label",
+												{ className: "dwd-field" },
+												React.createElement("span", { className: "dwd-label" }, "Enabled"),
+												React.createElement(
+													"label",
+													{ className: "dwd-check" },
+													React.createElement("input", { type: "checkbox", checked: Boolean(config.enabled), disabled: disabled, onChange: (event) => update("enabled", event.target.checked) }),
+													"start on boot and keep running",
+												),
+												React.createElement("span", { className: "dwd-hint" }, "Maps to systemctl enable/disable; Start/Stop still work while disabled."),
+											),
+											React.createElement(
+												"label",
+												{ className: "dwd-field" },
+												React.createElement("span", { className: "dwd-label" }, "Systemd scope"),
+												React.createElement(
+													"select",
+													{ className: "dwd-input", value: config.systemdScope || "system", disabled: disabled, onChange: (event) => update("systemdScope", event.target.value) },
+													React.createElement("option", { value: "system" }, "system"),
+													React.createElement("option", { value: "user" }, "user"),
+												),
+												React.createElement("span", { className: "dwd-hint" }, "system needs root; user units use --user."),
+											),
+											React.createElement(
+												"label",
+												{ className: "dwd-field" },
+												React.createElement("span", { className: "dwd-label" }, "Systemd unit"),
+												React.createElement("input", { className: "dwd-input", value: config.systemdUnit || "dsh-web.service", disabled: disabled, onChange: (event) => update("systemdUnit", event.target.value) }),
+											),
+											React.createElement(
+												"label",
+												{ className: "dwd-field" },
+												React.createElement("span", { className: "dwd-label" }, "Profile"),
+												React.createElement("input", { className: "dwd-input", value: config.profile || "", disabled: disabled, onChange: (event) => update("profile", event.target.value) }),
+												React.createElement("span", { className: "dwd-hint" }, "DSH profile started by the worker."),
+											),
+											React.createElement(
+												"label",
+												{ className: "dwd-field" },
+												React.createElement("span", { className: "dwd-label" }, "Port"),
+												React.createElement("input", { type: "number", min: "0", max: "65535", className: "dwd-input", value: config.port ?? 3081, disabled: disabled, onChange: (event) => update("port", Number(event.target.value)) }),
+												React.createElement("span", { className: "dwd-hint" }, "Worker always binds loopback; LAN access is handled by dsh-plugin-auth-webserver."),
+											),
+										),
+										snapshot.command
+											? React.createElement("pre", { className: "dwd-command" }, snapshot.command)
+											: null,
+										unit.name
+											? React.createElement("p", { className: "dwd-hint" }, "Logs go to the systemd journal: journalctl -u ", unit.name, " -f")
+											: null,
+										React.createElement(
+											"div",
+											{ className: "dwd-cardFooter" },
+											changed
+												? React.createElement("button", { type: "button", className: "dwd-btn ghost", disabled: busy, onClick: () => setDraft(null) }, "Discard")
+												: null,
+											React.createElement("button", { type: "button", className: "dwd-btn primary", disabled: disabled || !changed, onClick: () => void run("save") }, "Save settings"),
+										),
+									)
+								: null,
+						)
 					: null,
-				error === null ? null : React.createElement("div", { className: "dwd-error", role: "alert" }, error),
-				notice === null ? null : React.createElement("div", { className: "dwd-notice", role: "status" }, notice),
-				React.createElement(
-					"div",
-					{ className: "dwd-grid" },
-					React.createElement(
-						"label",
-						{ className: "dwd-field" },
-						React.createElement("span", { className: "dwd-label" }, "Enabled"),
-						React.createElement(
-							"label",
-							{ className: "dwd-check" },
-							React.createElement("input", { type: "checkbox", checked: Boolean(config.enabled), disabled: disabled, onChange: (event) => update("enabled", event.target.checked) }),
-							"start on boot and keep running",
-						),
-						React.createElement("span", { className: "dwd-hint" }, "Maps to systemctl enable/disable; Start/Stop still work while disabled."),
-					),
-					React.createElement(
-						"label",
-						{ className: "dwd-field" },
-						React.createElement("span", { className: "dwd-label" }, "Systemd scope"),
-						React.createElement(
-							"select",
-							{ className: "dwd-input", value: config.systemdScope || "system", disabled: disabled, onChange: (event) => update("systemdScope", event.target.value) },
-							React.createElement("option", { value: "system" }, "system"),
-							React.createElement("option", { value: "user" }, "user"),
-						),
-						React.createElement("span", { className: "dwd-hint" }, "system needs root; user units use --user."),
-					),
-					React.createElement(
-						"label",
-						{ className: "dwd-field" },
-						React.createElement("span", { className: "dwd-label" }, "Systemd unit"),
-						React.createElement("input", { className: "dwd-input", value: config.systemdUnit || "dsh-web.service", disabled: disabled, onChange: (event) => update("systemdUnit", event.target.value) }),
-					),
-					React.createElement(
-						"label",
-						{ className: "dwd-field" },
-						React.createElement("span", { className: "dwd-label" }, "Profile"),
-						React.createElement("input", { className: "dwd-input", value: config.profile || "", disabled: disabled, onChange: (event) => update("profile", event.target.value) }),
-						React.createElement("span", { className: "dwd-hint" }, "DSH profile started by the worker."),
-					),
-					React.createElement(
-						"label",
-						{ className: "dwd-field" },
-						React.createElement("span", { className: "dwd-label" }, "Port"),
-						React.createElement("input", { type: "number", min: "0", max: "65535", className: "dwd-input", value: config.port ?? 3081, disabled: disabled, onChange: (event) => update("port", Number(event.target.value)) }),
-						React.createElement("span", { className: "dwd-hint" }, "Worker always binds loopback; LAN access is handled by dsh-plugin-auth-webserver."),
-					),
-				),
-				snapshot.command
-					? React.createElement("pre", { className: "dwd-command" }, snapshot.command)
-					: null,
-				unit.name
-					? React.createElement("p", { className: "dwd-hint" }, "Logs go to the systemd journal: journalctl -u ", unit.name, " -f")
-					: null,
-				React.createElement(
-					"div",
-					{ className: "dwd-actions" },
-					React.createElement("button", { type: "button", className: "dwd-btn primary", disabled: busy || !changed || !snapshot.writable || snapshot.nested, onClick: () => void run("save") }, "Save settings"),
-					changed
-						? React.createElement("button", { type: "button", className: "dwd-btn", disabled: busy, onClick: () => setDraft(null) }, "Discard")
-						: null,
-				),
 			);
 		}
 
 		function apply(ctx) {
 			const slots = ctx.get("slots");
 			if (slots === undefined) return;
-			ctx.slots.inject("settings.section", () => ctx.slots.register({
-				name: "settings.section",
-				id: "web-daemon",
-				order: 16,
-				label: () => "Web daemon",
+			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
+				name: "settings.plugin.item",
+				key: "web-daemon",
 				inject: () => ({})
-			}, WebDaemonSection));
+			}, WebDaemonCard));
 		}
 
 		exports.apply = apply;
