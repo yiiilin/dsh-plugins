@@ -27,6 +27,10 @@ child-process supervisor and no plugin-side restart logic.
   systemd to restart its own unit, so the fresh process comes up even though
   the requesting one dies mid-request. Start/Stop and configuration stay with
   the unit owner's GUI.
+- On a Linux worker without `DISPLAY`/`WAYLAND_DISPLAY` (and not WSL), the
+  plugin owns the `/api/host.openPath` and `/api/host.openTextFile` guard. It
+  returns a structured message directing users to the file explorer preview or
+  download instead of leaking a native `xdg-open` failure into the GUI.
 
 ## Install
 

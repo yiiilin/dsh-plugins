@@ -11,18 +11,234 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, release } from "node:os";
 import { join, resolve } from "node:path";
 import { settingsNamespace } from "@deepseek-ai/dsh-settings";
 import z from "@deepseek-ai/schemastery";
 
 export const name = "web-daemon";
-export const inject = ["webServer", "settings"];
+export const inject = ["webServer", "settings", "clientModules"];
 
 const NS = settingsNamespace("web-daemon");
 const WORKER_FLAG = "DSH_WEB_DAEMON_WORKER";
 const API_PREFIX = "/_dsh/web-daemon";
+
+function isHeadlessHost() {
+  if (process.platform !== "linux") return false;
+  if (process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP) return false;
+  if (process.env.DISPLAY || process.env.WAYLAND_DISPLAY) return false;
+  try {
+    if (release().toLowerCase().includes("microsoft")) return false;
+  } catch {
+    // Defensive only: release() is available on supported Node versions.
+  }
+  return true;
+}
+
+function isTrustedApiRequest(req) {
+  const host = req.headers?.host;
+  if (typeof host !== "string" || host === "") return false;
+  let hostUrl;
+  try {
+    hostUrl = new URL(`http://${host}`);
+  } catch {
+    return false;
+  }
+  const hostname = hostUrl.hostname;
+  const loopback = hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1" || hostname === "[::1]";
+  if (!loopback) return false;
+  if (req.headers?.["sec-fetch-site"] === "cross-site") return false;
+  const origin = req.headers?.origin;
+  if (origin === undefined) return true;
+  try {
+    return new URL(origin).host === hostUrl.host;
+  } catch {
+    return false;
+  }
+}
+
+function readRpcEnvelope(req, res) {
+  const body = [];
+  let size = 0;
+  const limit = 262144;
+  return new Promise((resolvePromise) => {
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > limit) {
+        res.writeHead(413, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "request body too large" }));
+        resolvePromise(null);
+        req.destroy();
+        return;
+      }
+      body.push(chunk);
+    });
+    req.on("end", () => {
+      let parsed;
+      try {
+        parsed = JSON.parse(Buffer.concat(body).toString("utf8"));
+      } catch {
+        resolvePromise(null);
+        return;
+      }
+      if (parsed === null || typeof parsed !== "object" || parsed.type !== "client-request" || typeof parsed.rpcId !== "string") {
+        resolvePromise(null);
+        return;
+      }
+      resolvePromise(parsed);
+    });
+    req.on("error", () => resolvePromise(null));
+  });
+}
+
+function answerHeadlessOpen(res, envelope) {
+  const message = "this server has no graphical environment, so it cannot open files natively — use the file explorer panel to preview or download the file instead";
+  const body = JSON.stringify({
+    type: "server-response",
+    rpcId: envelope.rpcId,
+    result: { ok: false, error: { code: "internal", message, details: {} } },
+  });
+  res.writeHead(200, {
+    "content-type": "application/json; charset=utf-8",
+    "content-length": Buffer.byteLength(body),
+  });
+  res.end(body);
+}
+
+const DELIVERABLES_CLIENT_PATH = "/plugins/@deepseek-ai/dsh-client-ui-deliverables/client.js";
+const TOOL_CLIENT_PATH = "/plugins/@deepseek-ai/dsh-client-ui-tool/client.js";
+
+function patchDeliverablesClient(source) {
+  let patched = source;
+  patched = patched.replace(
+    /function producedFileMentions\(paths, openFile, label\) \{/,
+    "function producedFileMentions(paths, openFile, label, canOpenPath) {",
+  );
+  patched = patched.replace(
+    /open: \(\) => \{\s*openFile\(path\);\s*\},/,
+    "open: () => { if (canOpenPath) openFile(path); },",
+  );
+  patched = patched.replace(
+    /onClick: \(\) => \{\s*openFile\(path\);\s*\},/,
+    "onClick: () => { if (canOpenPath) openFile(path); },",
+  );
+  patched = patched.replace(
+    /return producedFileMentions\(paths, owner\.openFile, \(path\) => t\("produced\.open", \{ name: path \}\)\);/,
+    "const description = connection.hostDescription.getSnapshot();\n\t\t\t\t\tconst canOpenPath = connection.isLoopback && description?.canOpenPath === true;\n\t\t\t\t\treturn producedFileMentions(paths, owner.openFile, (path) => t(\"produced.open\", { name: path }), canOpenPath);",
+  );
+  return patched;
+}
+
+function patchToolClient(source) {
+  let patched = source;
+  patched = patched.replace(
+    /function ToolRow\(\{ t, variant, toolName, icon, title, summary, summarySuffix, body, output, errorSummary, terminal, diff, read, search, web, state, filePath, onOpenFile, inspect \}\) \{/,
+    "function ToolRow({ t, variant, toolName, icon, title, summary, summarySuffix, body, output, errorSummary, terminal, diff, read, search, web, state, filePath, onOpenFile, inspect }) {",
+  );
+  patched = patched.replace(
+    /const fileLink = filePath !== void 0 && onOpenFile !== void 0 && failureLine === null;/,
+    "const fileLink = filePath !== void 0 && onOpenFile !== void 0 && failureLine === null && false;",
+  );
+  patched = patched.replace(
+    /const openFile = \(event\) => \{\s*event\.stopPropagation\(\);\s*if \(filePath !== void 0\) onOpenFile\?\.\(filePath\);\s*\};/,
+    "const openFile = (event) => { event.stopPropagation(); };",
+  );
+  return patched;
+}
+
+function registerHeadlessToolPatch(ctx, webServer, clientModules) {
+  if (!isHeadlessHost()) return;
+  const clientPath = clientModules?.clientPath("@deepseek-ai/dsh-client-ui-tool");
+  if (typeof clientPath !== "string") {
+    ctx.logger?.warn?.("web-daemon: tool client bundle was not found; native-open tool link patch was not applied");
+    return;
+  }
+  let body;
+  try {
+    body = patchToolClient(readFileSync(clientPath, "utf8"));
+  } catch (error) {
+    ctx.logger?.warn?.("web-daemon: could not read tool client bundle: %s", error);
+    return;
+  }
+  ctx.effect(() => webServer.register({
+    kind: "exact",
+    path: TOOL_CLIENT_PATH,
+    handler: (req, res) => {
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        res.writeHead(405);
+        res.end();
+        return;
+      }
+      res.writeHead(200, {
+        "content-type": "text/javascript; charset=utf-8",
+        "cache-control": "no-store",
+        "content-length": Buffer.byteLength(body),
+      });
+      if (req.method === "HEAD") res.end();
+      else res.end(body);
+    },
+  }), "web-daemon: headless tool client patch");
+}
+
+function registerHeadlessDeliverablesPatch(ctx, webServer, clientModules) {
+  if (!isHeadlessHost()) return;
+  const clientPath = clientModules?.clientPath("@deepseek-ai/dsh-client-ui-deliverables");
+  if (typeof clientPath !== "string") {
+    ctx.logger?.warn?.("web-daemon: deliverables client bundle was not found; native-open chip patch was not applied");
+    return;
+  }
+  let body;
+  try {
+    body = patchDeliverablesClient(readFileSync(clientPath, "utf8"));
+  } catch (error) {
+    ctx.logger?.warn?.("web-daemon: could not read deliverables client bundle: %s", error);
+    return;
+  }
+  ctx.effect(() => webServer.register({
+    kind: "exact",
+    path: DELIVERABLES_CLIENT_PATH,
+    handler: (req, res) => {
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        res.writeHead(405);
+        res.end();
+        return;
+      }
+      res.writeHead(200, {
+        "content-type": "text/javascript; charset=utf-8",
+        "cache-control": "no-store",
+        "content-length": Buffer.byteLength(body),
+      });
+      if (req.method === "HEAD") res.end();
+      else res.end(body);
+    },
+  }), "web-daemon: headless deliverables client patch");
+}
+
+function registerHeadlessOpenGuard(ctx, webServer) {
+  if (!isHeadlessHost()) return;
+  for (const endpoint of ["/api/host.openPath", "/api/host.openTextFile"]) {
+    ctx.effect(() => webServer.register({
+      kind: "exact",
+      path: endpoint,
+      handler: async (req, res) => {
+        if (req.method !== "POST") {
+          res.writeHead(405, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ type: "server-response", rpcId: "invalid-request", result: { ok: false, error: { code: "internal", message: "method not allowed", details: {} } } }));
+          return;
+        }
+        if (!isTrustedApiRequest(req)) {
+          res.writeHead(403);
+          res.end("forbidden");
+          return;
+        }
+        const envelope = await readRpcEnvelope(req, res);
+        if (envelope !== null) answerHeadlessOpen(res, envelope);
+      },
+    }), `web-daemon: headless open guard ${endpoint}`);
+  }
+  ctx.logger?.info?.("web-daemon: headless host detected — native file-open RPCs are refused with a readable message (file explorer handles preview/download)");
+}
 
 export const Config = z.object({
   /** Boot-autostart and keep the unit enabled. */
@@ -409,6 +625,11 @@ function createWebDaemonManager(ctx, settings, config) {
 function apply(ctx, config = {}) {
   const webServer = ctx.get("webServer");
   if (webServer === undefined) return;
+
+  const clientModules = ctx.get("clientModules");
+  registerHeadlessOpenGuard(ctx, webServer);
+  registerHeadlessDeliverablesPatch(ctx, webServer, clientModules);
+  registerHeadlessToolPatch(ctx, webServer, clientModules);
 
   const settings = ctx.get("settings");
   const manager = createWebDaemonManager(ctx, settings, config);

@@ -18,7 +18,7 @@
 import { createServer, request } from "node:http";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, networkInterfaces, release } from "node:os";
+import { homedir, networkInterfaces } from "node:os";
 import { join, resolve } from "node:path";
 import { settingsNamespace } from "@deepseek-ai/dsh-settings";
 import z from "@deepseek-ai/schemastery";
@@ -265,147 +265,6 @@ function renderLoginPage(realm) {
 </html>`;
 }
 
-/**
- * Headless-host probe mirroring DSH's own `canOpenNativePath`: Linux without
- * WSL and without a display server cannot open files natively (xdg-open has
- * no viewer). Auth-webserver is the gateway a remote/headless deployment
- * uses, so it owns the headless guard for the file-open RPCs.
- */
-function isHeadlessHost() {
-  if (process.platform !== "linux") return false;
-  if (process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP) return false;
-  if (process.env.DISPLAY || process.env.WAYLAND_DISPLAY) return false;
-  try {
-    if (release().toLowerCase().includes("microsoft")) return false;
-  } catch {
-    // release() is always available; ignore a defensive failure.
-  }
-  return true;
-}
-
-/** Whet her one request may reach the /api RPC bridge, mirroring DSH's fence. */
-function isTrustedApiRequest(req) {
-  const host = req.headers?.host;
-  if (typeof host !== "string" || host === "") return false;
-  let hostUrl;
-  try {
-    hostUrl = new URL(`http://${host}`);
-  } catch {
-    return false;
-  }
-  const hostname = hostUrl.hostname;
-  const loopback = hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1" || hostname === "[::1]";
-  if (!loopback) return false;
-  if (req.headers?.["sec-fetch-site"] === "cross-site") return false;
-  const origin = req.headers?.origin;
-  if (origin === undefined) return true;
-  try {
-    return new URL(origin).host === hostUrl.host;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Read one RPC client-request envelope and answer it with a server-response.
- * Returns null and sends the raw JSON server-response when the request is not
- * an open intent we own (unknown method, malformed envelope).
- */
-function readRpcEnvelope(req, res) {
-  const body = [];
-  let size = 0;
-  const LIMIT = 262144;
-  return new Promise((resolvePromise) => {
-    req.on("data", (chunk) => {
-      size += chunk.length;
-      if (size > LIMIT) {
-        res.writeHead(413, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: false, error: "request body too large" }));
-        resolvePromise(null);
-        req.destroy();
-        return;
-      }
-      body.push(chunk);
-    });
-    req.on("end", () => {
-      let parsed;
-      try {
-        parsed = JSON.parse(Buffer.concat(body).toString("utf8"));
-      } catch {
-        resolvePromise(null);
-        return;
-      }
-      if (parsed === null || typeof parsed !== "object" || parsed.type !== "client-request" || typeof parsed.rpcId !== "string") {
-        resolvePromise(null);
-        return;
-      }
-      resolvePromise(parsed);
-    });
-    req.on("error", () => resolvePromise(null));
-  });
-}
-
-/** Write one JSON response with a content-length header. */
-function sendJson(res, status, payload) {
-  const body = JSON.stringify(payload);
-  res.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Content-Length": Buffer.byteLength(body),
-  });
-  res.end(body);
-}
-
-/** Answer one open-intent RPC with a readable headless-host refusal. */
-function answerHeadlessOpen(res, envelope) {
-  sendJson(res, 200, {
-    type: "server-response",
-    rpcId: envelope.rpcId,
-    result: {
-      ok: false,
-      error: {
-        // `internal` is the generic wire code the DSH client schema accepts
-        // (rpcErrorSchema is a closed enumerable union); a custom code would
-        // fail the client-side validation with an `invalid_union` error.
-        code: "internal",
-        message: "this server has no graphical environment, so it cannot open files natively — use the file explorer panel to preview or download the file instead",
-        details: {},
-      },
-    },
-  });
-}
-
-/** Intercept the Host file-open RPCs on a headless host. */
-function registerHeadlessOpenGuard(ctx, webServer) {
-  if (!isHeadlessHost()) return;
-  for (const endpoint of ["/api/host.openPath", "/api/host.openTextFile"]) {
-    ctx.effect(() => webServer.register({
-      kind: "exact",
-      path: endpoint,
-      handler: async (req, res) => {
-        // Match the upstream /api prefix fence: untrusted requests are
-        // refused before anything reaches the RPC layer.
-        if (req.method !== "POST") {
-          res.writeHead(405, { "content-type": "application/json; charset=utf-8" });
-          // `internal` is the generic wire code the DSH client schema accepts
-          // (rpcErrorSchema is a closed enumerable union); a custom or
-          // non-POST-specific code would fail client-side validation.
-          res.end(JSON.stringify({ type: "server-response", rpcId: "invalid-request", result: { ok: false, error: { code: "internal", message: "method not allowed", details: {} } } }));
-          return;
-        }
-        if (!isTrustedApiRequest(req)) {
-          res.writeHead(403);
-          res.end("forbidden");
-          return;
-        }
-        const envelope = await readRpcEnvelope(req, res);
-        if (envelope === null) return;
-        answerHeadlessOpen(res, envelope);
-      },
-    }), `auth-webserver: headless open guard ${endpoint}`);
-  }
-  ctx.logger?.info?.("auth-webserver: headless host detected — native file-open RPCs are refused with a readable message (xdg-open guard)");
-}
-
 function sendUnauthorized(req, res, realm, rawPath) {
   const accept = req.headers.accept ?? "";
   const wantsHtml = rawPath === "/" || rawPath === "/index.html"
@@ -557,11 +416,6 @@ export function apply(ctx, config) {
     ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/save", handler: handleSave }));
   }
 
-  // On a headless Linux host (no DISPLAY/WAYLAND, not WSL) the Host's native
-  // file-open RPCs would run xdg-open into nothing. This gateway owns that
-  // guard: it intercepts the exact RPC endpoints and answers with a readable
-  // message instead of leaking xdg-open's "no method available" stderr.
-  registerHeadlessOpenGuard(ctx, webServer);
 
   const credentials = () => {
     const value = resolved();

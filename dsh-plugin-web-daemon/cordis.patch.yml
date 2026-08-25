@@ -9,6 +9,7 @@
       inject:
         - webServer
         - settings
+        - clientModules
       config:
         enabled: false
         profile: web

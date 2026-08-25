@@ -149,18 +149,6 @@ Older releases stored credentials in
 plugin migrates an existing file into the settings namespace once (the file is
 kept as a backup and can be deleted afterwards).
 
-## Headless file-open guard
-
-On a Linux host without a display server (no `DISPLAY`/`WAYLAND_DISPLAY`, not
-WSL) there is nothing to run `xdg-open` against, so clicking a file path in a
-conversation would leak `xdg-open: no method available for opening ...`
-stderr into the GUI. Because this plugin is the gateway of exactly those
-remote/headless deployments, it owns the guard: it intercepts the Host
-file-open RPC endpoints (`/api/host.openPath`, `/api/host.openTextFile`) via
-exact routes and answers with a readable message pointing at the file
-explorer panel (preview/download) instead. On machines with a desktop the
-guard is not installed and native opening is untouched.
-
 ## Override target or port
 
 Edit `$DSH_HOME/profiles/web/cordis.patch.yml` after installing:
