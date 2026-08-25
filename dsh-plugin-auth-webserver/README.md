@@ -1,4 +1,4 @@
-# dsh-plugin-auth-webserver
+# @yiln-dsh/dsh-plugin-auth-webserver
 
 A DSH `dsh.bundle` that keeps the stock webserver untouched and adds an
 **auth-gated reverse proxy** for LAN access:
@@ -15,6 +15,8 @@ access behaves exactly like stock DSH, and LAN clients get the full GUI behind
 authentication.
 
 ## Install
+
+The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.2.0`.
 
 The plugin is plain JavaScript source; there is no build step.
 
@@ -36,7 +38,7 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./dsh-plugin-auth-webserver-0.1.0.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.2.0.tgz
 ```
 
 The tarball already contains the runnable source. A user can also unpack it,
@@ -48,17 +50,17 @@ Publish the directory, then install by name:
 
 ```bash
 cd /path/to/dsh-plugin-auth-webserver
-npm publish
+npm publish --access public
 ```
 
 ```bash
-dsh plugin --profile web add dsh-plugin-auth-webserver
+dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@latest
 ```
 
 Pin a version if you want reproducible installs:
 
 ```bash
-dsh plugin --profile web add dsh-plugin-auth-webserver@0.1.0
+dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.2.0
 ```
 
 ### Direct GitHub
@@ -82,21 +84,21 @@ The plugin version is defined by the `version` field in `package.json`:
 
 ```json
 {
-  "name": "dsh-plugin-auth-webserver",
-  "version": "0.1.0"
+  "name": "@yiln-dsh/dsh-plugin-auth-webserver",
+  "version": "0.2.0"
 }
 ```
 
 Semantic versioning is recommended:
 
-- `0.1.0` -> `0.1.1` for a bug fix
-- `0.1.0` -> `0.2.0` for a backward-compatible feature
+- `0.2.0` -> `0.2.1` for a bug fix
+- `0.2.0` -> `0.3.0` for a backward-compatible feature
 - `0.2.0` -> `1.0.0` for a breaking change
 
 The selected version is used for:
 
-- npm registry resolution, e.g. `dsh-plugin-auth-webserver@0.1.0`
-- the generated tarball name, e.g. `dsh-plugin-auth-webserver-0.1.0.tgz`
+- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.2.0`
+- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.2.0.tgz`
 - the metadata inside the tarball/npm package
 
 A `file:` source install uses the version that is currently in the source tree;

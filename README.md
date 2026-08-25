@@ -7,9 +7,9 @@ own directory.
 
 | Plugin | Purpose |
 | --- | --- |
-| [`dsh-plugin-auth-webserver`](./dsh-plugin-auth-webserver) | Auth-gated reverse proxy on every non-loopback NIC, forwarding to the stock `127.0.0.1:3080` web server. |
-| [`dsh-plugin-file-explorer`](./dsh-plugin-file-explorer) | Replace the Web GUI details column with a workspace file explorer. |
-| [`dsh-plugin-web-daemon`](./dsh-plugin-web-daemon) | Manages `dsh web` as a real systemd unit and edits its configuration from the GUI Settings section. |
+| [`@yiln-dsh/dsh-plugin-auth-webserver`](./dsh-plugin-auth-webserver) | Auth-gated reverse proxy on every non-loopback NIC, forwarding to the stock `127.0.0.1:3080` web server. |
+| [`@yiln-dsh/dsh-plugin-file-explorer`](./dsh-plugin-file-explorer) | Replace the Web GUI details column with a workspace file explorer. |
+| [`@yiln-dsh/dsh-plugin-web-daemon`](./dsh-plugin-web-daemon) | Manages `dsh web` as a real systemd unit and edits its configuration from the GUI Settings section. |
 
 ## Install
 
@@ -33,14 +33,14 @@ Supported install formats:
 
   ```bash
   cd /path/to/dsh-plugin-auth-webserver && pnpm pack
-  dsh plugin --profile web add ./dsh-plugin-auth-webserver-0.1.0.tgz
+  dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.2.0.tgz
   ```
 
 - **npm package.** Publish one plugin directory, then install by name:
 
   ```bash
-  cd /path/to/dsh-plugin-auth-webserver && npm publish
-  dsh plugin --profile web add dsh-plugin-auth-webserver
+  cd /path/to/dsh-plugin-auth-webserver && npm publish --access public
+  dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@latest
   ```
 
 - **Direct GitHub URL.** Works only when the GitHub repository root is the
@@ -52,10 +52,17 @@ Supported install formats:
 
 ## Versioning
 
-All bundle plugins in this repo currently use `0.1.0`. Each plugin's version
-is the `version` field in its own `package.json`. Semantic versioning is
-recommended: patch for fixes, minor for additive features, major for breaking
-changes.
+The published bundle plugins in the `yiln-dsh` organization currently use:
+
+| Package | Version |
+| --- | --- |
+| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.2.0` |
+| `@yiln-dsh/dsh-plugin-file-explorer` | `0.4.0` |
+| `@yiln-dsh/dsh-plugin-web-daemon` | `0.3.0` |
+
+Each plugin's version is the `version` field in its own `package.json`.
+Semantic versioning is recommended: patch for fixes, minor for additive
+features, major for breaking changes.
 
 The version controls npm ranges, tarball file names, and package metadata.
 A `file:` source install uses the source tree as-is. A direct GitHub install
@@ -71,14 +78,14 @@ shared three ways:
 
   ```bash
   cd dsh-plugin-auth-webserver && npm publish
-  dsh plugin --profile web add dsh-plugin-auth-webserver
+  dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@latest
   ```
 
 - **Tarball.** Pack one plugin directory and hand out the `.tgz`:
 
   ```bash
   cd dsh-plugin-auth-webserver && pnpm pack
-  dsh plugin --profile web add ./dsh-plugin-auth-webserver-0.1.0.tgz
+  dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.2.0.tgz
   ```
 
 - **Direct GitHub URL.** This works only when the repository root itself is the

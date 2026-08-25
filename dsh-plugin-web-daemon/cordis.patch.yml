@@ -5,7 +5,7 @@
 
 - insert:
     - id: web-daemon
-      name: 'dsh-plugin-web-daemon'
+      name: '@yiln-dsh/dsh-plugin-web-daemon'
       inject:
         - webServer
         - settings

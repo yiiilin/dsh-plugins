@@ -1,4 +1,4 @@
-# dsh-plugin-web-daemon
+# @yiln-dsh/dsh-plugin-web-daemon
 
 A DSH plugin that manages the `dsh web` worker as a **real systemd unit**: the
 plugin generates the unit file, maps the GUI buttons onto
@@ -21,7 +21,7 @@ child-process supervisor and no plugin-side restart logic.
 - Registers the `web-daemon` settings namespace in the Host settings service
   (the card is keyed by that namespace on `settings.plugin.item`).
 - The worker runs `dsh web --profile <profile> --no-open --port <port>` bound
-  to loopback; LAN exposure is the job of `dsh-plugin-auth-webserver`.
+  to loopback; LAN exposure is the job of `@yiln-dsh/dsh-plugin-auth-webserver`.
 - The unit gets `DSH_WEB_DAEMON_WORKER=1`; a daemonized GUI detects this and
   keeps only **Restart** available (e.g. to pick up plugin updates) — it asks
   systemd to restart its own unit, so the fresh process comes up even though
@@ -34,10 +34,12 @@ child-process supervisor and no plugin-side restart logic.
 
 ## Install
 
-From this checkout:
+The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.3.0`.
+
+### npm package
 
 ```bash
-dsh plugin --profile web add file:/usr/local/src/project/dsh-plugin/dsh-plugin-web-daemon
+dsh plugin --profile web add @yiln-dsh/dsh-plugin-web-daemon@latest
 ```
 
 The package is a dual-face plugin: its host row talks to systemd and its

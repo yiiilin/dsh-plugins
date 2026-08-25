@@ -8,7 +8,7 @@
 
 - insert:
     - id: webserver-auth
-      name: 'dsh-plugin-auth-webserver'
+      name: '@yiln-dsh/dsh-plugin-auth-webserver'
       inject:
         - webStartup
         - webServer

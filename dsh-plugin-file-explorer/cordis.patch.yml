@@ -5,7 +5,7 @@
 
 - insert:
     - id: dsh-file-explorer
-      name: 'dsh-plugin-file-explorer'
+      name: '@yiln-dsh/dsh-plugin-file-explorer'
       inject:
         - webServer
       config: {}

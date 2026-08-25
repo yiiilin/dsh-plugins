@@ -9,7 +9,7 @@
  * card chrome as values; only the slot registration protocol is shared.
  */
 window.__ModuleLoader__.load({
-	id: "dsh-plugin-web-daemon",
+	id: "@yiln-dsh/dsh-plugin-web-daemon",
 	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;

@@ -13,7 +13,7 @@
  *    (via the /_dsh/file-explorer/git-* API).
  */
 window.__ModuleLoader__.load({
-	id: "dsh-plugin-file-explorer",
+	id: "@yiln-dsh/dsh-plugin-file-explorer",
 	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;

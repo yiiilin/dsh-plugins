@@ -1,4 +1,4 @@
-# dsh-plugin-file-explorer
+# @yiln-dsh/dsh-plugin-file-explorer
 
 A DSH `dsh.bundle` that replaces the built-in **details** column of the Web
 GUI with a workspace file explorer.
@@ -27,13 +27,12 @@ GUI with a workspace file explorer.
   the plugin captures the shell layout store actions when the root entry wires
   them, restores the saved width right after `openDetails()`, and saves the
   column width after every resizer drag.
-- **Collapse to icon bar**: a collapse button sits left of the header title
-  (chevrons pointing right, matching the DSH session menu's compact icon
-  style). Clicking it closes the details column and leaves a slim rail pinned
-  to the right edge with two icons — **Files** and **Git Graph** — clicking
-  either reopens the drawer on that tab at the last chosen width. The layout
-  keeps the slot subtree mounted at width 0, so the rail survives and the
-  panel state is preserved.
+- **Collapse to icon bar**: the collapse button matches the DSH session
+  menu's circular panel-toggle style, with the direction mirrored for the
+  right-side column. Clicking it keeps a real 56px rail in the layout with
+  **Files** and **Git Graph** icons; clicking either reopens that tab at the
+  last chosen width. The rail is not a floating overlay, and the panel state
+  is preserved.
 
 ## Layout
 
@@ -45,7 +44,7 @@ GUI with a workspace file explorer.
 
 ## Install
 
-The plugin is version `0.3.0` from its own `package.json`.
+The published package is `@yiln-dsh/dsh-plugin-file-explorer@0.4.0`.
 
 ### Local source directory
 
@@ -61,18 +60,18 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./dsh-plugin-file-explorer-0.2.0.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-file-explorer-0.4.0.tgz
 ```
 
 ### npm package
 
 ```bash
 cd /path/to/dsh-plugin-file-explorer
-npm publish
+npm publish --access public
 ```
 
 ```bash
-dsh plugin --profile web add dsh-plugin-file-explorer
+dsh plugin --profile web add @yiln-dsh/dsh-plugin-file-explorer@latest
 ```
 
 The profile must be the `web` profile. The host row serves the API routes and
