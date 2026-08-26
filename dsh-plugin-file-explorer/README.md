@@ -9,7 +9,8 @@ GUI with a workspace file explorer.
 - **Files** tab: lists the active session's workspace directory, with folder
   navigation, editable path input, parent/refresh buttons, file and folder
   icons, and file sizes. File rows reveal view / download / delete buttons on
-  hover; delete uses a second-click confirm.
+  hover; delete uses a second-click confirm. Image View supports fullscreen,
+  25%-400% zoom, wheel zoom, and drag-to-pan after zooming.
 - **Git Graph** tab: a vscode/le-git-graph style commit graph rendered from
   the repository containing the current directory —
   - colored lane graph with commit dots and merge curves (all branches or the
@@ -44,7 +45,7 @@ GUI with a workspace file explorer.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-file-explorer@0.4.0`.
+The package version is `@yiln-dsh/dsh-plugin-file-explorer@0.4.1`.
 
 ### Local source directory
 
@@ -60,7 +61,7 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./yiln-dsh-dsh-plugin-file-explorer-0.4.0.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-file-explorer-0.4.1.tgz
 ```
 
 ### npm package
@@ -82,8 +83,9 @@ apply the new profile composition.
 
 - The Host falls back to `sandboxPolicy.workspaceRoot` when no path is passed,
   and returns `{ ok, path, parent, entries }` JSON — never live objects.
-- `read` previews up to 256 KiB of UTF-8 text; `download` returns a base64
-  data URL (64 MiB cap) that the browser triggers with `<a download>`.
+- `read` previews up to 1 MiB of UTF-8 text or 16 MiB of recognized images;
+  image previews return a data URL for inline rendering. `download` returns a
+  base64 data URL (64 MiB cap) that the browser triggers with `<a download>`.
 - `delete` removes regular files (`rm -f`) and directories recursively
   (`rm -rf`); both are called only after a second-click confirm in the UI.
 - Git routes are read-only. They resolve the repository root with

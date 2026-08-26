@@ -1,0 +1,12 @@
+# dsh-plugin-terminal-tab bundle patch.
+#
+# The Host half exposes terminal-tab HTTP routes. It resolves the exact Agent
+# from each session id and consumes that Agent's scoped subprocess PTY service.
+
+- insert:
+    - id: dsh-terminal-tab
+      name: '@yiln-dsh/dsh-plugin-terminal-tab'
+      inject:
+        - webServer
+        - agents
+      config: {}

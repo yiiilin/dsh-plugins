@@ -6,8 +6,8 @@
  * The stock `dsh web` server stays untouched and keeps listening on
  * 127.0.0.1:3080 (loopback, no auth). This bundle instead listens on every
  * non-loopback network interface address at the same port (e.g. 192.168.1.5:3080),
- * requires HTTP Basic Auth or an HMAC-signed login cookie, and proxies every
- * accepted request — including WebSocket upgrades — to 127.0.0.1:3080.
+ * requires HTTP Basic Auth or an HMAC-signed login cookie (optionally protected
+ * by TOTP), and proxies every accepted request — including WebSocket upgrades — to 127.0.0.1:3080.
  *
  * Credential precedence is DSH_AUTH_USER/DSH_AUTH_PASS (or AUTH_USER/AUTH_PASS)
  * > the settings user document (namespace `auth-webserver`, written by the GUI
@@ -22,6 +22,7 @@ import { homedir, networkInterfaces } from "node:os";
 import { join, resolve } from "node:path";
 import { settingsNamespace } from "@deepseek-ai/dsh-settings";
 import z from "@deepseek-ai/schemastery";
+import { generateTotpSecret, verifyTotp } from "./totp.js";
 
 export const name = "auth-webserver";
 
@@ -33,10 +34,19 @@ export const inject = ["settings"];
 const NS = settingsNamespace("auth-webserver");
 
 const COOKIE_NAME = "dsh_auth_token";
+const CSRF_COOKIE_NAME = "dsh_auth_csrf";
 const SESSION_MAX_AGE_SECONDS = 7 * 24 * 3600;
 const SESSION_MAX_AGE_MS = SESSION_MAX_AGE_SECONDS * 1000;
 const STATE_DIR_SEGMENTS = ["plugins", "dsh-plugin-auth-webserver"];
 
+// These files contain only install metadata and the public app icon. Keeping
+// them reachable before login lets the browser discover the PWA entry point;
+// all application HTML, APIs, assets, and WebSocket upgrades remain gated.
+const PUBLIC_PWA_PATHS = new Set(["/manifest.webmanifest", "/favicon.svg"]);
+
+function isPublicPwaRequest(req, rawPath) {
+  return (req.method === "GET" || req.method === "HEAD") && PUBLIC_PWA_PATHS.has(rawPath);
+}
 function dshHome() {
   const env = process.env.DSH_HOME;
   if (env !== undefined && env.trim().length > 0) {
@@ -78,6 +88,19 @@ function parseCookies(req) {
   return cookies;
 }
 
+function stripGatewayCookies(header) {
+  if (typeof header !== "string") return header;
+  const kept = header.split(";").filter((part) => {
+    const key = part.split("=", 1)[0].trim();
+    return key !== COOKIE_NAME && key !== CSRF_COOKIE_NAME;
+  });
+  return kept.length > 0 ? kept.join(";") : undefined;
+}
+
+function isLoopbackAddress(address) {
+  return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+}
+
 function parseBasic(header) {
   if (typeof header !== "string") return null;
   const match = /^Basic\s+([A-Za-z0-9+/=]+)$/.exec(header.trim());
@@ -102,6 +125,16 @@ async function readBody(req, limit = 65536) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+function sendJson(res, status, value) {
+  const body = JSON.stringify(value);
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Content-Length": Buffer.byteLength(body),
+  });
+  res.end(body);
+}
+
 export const Config = z.object({
   /** Port the gateway listens on for each non-loopback address. */
   port: z.natural().max(65535).default(3080),
@@ -114,6 +147,10 @@ export const Config = z.object({
   username: z.string().default("admin"),
   password: z.string().role("secret").default(""),
   realm: z.string().default("DeepSeek Harness Authentication"),
+  /** Enable time-based one-time passwords for the LAN gateway. */
+  twoFactorEnabled: z.boolean().default(false),
+  /** Base32 TOTP secret. Keep this in a secret environment variable or settings secret. */
+  twoFactorSecret: z.string().role("secret").default(""),
 });
 
 /**
@@ -124,6 +161,9 @@ const SettingsSchema = z.object({
   username: z.string().min(1).default("admin"),
   password: z.string().role("secret").default(""),
   realm: z.string().min(1).default("DeepSeek Harness Authentication"),
+  twoFactorEnabled: z.boolean().default(false),
+  twoFactorSecret: z.string().role("secret").default(""),
+  authEpoch: z.natural().default(0),
 });
 
 function stateFile() {
@@ -194,17 +234,23 @@ function pickAddresses(config) {
   return out;
 }
 
-function renderLoginPage(realm) {
+function renderLoginPage(realm, twoFactorEnabled = false) {
   const safeRealm = String(realm ?? "DeepSeek Harness Authentication")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+  const otpField = twoFactorEnabled ? `
+    <label for="otp">Authenticator code</label>
+    <input id="otp" name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+  ` : "";
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <title>DeepSeek Harness - Sign in</title>
   <style>
     :root { color-scheme: dark; --bg: #0a0d14; --panel: #121826; --line: #334155; --text: #e2e8f0; --muted: #94a3b8; --accent: #3b82f6; }
@@ -228,8 +274,9 @@ function renderLoginPage(realm) {
     <input id="username" name="username" autocomplete="username" autofocus required>
     <label for="password">Password</label>
     <input id="password" name="password" type="password" autocomplete="current-password" required>
-    <button type="submit">Sign in</button>
-    <div id="error">Invalid username or password</div>
+         ${otpField}
+     <button type="submit">Sign in</button>
+    <div id="error">Invalid username, password, or authenticator code</div>
   </form>
   <script>
     const form = document.getElementById("login");
@@ -245,7 +292,8 @@ function renderLoginPage(realm) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             username: document.getElementById("username").value,
-            password: document.getElementById("password").value
+            password: document.getElementById("password").value,
+             otp: document.getElementById("otp")?.value ?? ""
           })
         });
         const data = await response.json();
@@ -265,7 +313,7 @@ function renderLoginPage(realm) {
 </html>`;
 }
 
-function sendUnauthorized(req, res, realm, rawPath) {
+function sendUnauthorized(req, res, realm, rawPath, twoFactorEnabled = false) {
   const accept = req.headers.accept ?? "";
   const wantsHtml = rawPath === "/" || rawPath === "/index.html"
     || (req.method === "GET" && accept.includes("text/html"));
@@ -274,18 +322,36 @@ function sendUnauthorized(req, res, realm, rawPath) {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
     });
-    res.end(renderLoginPage(realm));
+    res.end(renderLoginPage(realm, twoFactorEnabled));
     return;
   }
-  res.writeHead(401, {
+  const headers = {
     "Content-Type": "application/json; charset=utf-8",
-    "WWW-Authenticate": `Basic realm="${String(realm ?? "DeepSeek Harness Authentication").replace(/"/g, '\\"')}"`,
-  });
-  res.end(JSON.stringify({ ok: false, error: "Authentication required" }));
+    "Cache-Control": "no-store",
+  };
+  if (!twoFactorEnabled) {
+    headers["WWW-Authenticate"] = `Basic realm="${String(realm ?? "DeepSeek Harness Authentication").replace(/"/g, '\\"')}"`;
+  }
+  res.writeHead(401, headers);
+  res.end(JSON.stringify({ ok: false, error: "Authentication required", twoFactorRequired: twoFactorEnabled }));
 }
 
 export function apply(ctx, config) {
   const secret = loadOrCreateSecret();
+  let sessionGeneration = 0;
+  const activeSockets = new Set();
+
+  const revokeSessions = () => {
+    sessionGeneration += 1;
+    for (const socket of activeSockets) {
+      try {
+        socket.destroy();
+      } catch (_e) {
+        // Best-effort teardown during credential changes.
+      }
+    }
+    activeSockets.clear();
+  };
 
   // In non-secure contexts (plain http on a LAN address) `crypto.randomUUID`
   // does not exist, which breaks the DSH client RPC layer. The old replacement
@@ -314,6 +380,8 @@ export function apply(ctx, config) {
         ...(config.username !== undefined ? { username: config.username } : {}),
         ...(config.password !== undefined ? { password: config.password } : {}),
         ...(config.realm !== undefined ? { realm: config.realm } : {}),
+        ...(config.twoFactorEnabled !== undefined ? { twoFactorEnabled: config.twoFactorEnabled } : {}),
+        ...(config.twoFactorSecret !== undefined ? { twoFactorSecret: config.twoFactorSecret } : {}),
       },
       applies: "live",
     });
@@ -322,27 +390,57 @@ export function apply(ctx, config) {
 
   const envUser = process.env.DSH_AUTH_USER || process.env.AUTH_USER;
   const envPass = process.env.DSH_AUTH_PASS || process.env.AUTH_PASS;
-  const resolved = () => settingsScope?.get() ?? {
-    username: config.username,
-    password: config.password,
-    realm: config.realm,
+  const envTwoFactorSecret = process.env.DSH_AUTH_2FA_SECRET || process.env.AUTH_2FA_SECRET;
+  const rawEnvTwoFactorEnabled = process.env.DSH_AUTH_2FA_ENABLED ?? process.env.AUTH_2FA_ENABLED;
+  const envTwoFactorEnabled = rawEnvTwoFactorEnabled === undefined
+    ? undefined
+    : /^(1|true|yes|on)$/i.test(String(rawEnvTwoFactorEnabled).trim());
+  const resolved = () => {
+    const value = settingsScope?.get() ?? {
+      username: config.username,
+      password: config.password,
+      realm: config.realm,
+      twoFactorEnabled: config.twoFactorEnabled,
+      twoFactorSecret: config.twoFactorSecret,
+      authEpoch: 0,
+    };
+    const twoFactorSecret = envTwoFactorSecret || value.twoFactorSecret || "";
+    const twoFactorEnabled = envTwoFactorEnabled ?? (Boolean(value.twoFactorEnabled) || Boolean(envTwoFactorSecret));
+    return { ...value, twoFactorEnabled, twoFactorSecret };
   };
   const description = () => settings
     ?.describe({ redactSecrets: true })
     .find((entry) => entry.ns === NS);
-  const userLayerHasCredential = (descriptor) => (descriptor?.user !== undefined &&
-    Object.keys(descriptor.user).length > 0) ||
-    (descriptor?.secrets ?? []).some((entry) => entry.path?.[0] === "password" && entry.set);
+  const userLayerHasField = (descriptor, field) =>
+    (descriptor?.user !== undefined && Object.prototype.hasOwnProperty.call(descriptor.user, field)) ||
+    (descriptor?.secrets ?? []).some((entry) => entry.path?.[0] === field && entry.set);
+  const userLayerHasCredential = (descriptor) =>
+    userLayerHasField(descriptor, "username") || userLayerHasField(descriptor, "password");
   const snapshot = () => {
     const value = resolved();
+    const descriptor = description();
     return {
       username: value.username || "admin",
       realm: value.realm || "DeepSeek Harness Authentication",
-      hasPassword: Boolean(value.password),
+      hasPassword: Boolean(envPass || value.password),
       overriddenByEnv: Boolean(envUser || envPass),
       overriddenByConfig: Boolean(config.username || config.password),
-      overriddenBySettings: userLayerHasCredential(description()),
+      overriddenBySettings: userLayerHasCredential(descriptor),
+      twoFactorEnabled: Boolean(value.twoFactorEnabled),
+      hasTwoFactorSecret: Boolean(value.twoFactorSecret),
+      twoFactorOverriddenByEnv: rawEnvTwoFactorEnabled !== undefined || Boolean(envTwoFactorSecret),
+      twoFactorOverriddenByConfig: Boolean(config.twoFactorEnabled || config.twoFactorSecret),
+      twoFactorOverriddenBySettings: userLayerHasField(descriptor, "twoFactorEnabled") || userLayerHasField(descriptor, "twoFactorSecret"),
     };
+  };
+
+  const updateSettingsAndRevoke = async (next) => {
+    const currentEpoch = Number.isSafeInteger(resolved().authEpoch) ? resolved().authEpoch : 0;
+    await settings.update(NS, {
+      ...next,
+      authEpoch: currentEpoch + 1,
+    }, description()?.revision);
+    revokeSessions();
   };
 
   const handleState = (req, res) => {
@@ -354,6 +452,7 @@ export function apply(ctx, config) {
   };
 
   const handleSave = async (req, res) => {
+    if (requireSession(req, res) === null) return;
     if (req.method !== "POST") {
       sendJson(res, 405, { ok: false, error: "Method not allowed" });
       return;
@@ -385,9 +484,15 @@ export function apply(ctx, config) {
       }
       next.username = body.username.trim();
     }
-    // An empty/absent password keeps the existing one; pass password: "" only
-    // to leave it untouched. Clearing the password would lock out everyone.
+    // Password changes require a step-up check in addition to the session and CSRF token.
     if (typeof body.password === "string" && body.password !== "") {
+      const current = credentials();
+      const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
+      if (!safeEqual(currentPassword, current.pass) ||
+        (current.twoFactorEnabled && !consumeTotp(current.twoFactorSecret, body.currentOtp))) {
+        sendJson(res, 403, { ok: false, error: "Current password and authenticator code are required" });
+        return;
+      }
       next.password = body.password;
     }
     if (typeof body.realm === "string" && body.realm.trim() !== "") {
@@ -400,7 +505,125 @@ export function apply(ctx, config) {
     }
 
     try {
-      await settings.update(NS, next, description()?.revision);
+      await updateSettingsAndRevoke(next);
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+    sendJson(res, 200, { ok: true, state: snapshot() });
+  };
+
+  const handleTwoFactorSetup = async (req, res) => {
+    if (requireSession(req, res) === null) return;
+    if (req.method !== "POST") {
+      sendJson(res, 405, { ok: false, error: "Method not allowed" });
+      return;
+    }
+    if (settings === undefined || !settings.writable) {
+      sendJson(res, 400, {
+        ok: false,
+        error: "settings are not writable in this deployment",
+      });
+      return;
+    }
+
+    let body;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body" });
+      return;
+    }
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      sendJson(res, 400, { ok: false, error: "Invalid request body" });
+      return;
+    }
+
+    const action = typeof body.action === "string" ? body.action : "";
+    const current = resolved();
+    const environmentControlsTwoFactor = rawEnvTwoFactorEnabled !== undefined || Boolean(envTwoFactorSecret);
+    if (environmentControlsTwoFactor) {
+      sendJson(res, 400, {
+        ok: false,
+        error: "2FA is controlled by AUTH_2FA_* environment variables",
+      });
+      return;
+    }
+
+    if (action === "verify" || action === "disable") {
+      const currentCredentials = credentials();
+      if (!currentCredentials.pass) {
+        sendJson(res, 400, { ok: false, error: "Set a gateway password before enabling 2FA" });
+        return;
+      }
+      const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
+      if (!safeEqual(currentPassword, currentCredentials.pass)) {
+        sendJson(res, 403, { ok: false, error: "Current password is required" });
+        return;
+      }
+      if (current.twoFactorEnabled && !verifyTotp(current.twoFactorSecret, body.currentOtp)) {
+        sendJson(res, 403, { ok: false, error: "Current authenticator code is required" });
+        return;
+      }
+    }
+
+    if (action === "start") {
+      const secretValue = generateTotpSecret();
+      const issuer = "DeepSeek Harness";
+      const label = `${issuer}:${current.username || "admin"}`;
+      const otpauthUrl = `otpauth://totp/${encodeURIComponent(label)}?secret=${secretValue}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
+      sendJson(res, 200, {
+        ok: true,
+        setup: { secret: secretValue, otpauthUrl },
+      });
+      return;
+    }
+
+    if (action !== "verify" && action !== "disable") {
+      sendJson(res, 400, { ok: false, error: "Unknown 2FA action" });
+      return;
+    }
+
+    if (action === "verify") {
+      const secretValue = typeof body.secret === "string"
+        ? body.secret.trim().toUpperCase().replace(/[\s-]/g, "")
+        : "";
+      if (!consumeTotp(secretValue, body.code)) {
+        sendJson(res, 400, { ok: false, error: "Invalid authenticator code" });
+        return;
+      }
+      if (current.twoFactorEnabled && !consumeTotp(current.twoFactorSecret, body.currentOtp)) {
+        sendJson(res, 403, { ok: false, error: "Current authenticator code is required" });
+        return;
+      }
+      try {
+        await updateSettingsAndRevoke({
+          twoFactorEnabled: true,
+          twoFactorSecret: secretValue,
+        });
+      } catch (error) {
+        sendJson(res, 400, {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+      sendJson(res, 200, { ok: true, state: snapshot() });
+      return;
+    }
+
+    if (current.twoFactorEnabled && !consumeTotp(current.twoFactorSecret, body.currentOtp)) {
+      sendJson(res, 403, { ok: false, error: "Current authenticator code is required" });
+      return;
+    }
+    try {
+      await updateSettingsAndRevoke({
+        twoFactorEnabled: false,
+        twoFactorSecret: "",
+      });
     } catch (error) {
       sendJson(res, 400, {
         ok: false,
@@ -414,6 +637,7 @@ export function apply(ctx, config) {
   if (webServer !== undefined && typeof webServer.register === "function") {
     ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/state", handler: handleState }));
     ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/save", handler: handleSave }));
+    ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/2fa", handler: handleTwoFactorSetup }));
   }
 
 
@@ -423,18 +647,27 @@ export function apply(ctx, config) {
       user: process.env.DSH_AUTH_USER || process.env.AUTH_USER || value.username || "admin",
       pass: process.env.DSH_AUTH_PASS || process.env.AUTH_PASS || value.password || "",
       realm: value.realm || "DeepSeek Harness Authentication",
+      twoFactorEnabled: Boolean(value.twoFactorEnabled),
+      twoFactorSecret: value.twoFactorSecret || "",
+      authEpoch: Number.isSafeInteger(value.authEpoch) ? value.authEpoch : 0,
     };
   };
 
-  const generateToken = (user, pass) => {
+  const tokenFactor = (twoFactorEnabled, twoFactorSecret) =>
+    twoFactorEnabled ? `mfa\u0000${twoFactorSecret}` : "pwd";
+  const generateToken = (user, pass, authEpoch, twoFactorEnabled, twoFactorSecret) => {
     const now = Date.now();
     const signature = createHmac("sha256", secret)
-      .update(`${user}\u0000${pass}\u0000${now}`)
+      .update(`${user}\u0000${pass}\u0000${authEpoch}\u0000${sessionGeneration}\u0000${tokenFactor(twoFactorEnabled, twoFactorSecret)}\u0000${now}`)
       .digest("hex");
     return `${now}.${signature}`;
   };
 
-  const verifyToken = (token, user, pass) => {
+  const csrfForToken = (token) => createHmac("sha256", secret)
+    .update(`csrf\u0000${token}`)
+    .digest("base64url");
+
+  const verifyToken = (token, user, pass, authEpoch, twoFactorEnabled, twoFactorSecret) => {
     if (typeof token !== "string") return false;
     const parts = token.split(".");
     if (parts.length !== 2) return false;
@@ -443,7 +676,7 @@ export function apply(ctx, config) {
     const age = Date.now() - timestamp;
     if (age < -60000 || age > SESSION_MAX_AGE_MS) return false;
     const expected = createHmac("sha256", secret)
-      .update(`${user}\u0000${pass}\u0000${timestamp}`)
+      .update(`${user}\u0000${pass}\u0000${authEpoch}\u0000${sessionGeneration}\u0000${tokenFactor(twoFactorEnabled, twoFactorSecret)}\u0000${timestamp}`)
       .digest();
     let actual;
     try {
@@ -455,20 +688,87 @@ export function apply(ctx, config) {
     return timingSafeEqual(actual, expected);
   };
 
-  const checkAuth = (req) => {
-    const { user, pass } = credentials();
-    if (!pass) return false;
-
-    const basic = parseBasic(req.headers.authorization);
-    if (basic && safeEqual(basic.user, user) && safeEqual(basic.pass, pass)) {
-      return true;
+  const usedTotpCodes = new Map();
+  const normalizeOtp = (value) => typeof value === "string" ? value.replace(/[\s-]/g, "") : "";
+  const consumeTotp = (secretValue, submitted) => {
+    const code = normalizeOtp(submitted);
+    if (!verifyTotp(secretValue, code)) return false;
+    const now = Date.now();
+    for (const [key, expiresAt] of usedTotpCodes) {
+      if (expiresAt <= now) usedTotpCodes.delete(key);
     }
+    const key = `${secretValue}:${code}`;
+    if ((usedTotpCodes.get(key) ?? 0) > now) return false;
+    usedTotpCodes.set(key, now + 90_000);
+    return true;
+  };
+
+  const loginAttempts = new Map();
+  const LOGIN_WINDOW_MS = 60_000;
+  const LOGIN_MAX_ATTEMPTS = 10;
+  const loginAttemptKey = (req, username) => `${req.socket?.remoteAddress ?? "unknown"}:${username}`;
+  const loginRateLimited = (req, username) => {
+    const key = loginAttemptKey(req, username);
+    const current = loginAttempts.get(key);
+    const now = Date.now();
+    if (current === undefined || current.expiresAt <= now) {
+      loginAttempts.delete(key);
+      return false;
+    }
+    return current.count >= LOGIN_MAX_ATTEMPTS;
+  };
+  const noteLoginFailure = (req, username) => {
+    const key = loginAttemptKey(req, username);
+    const now = Date.now();
+    const current = loginAttempts.get(key);
+    if (current === undefined || current.expiresAt <= now) {
+      loginAttempts.set(key, { count: 1, expiresAt: now + LOGIN_WINDOW_MS });
+      return;
+    }
+    current.count += 1;
+  };
+  const clearLoginFailures = (req, username) => {
+    loginAttempts.delete(loginAttemptKey(req, username));
+  };
+
+  const authenticateRequest = (req) => {
+    const { user, pass, twoFactorEnabled, twoFactorSecret, authEpoch } = credentials();
+    if (!pass) return null;
 
     const cookies = parseCookies(req);
-    if (cookies[COOKIE_NAME] && verifyToken(cookies[COOKIE_NAME], user, pass)) {
-      return true;
+    const token = cookies[COOKIE_NAME];
+    if (token && verifyToken(token, user, pass, authEpoch, twoFactorEnabled, twoFactorSecret)) {
+      return { kind: "cookie", csrf: csrfForToken(token) };
     }
-    return false;
+
+    // Basic Auth cannot carry a second factor and is deliberately disabled when
+    // TOTP is active. Use the password + OTP login endpoint to obtain a cookie.
+    if (twoFactorEnabled) return null;
+    const basic = parseBasic(req.headers.authorization);
+    if (basic && safeEqual(basic.user, user) && safeEqual(basic.pass, pass)) {
+      return { kind: "basic", csrf: null };
+    }
+    return null;
+  };
+
+  const checkAuth = (req) => authenticateRequest(req) !== null;
+
+  const requireSession = (req, res) => {
+    const auth = authenticateRequest(req);
+    if (auth === null || auth.kind !== "cookie") {
+      if (isLoopbackAddress(req.socket?.remoteAddress)) return { kind: "local", csrf: null };
+      sendJson(res, 403, { ok: false, error: "A browser login session is required" });
+      return null;
+    }
+    const cookies = parseCookies(req);
+    const header = req.headers["x-dsh-csrf"];
+    const submitted = Array.isArray(header) ? header[0] : header;
+    if (!cookies[CSRF_COOKIE_NAME] || typeof submitted !== "string" ||
+      !safeEqual(cookies[CSRF_COOKIE_NAME], auth.csrf) || !safeEqual(submitted, auth.csrf)) {
+      sendJson(res, 403, { ok: false, error: "CSRF validation failed" });
+      return null;
+    }
+    return auth;
   };
 
   const handleLogin = async (req, res) => {
@@ -486,28 +786,57 @@ export function apply(ctx, config) {
       res.end(JSON.stringify({ ok: false, error: "Invalid request body" }));
       return;
     }
-
-    const { user, pass } = credentials();
-    const submittedUser = typeof body.username === "string" ? body.username : "";
-    const submittedPass = typeof body.password === "string" ? body.password : "";
-    if (!pass || !safeEqual(submittedUser, user) || !safeEqual(submittedPass, pass)) {
-      res.writeHead(401, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ ok: false, error: "Invalid username or password" }));
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: false, error: "Invalid request body" }));
       return;
     }
 
-    const token = generateToken(user, pass);
+    const { user, pass, twoFactorEnabled, twoFactorSecret, authEpoch } = credentials();
+    const submittedUser = typeof body.username === "string" ? body.username : "";
+    const submittedPass = typeof body.password === "string" ? body.password : "";
+    if (loginRateLimited(req, submittedUser)) {
+      res.writeHead(429, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Retry-After": "60",
+      });
+      res.end(JSON.stringify({ ok: false, error: "Too many login attempts" }));
+      return;
+    }
+    const passwordValid = Boolean(pass) && safeEqual(submittedUser, user) && safeEqual(submittedPass, pass);
+    const otpValid = !twoFactorEnabled || (passwordValid && consumeTotp(twoFactorSecret, body.otp));
+    if (!passwordValid || !otpValid) {
+      noteLoginFailure(req, submittedUser);
+      res.writeHead(401, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ ok: false, error: "Invalid username, password, or authenticator code" }));
+      return;
+    }
+    clearLoginFailures(req, submittedUser);
+
+    const token = generateToken(user, pass, authEpoch, twoFactorEnabled, twoFactorSecret);
+    const csrf = csrfForToken(token);
+    const secure = req.socket?.encrypted ? "; Secure" : "";
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
-      "Set-Cookie": `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SECONDS}`,
+      "Cache-Control": "no-store",
+      "Set-Cookie": [
+        `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SECONDS}${secure}`,
+        `${CSRF_COOKIE_NAME}=${csrf}; Path=/; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SECONDS}${secure}`,
+      ],
     });
     res.end(JSON.stringify({ ok: true, username: user }));
   };
 
   const handleLogout = (req, res) => {
+    if (authenticateRequest(req) !== null) revokeSessions();
+    const secure = req.socket?.encrypted ? "; Secure" : "";
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
-      "Set-Cookie": `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
+      "Cache-Control": "no-store",
+      "Set-Cookie": [
+        `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`,
+        `${CSRF_COOKIE_NAME}=; Path=/; SameSite=Lax; Max-Age=0${secure}`,
+      ],
     });
     res.end(JSON.stringify({ ok: true }));
   };
@@ -531,6 +860,13 @@ export function apply(ctx, config) {
     const rawPath = new URL(req.url ?? "/", "http://x").pathname;
     const shouldPatchConnectionClient = req.method === "GET" && rawPath === CONNECTION_CLIENT_PATH;
     const headers = { ...req.headers };
+    delete headers.authorization;
+    delete headers["x-dsh-otp"];
+    delete headers["x-dsh-csrf"];
+    if (headers.cookie !== undefined) {
+      headers.cookie = stripGatewayCookies(headers.cookie);
+      if (headers.cookie === undefined) delete headers.cookie;
+    }
     if (shouldPatchConnectionClient) headers["accept-encoding"] = "identity";
     // Hop-by-hop request headers must not be forwarded to the upstream.
     for (const h of ["connection", "keep-alive", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"]) {
@@ -597,6 +933,13 @@ export function apply(ctx, config) {
 
   const proxyUpgrade = (req, socket, head) => {
     const headers = { ...req.headers };
+    delete headers.authorization;
+    delete headers["x-dsh-otp"];
+    delete headers["x-dsh-csrf"];
+    if (headers.cookie !== undefined) {
+      headers.cookie = stripGatewayCookies(headers.cookie);
+      if (headers.cookie === undefined) delete headers.cookie;
+    }
     headers.host = `${targetHost}:${targetPort}`;
     if (headers.origin) headers.origin = `http://${targetHost}:${targetPort}`;
     const proxyReq = request({
@@ -623,7 +966,11 @@ export function apply(ctx, config) {
       }
       lines.push("", "");
       socket.write(lines.join("\r\n"));
-      if (proxyHead && proxyHead.length) socket.write(proxyHead);
+     activeSockets.add(socket);
+       const removeSocket = () => activeSockets.delete(socket);
+       socket.once("close", removeSocket);
+       proxySocket.once("close", removeSocket);
+       if (proxyHead && proxyHead.length) socket.write(proxyHead);
       proxySocket.pipe(socket).pipe(proxySocket);
     });
     // Upstream refused the upgrade (e.g. 403): relay that response instead of
@@ -665,8 +1012,21 @@ export function apply(ctx, config) {
         handleLogout(req, res);
         return;
       }
-      if (!checkAuth(req)) {
-        sendUnauthorized(req, res, credentials().realm, rawPath);
+      if (rawPath === "/_dsh/auth-webserver/state" ||
+        rawPath === "/_dsh/auth-webserver/save" ||
+        rawPath === "/_dsh/auth-webserver/2fa") {
+        if (!checkAuth(req)) {
+          sendUnauthorized(req, res, credentials().realm, rawPath, credentials().twoFactorEnabled);
+          return;
+        }
+        if (rawPath === "/_dsh/auth-webserver/state") handleState(req, res);
+        else if (rawPath === "/_dsh/auth-webserver/save") handleSave(req, res);
+        else handleTwoFactorSetup(req, res);
+        return;
+      }
+      const publicPwaRequest = isPublicPwaRequest(req, rawPath);
+      if (!publicPwaRequest && !checkAuth(req)) {
+        sendUnauthorized(req, res, credentials().realm, rawPath, credentials().twoFactorEnabled);
         return;
       }
       proxyRequest(req, res);

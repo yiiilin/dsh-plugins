@@ -34,7 +34,7 @@ child-process supervisor and no plugin-side restart logic.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.3.0`.
+The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.3.2`.
 
 ### npm package
 

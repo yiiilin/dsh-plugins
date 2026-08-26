@@ -298,6 +298,14 @@ window.__ModuleLoader__.load({
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.22);
   overflow: hidden;
 }
+.dsh-fe-modal-fullscreen {
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+}
 .dsh-fe-modal-head {
   display: flex;
   align-items: center;
@@ -319,6 +327,29 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-label-secondary, #6b7280);
   font-size: 12px;
 }
+.dsh-fe-image-tools {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.dsh-fe-image-tool {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+.dsh-fe-image-tool:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.dsh-fe-image-zoom-label {
+  display: inline-block;
+  min-width: 40px;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  font-size: 11px;
+  text-align: center;
+  white-space: nowrap;
+}
 .dsh-fe-modal-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -330,6 +361,47 @@ window.__ModuleLoader__.load({
   font-family: var(--ds-font-family-code, ui-monospace, monospace);
   font-size: 12px;
   line-height: 18px;
+}
+.dsh-fe-modal-body-image {
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  min-height: 160px;
+  padding: 0;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-base, #f5f5f4);
+  white-space: normal;
+}
+.dsh-fe-image-stage {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: none;
+}
+.dsh-fe-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 60vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+  transition: transform 120ms ease;
+}
+.dsh-fe-modal-fullscreen .dsh-fe-preview-image {
+  max-height: calc(100vh - 64px);
+}
+.dsh-fe-preview-image-pannable {
+  cursor: grab;
+}
+.dsh-fe-preview-image-dragging {
+  cursor: grabbing;
+  transition: none;
 }
 .dsh-git-bar {
   display: flex;
@@ -725,6 +797,29 @@ window.__ModuleLoader__.load({
 			const closeIcon = React.createElement(React.Fragment, null,
 				React.createElement('line', { x1: '18', y1: '6', x2: '6', y2: '18' }),
 				React.createElement('line', { x1: '6', y1: '6', x2: '18', y2: '18' }),
+			)
+			const zoomOutIcon = React.createElement(React.Fragment, null,
+				React.createElement('circle', { cx: '10.5', cy: '10.5', r: '6.5' }),
+				React.createElement('line', { x1: '15.5', y1: '15.5', x2: '21', y2: '21' }),
+				React.createElement('line', { x1: '8', y1: '10.5', x2: '13', y2: '10.5' }),
+			)
+			const zoomInIcon = React.createElement(React.Fragment, null,
+				React.createElement('circle', { cx: '10.5', cy: '10.5', r: '6.5' }),
+				React.createElement('line', { x1: '15.5', y1: '15.5', x2: '21', y2: '21' }),
+				React.createElement('line', { x1: '8', y1: '10.5', x2: '13', y2: '10.5' }),
+				React.createElement('line', { x1: '10.5', y1: '8', x2: '10.5', y2: '13' }),
+			)
+			const fullscreenIcon = React.createElement(React.Fragment, null,
+				React.createElement('polyline', { points: '8 3 3 3 3 8' }),
+				React.createElement('polyline', { points: '16 3 21 3 21 8' }),
+				React.createElement('polyline', { points: '8 21 3 21 3 16' }),
+				React.createElement('polyline', { points: '16 21 21 21 21 16' }),
+			)
+			const fullscreenExitIcon = React.createElement(React.Fragment, null,
+				React.createElement('polyline', { points: '9 3 9 9 3 9' }),
+				React.createElement('polyline', { points: '15 3 15 9 21 9' }),
+				React.createElement('polyline', { points: '9 21 9 15 3 15' }),
+				React.createElement('polyline', { points: '15 21 15 15 21 15' }),
 			)
 			// Mirror of DeepSeek's sidebar IconPanelLeftOutline16 (spine on the
 			// right): this panel lives on the right edge, so the glyph mirrors the
@@ -1263,6 +1358,11 @@ window.__ModuleLoader__.load({
 				const [draftPath, setDraftPath] = React.useState('')
 				const [preview, setPreview] = React.useState(null)
 				const [previewLoading, setPreviewLoading] = React.useState(false)
+				const [imageScale, setImageScale] = React.useState(1)
+				const [imageOffset, setImageOffset] = React.useState({ x: 0, y: 0 })
+				const [imageFullscreen, setImageFullscreen] = React.useState(false)
+				const [imageDragging, setImageDragging] = React.useState(false)
+				const imageDrag = React.useRef(null)
 				const [pendingDelete, setPendingDelete] = React.useState(null)
 				const [view, setView] = React.useState('files')
 				const [collapsed, setCollapsed] = React.useState(false)
@@ -1341,7 +1441,7 @@ window.__ModuleLoader__.load({
 				const collapse = () => {
 					setCollapsed(true)
 					railActive = true
-					setPreview(null)
+					closePreview()
 					setPendingDelete(null)
 					setEditingPath(false)
 					if (layout !== undefined) {
@@ -1373,8 +1473,67 @@ window.__ModuleLoader__.load({
 					setRequestPath(next)
 				}
 
+				const resetImageZoom = () => {
+					imageDrag.current = null
+					setImageDragging(false)
+					setImageScale(1)
+					setImageOffset({ x: 0, y: 0 })
+				}
+				const resetImageView = () => {
+					resetImageZoom()
+					setImageFullscreen(false)
+				}
+				const closePreview = () => {
+					resetImageView()
+					setPreview(null)
+				}
+				const setImageZoom = (value) => {
+					const next = Math.max(0.25, Math.min(4, Math.round(value * 4) / 4))
+					setImageScale(next)
+					if (next <= 1) setImageOffset({ x: 0, y: 0 })
+				}
+				const changeImageZoom = (delta) => setImageZoom(imageScale + delta)
+				const handleImageWheel = (event) => {
+					event.preventDefault()
+					changeImageZoom(event.deltaY < 0 ? 0.25 : -0.25)
+				}
+				const startImageDrag = (event) => {
+					if (imageScale <= 1 || event.button !== 0) return
+					imageDrag.current = {
+						pointerId: event.pointerId,
+						startX: event.clientX,
+						startY: event.clientY,
+						originX: imageOffset.x,
+						originY: imageOffset.y,
+					}
+					try { event.currentTarget.setPointerCapture(event.pointerId) } catch (_e) { }
+					setImageDragging(true)
+				}
+				const moveImageDrag = (event) => {
+					const drag = imageDrag.current
+					if (!drag || drag.pointerId !== event.pointerId) return
+					setImageOffset({
+						x: drag.originX + event.clientX - drag.startX,
+						y: drag.originY + event.clientY - drag.startY,
+					})
+				}
+				const endImageDrag = (event) => {
+					const drag = imageDrag.current
+					if (!drag || drag.pointerId !== event.pointerId) return
+					imageDrag.current = null
+					setImageDragging(false)
+					try { event.currentTarget.releasePointerCapture(event.pointerId) } catch (_e) { }
+				}
+				const handlePreviewKeyDown = (event) => {
+					if (event.key !== 'Escape') return
+					event.stopPropagation()
+					if (imageFullscreen) setImageFullscreen(false)
+					else closePreview()
+				}
+
 				const openPreview = (entry) => {
 					setPendingDelete(null)
+					resetImageView()
 					setPreviewLoading(true)
 					setPreview(null)
 					api('read', { path: entry.path })
@@ -1582,30 +1741,94 @@ window.__ModuleLoader__.load({
 					preview &&
 						React.createElement('div', {
 							className: 'dsh-fe-overlay',
-							onClick: () => setPreview(null),
+							onClick: closePreview,
 						},
 							React.createElement('div', {
-								className: 'dsh-fe-modal',
+								className: preview.kind === 'image' && imageFullscreen ? 'dsh-fe-modal dsh-fe-modal-fullscreen' : 'dsh-fe-modal',
 								role: 'dialog',
 								'aria-label': 'File preview',
+								'aria-modal': true,
+								tabIndex: -1,
+								onKeyDown: handlePreviewKeyDown,
 								onClick: (event) => event.stopPropagation(),
 							},
 								React.createElement('div', { className: 'dsh-fe-modal-head' },
 									React.createElement('div', { className: 'dsh-fe-modal-title' }, preview.name || 'Preview'),
-									React.createElement('div', { className: 'dsh-fe-modal-meta' }, preview.binary ? 'Binary' : formatSize(preview.size)),
+									React.createElement('div', { className: 'dsh-fe-modal-meta' }, preview.kind === 'image' ? `Image / ${formatSize(preview.size)}` : preview.binary ? 'Binary' : formatSize(preview.size)),
+									preview.kind === 'image' && preview.dataUrl
+										? React.createElement('div', {
+											className: 'dsh-fe-image-tools',
+											role: 'toolbar',
+											'aria-label': 'Image controls',
+										},
+											React.createElement('button', {
+												type: 'button',
+												className: 'dsh-fe-icon dsh-fe-image-tool',
+												disabled: imageScale <= 0.25,
+												onClick: () => changeImageZoom(-0.25),
+												'aria-label': 'Zoom out',
+												title: 'Zoom out',
+											}, svgIcon(zoomOutIcon, 14)),
+											React.createElement('button', {
+												type: 'button',
+												className: 'dsh-fe-icon dsh-fe-image-tool',
+												onClick: resetImageZoom,
+												'aria-label': 'Reset image zoom',
+												title: 'Reset zoom',
+											}, React.createElement('span', { className: 'dsh-fe-image-zoom-label' }, `${Math.round(imageScale * 100)}%`)),
+											React.createElement('button', {
+												type: 'button',
+												className: 'dsh-fe-icon dsh-fe-image-tool',
+												disabled: imageScale >= 4,
+												onClick: () => changeImageZoom(0.25),
+												'aria-label': 'Zoom in',
+												title: 'Zoom in',
+											}, svgIcon(zoomInIcon, 14)),
+											React.createElement('button', {
+												type: 'button',
+												className: 'dsh-fe-icon dsh-fe-image-tool',
+												onClick: () => setImageFullscreen((value) => !value),
+												'aria-label': imageFullscreen ? 'Exit fullscreen' : 'Enter fullscreen',
+												title: imageFullscreen ? 'Exit fullscreen' : 'Fullscreen',
+											}, svgIcon(imageFullscreen ? fullscreenExitIcon : fullscreenIcon, 14)),
+										)
+										: null,
 									React.createElement('button', {
 										type: 'button',
 										className: 'dsh-fe-icon',
-										onClick: () => setPreview(null),
+										onClick: closePreview,
 										'aria-label': 'Close preview',
 									}, svgIcon(closeIcon, 14)),
 								),
-								React.createElement('div', { className: 'dsh-fe-modal-body' },
+								React.createElement('div', {
+									className: preview.kind === 'image' ? 'dsh-fe-modal-body dsh-fe-modal-body-image' : 'dsh-fe-modal-body',
+									onWheel: preview.kind === 'image' && preview.dataUrl ? handleImageWheel : undefined,
+									onPointerDown: preview.kind === 'image' && preview.dataUrl ? startImageDrag : undefined,
+									onPointerMove: preview.kind === 'image' && preview.dataUrl ? moveImageDrag : undefined,
+									onPointerUp: preview.kind === 'image' && preview.dataUrl ? endImageDrag : undefined,
+									onPointerCancel: preview.kind === 'image' && preview.dataUrl ? endImageDrag : undefined,
+								},
 									previewLoading
 										? 'Loading...'
 										: preview.error
 											? preview.error
-											: preview.text !== undefined ? preview.text : preview.tooLarge ? 'File is too large to preview here' : '(No preview)',
+											: preview.kind === 'image'
+												? preview.dataUrl
+													? React.createElement('div', { className: 'dsh-fe-image-stage' },
+														React.createElement('img', {
+															className: 'dsh-fe-preview-image' + (imageScale > 1 ? ' dsh-fe-preview-image-pannable' : '') + (imageDragging ? ' dsh-fe-preview-image-dragging' : ''),
+															style: { transform: `translate3d(${imageOffset.x}px, ${imageOffset.y}px, 0) scale(${imageScale})` },
+															src: preview.dataUrl,
+															alt: preview.name || 'Image preview',
+															draggable: false,
+														})
+													)
+													: preview.tooLarge ? 'Image is too large to preview here' : '(No preview)'
+											: preview.text !== undefined && preview.text !== null
+												? preview.text
+												: preview.tooLarge
+													? 'File is too large to preview here'
+													: preview.binary ? 'Binary file cannot be previewed' : '(No preview)',
 								),
 							),
 						),

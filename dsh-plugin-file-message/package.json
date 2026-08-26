@@ -1,10 +1,10 @@
 {
-  "name": "@yiln-dsh/dsh-plugin-file-explorer",
-  "version": "0.4.1",
+  "name": "@yiln-dsh/dsh-plugin-file-message",
+  "version": "0.1.0",
   "publishConfig": {
     "access": "public"
   },
-  "description": "DSH bundle plugin that replaces the Web GUI details column with a workspace file explorer.",
+  "description": "DSH bundle plugin that lets the model send workspace-backed files and images into the conversation.",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -19,8 +19,7 @@
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-layout",
-        "@deepseek-ai/dsh-client-ui-renderer"
+        "@deepseek-ai/dsh-client-ui-tool"
       ],
       "platform": "web"
     }
@@ -33,9 +32,12 @@
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
-    "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.0",
-    "@deepseek-ai/dsh-client-ui-layout": ">=0.1.0-rc.0",
-    "@deepseek-ai/dsh-client-ui-renderer": ">=0.1.0-rc.0"
+    "@deepseek-ai/dsh-client-runtime": ">=0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-tool": ">=0.1.1-rc.2",
+    "@deepseek-ai/dsh-fs": ">=0.1.1-rc.2",
+    "@deepseek-ai/dsh-host-webserver": ">=0.1.1-rc.2",
+    "@deepseek-ai/dsh-session-persistence": ">=0.1.1-rc.2",
+    "@deepseek-ai/dsh-tools": ">=0.1.1-rc.2"
   },
   "engines": {
     "node": ">=22"

@@ -2,7 +2,7 @@
  * dsh-plugin-file-explorer — Host half (static DSH bundle).
  *
  * Registers exact HTTP routes under /_dsh/file-explorer for the browser
- * bundle: list (with parent path), read (text preview), download (data URL),
+ * bundle: list (with parent path), read (text/image preview), download (data URL),
  * and delete.
  */
 
@@ -145,12 +145,32 @@ export function apply(ctx) {
       const target = await fs.resolve(req.path)
       const info = await fs.stat(target)
       const size = info && typeof info.size === 'number' ? info.size : null
-      const limit = 256 * 1024
+      const name = target.displayPath.split('/').pop()
+      const mime = guessMime(name)
+      const isImage = mime.startsWith('image/')
+      const limit = isImage ? 16 * 1024 * 1024 : 1024 * 1024
       if (size !== null && size > limit) {
-        sendJson(res, 200, { ok: true, name: target.displayPath.split('/').pop(), size, tooLarge: true })
+        sendJson(res, 200, {
+          ok: true,
+          name,
+          size,
+          tooLarge: true,
+          ...(isImage ? { kind: 'image', mime } : {}),
+        })
         return
       }
       const bytes = await fs.readBytes(target, undefined, limit)
+      if (isImage) {
+        sendJson(res, 200, {
+          ok: true,
+          name,
+          size,
+          kind: 'image',
+          mime,
+          dataUrl: `data:${mime};base64,${bytesToBase64(bytes)}`,
+        })
+        return
+      }
       const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
       let binary = false
       for (let i = 0; i < bytes.length; i += 1) {
@@ -159,7 +179,7 @@ export function apply(ctx) {
       if (!binary && text.replace(/\uFFFD/g, '').length * 10 < text.length * 9) binary = true
       sendJson(res, 200, {
         ok: true,
-        name: target.displayPath.split('/').pop(),
+        name,
         size,
         text: binary ? null : text,
         binary,

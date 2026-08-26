@@ -7,9 +7,12 @@ own directory.
 
 | Plugin | Purpose |
 | --- | --- |
-| [`@yiln-dsh/dsh-plugin-auth-webserver`](./dsh-plugin-auth-webserver) | Auth-gated reverse proxy on every non-loopback NIC, forwarding to the stock `127.0.0.1:3080` web server. |
+| [`@yiln-dsh/dsh-plugin-auth-webserver`](./dsh-plugin-auth-webserver) | Auth-gated reverse proxy on every non-loopback NIC, forwarding to the stock `127.0.0.1:3080` web server, with optional TOTP 2FA. |
 | [`@yiln-dsh/dsh-plugin-file-explorer`](./dsh-plugin-file-explorer) | Replace the Web GUI details column with a workspace file explorer. |
+| [`@yiln-dsh/dsh-plugin-file-message`](./dsh-plugin-file-message) | Let the model send workspace-backed files and images into the conversation. |
+| [`@yiln-dsh/dsh-plugin-delete-session`](./dsh-plugin-delete-session) | Add a confirmed permanent-delete action for the current session. |
 | [`@yiln-dsh/dsh-plugin-web-daemon`](./dsh-plugin-web-daemon) | Manages `dsh web` as a real systemd unit and edits its configuration from the GUI Settings section. |
+| [`@yiln-dsh/dsh-plugin-terminal-tab`](./dsh-plugin-terminal-tab) | Adds per-session persistent terminal tabs and a **新建终端** action to the Web GUI. |
 
 ## Install
 
@@ -33,7 +36,7 @@ Supported install formats:
 
   ```bash
   cd /path/to/dsh-plugin-auth-webserver && pnpm pack
-  dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.2.0.tgz
+  dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.3.0.tgz
   ```
 
 - **npm package.** Publish one plugin directory, then install by name:
@@ -56,9 +59,12 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 
 | Package | Version |
 | --- | --- |
-| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.2.0` |
+| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.3.0` |
 | `@yiln-dsh/dsh-plugin-file-explorer` | `0.4.0` |
-| `@yiln-dsh/dsh-plugin-web-daemon` | `0.3.0` |
+| `@yiln-dsh/dsh-plugin-delete-session` | `0.1.1` |
+| `@yiln-dsh/dsh-plugin-file-message` | `0.1.0` |
+| `@yiln-dsh/dsh-plugin-web-daemon` | `0.3.2` |
+| `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.5` |
 
 Each plugin's version is the `version` field in its own `package.json`.
 Semantic versioning is recommended: patch for fixes, minor for additive
@@ -85,7 +91,7 @@ shared three ways:
 
   ```bash
   cd dsh-plugin-auth-webserver && pnpm pack
-  dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.2.0.tgz
+  dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.3.0.tgz
   ```
 
 - **Direct GitHub URL.** This works only when the repository root itself is the

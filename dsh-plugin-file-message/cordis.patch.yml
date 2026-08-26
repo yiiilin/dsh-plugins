@@ -1,0 +1,18 @@
+# dsh-plugin-file-message bundle patch.
+#
+# Adds the model-facing send_file/send_image tools and the browser tool cards.
+# The cards resolve the recorded workspace path through the Host at display time;
+# deleting or moving the source file intentionally makes the message unavailable.
+
+- insert:
+    - id: dsh-file-message
+      name: '@yiln-dsh/dsh-plugin-file-message'
+      inject:
+        - webServer
+        - tools
+        - fs
+        - sessions
+        - sessionPersistence
+        - sandboxPolicy
+        - systemPrompt
+      config: {}

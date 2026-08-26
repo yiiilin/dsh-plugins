@@ -1,21 +1,14 @@
 {
-  "name": "@yiln-dsh/dsh-plugin-auth-webserver",
-  "version": "0.3.0",
+  "name": "@yiln-dsh/dsh-plugin-terminal-tab",
+  "version": "0.1.5",
   "publishConfig": {
     "access": "public"
   },
-  "description": "DSH web bundle: an auth-gated reverse proxy on every non-loopback NIC that forwards to the stock 127.0.0.1 web server.",
+  "description": "DSH Web bundle plugin that adds per-session persistent terminal tabs.",
   "type": "module",
-  "scripts": {
-    "test": "node --test test/*.test.js"
-  },
   "main": "index.js",
-  "types": "index.d.ts",
   "exports": {
-    ".": {
-      "types": "./index.d.ts",
-      "default": "./index.js"
-    },
+    ".": "./index.js",
     "./client": "./client.js",
     "./package.json": "./package.json"
   },
@@ -25,25 +18,28 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-runtime"
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-conversation"
       ],
       "platform": "web"
     }
   },
   "files": [
     "index.js",
-    "index.d.ts",
     "client.js",
-    "totp.js",
-    "test",
     "cordis.patch.yml",
     "README.md"
   ],
+  "dependencies": {
+    "@xterm/xterm": "^6.0.0",
+    "ws": "^8.18.0"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
+    "@deepseek-ai/dsh-agent": ">=0.1.0-rc.0",
     "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.0",
-    "@deepseek-ai/dsh-settings": ">=0.1.0-rc.0",
-    "@deepseek-ai/schemastery": ">=3.0.0"
+    "@deepseek-ai/dsh-client-ui-conversation": ">=0.1.0-rc.0",
+    "@deepseek-ai/dsh-subprocess": ">=0.1.0-rc.0"
   },
   "engines": {
     "node": ">=22"

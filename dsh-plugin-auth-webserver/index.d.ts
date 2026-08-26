@@ -10,4 +10,6 @@ export function apply(ctx: any, config: Partial<{
   username: string;
   password: string;
   realm: string;
+  twoFactorEnabled: boolean;
+  twoFactorSecret: string;
 }>): void;

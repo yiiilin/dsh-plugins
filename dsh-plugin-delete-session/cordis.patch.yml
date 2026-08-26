@@ -1,0 +1,14 @@
+# dsh-plugin-delete-session bundle patch.
+#
+# Mounts the Host deletion API. The browser half is declared by dsh.client
+# and contributes an action to the current conversation header.
+
+- insert:
+    - id: dsh-delete-session
+      name: '@yiln-dsh/dsh-plugin-delete-session'
+      inject:
+        - webServer
+        - sessions
+        - agents
+        - sessionPersistence
+      config: {}
