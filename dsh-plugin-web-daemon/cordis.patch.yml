@@ -10,6 +10,7 @@
         - webServer
         - settings
         - clientModules
+        - apiProxy
       config:
         enabled: false
         profile: web

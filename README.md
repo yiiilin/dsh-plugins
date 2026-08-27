@@ -8,10 +8,11 @@ own directory.
 | Plugin | Purpose |
 | --- | --- |
 | [`@yiln-dsh/dsh-plugin-auth-webserver`](./dsh-plugin-auth-webserver) | Auth-gated reverse proxy on every non-loopback NIC, forwarding to the stock `127.0.0.1:3080` web server, with optional TOTP 2FA. |
-| [`@yiln-dsh/dsh-plugin-file-explorer`](./dsh-plugin-file-explorer) | Replace the Web GUI details column with a workspace file explorer. |
+| [`@yiln-dsh/dsh-plugin-file-explorer`](./dsh-plugin-file-explorer) | Contribute workspace Files and Git Graph pages to the right-panel host. |
+| [`@yiln-dsh/dsh-plugin-right-panel`](./dsh-plugin-right-panel) | Fixed right-side page host with keyed Slots, icon rail, and overflow page menu. |
 | [`@yiln-dsh/dsh-plugin-file-message`](./dsh-plugin-file-message) | Let the model send workspace-backed files and images into the conversation. |
 | [`@yiln-dsh/dsh-plugin-delete-session`](./dsh-plugin-delete-session) | Add a confirmed permanent-delete action for the current session. |
-| [`@yiln-dsh/dsh-plugin-web-daemon`](./dsh-plugin-web-daemon) | Manages `dsh web` as a real systemd unit and edits its configuration from the GUI Settings section. |
+| [`@yiln-dsh/dsh-plugin-web-daemon`](./dsh-plugin-web-daemon) | Manages `dsh web` as a real systemd unit, shows server CPU/memory/network status above New Session, and edits its configuration from the GUI Settings section. |
 | [`@yiln-dsh/dsh-plugin-terminal-tab`](./dsh-plugin-terminal-tab) | Adds per-session persistent terminal tabs and a **新建终端** action to the Web GUI. |
 
 ## Install
@@ -60,10 +61,11 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 | Package | Version |
 | --- | --- |
 | `@yiln-dsh/dsh-plugin-auth-webserver` | `0.3.0` |
-| `@yiln-dsh/dsh-plugin-file-explorer` | `0.4.0` |
+| `@yiln-dsh/dsh-plugin-file-explorer` | `0.5.0` |
+| `@yiln-dsh/dsh-plugin-right-panel` | `0.1.0` |
 | `@yiln-dsh/dsh-plugin-delete-session` | `0.1.1` |
 | `@yiln-dsh/dsh-plugin-file-message` | `0.1.0` |
-| `@yiln-dsh/dsh-plugin-web-daemon` | `0.3.2` |
+| `@yiln-dsh/dsh-plugin-web-daemon` | `0.5.8` |
 | `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.5` |
 
 Each plugin's version is the `version` field in its own `package.json`.

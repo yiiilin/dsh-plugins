@@ -16,13 +16,16 @@ window.__ModuleLoader__.load({
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 		let React = require("react");
 
-		const inject = ["slots"];
+		const inject = ["slots", "timer"];
 
 		const STYLE_ID = "dsh-plugin-web-daemon-settings";
-		if (typeof document !== "undefined" && document.getElementById(STYLE_ID) === null) {
-			const style = document.createElement("style");
-			style.id = STYLE_ID;
-			style.setAttribute("data-plugin", "dsh-plugin-web-daemon");
+		if (typeof document !== "undefined") {
+			let style = document.getElementById(STYLE_ID);
+			if (style === null) {
+				style = document.createElement("style");
+				style.id = STYLE_ID;
+				style.setAttribute("data-plugin", "dsh-plugin-web-daemon");
+			}
 			style.textContent = `
 .dwd-card{display:flex;flex-direction:column;gap:0;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:12px;list-style:none;transition:border-color .16s,background .16s}
 .dwd-card:hover{border-color:var(--dsw-alias-label-dimmed)}
@@ -67,9 +70,27 @@ window.__ModuleLoader__.load({
 .dwd-notice{padding:6px 10px;border:1px solid rgba(34,197,94,.28);border-radius:6px;background:rgba(34,197,94,.08);color:#15803d;font-size:13px;line-height:18px}
 .dwd-empty{color:var(--dsw-alias-label-secondary, #57534e);font-size:13px}
 .dwd-cardFooter{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:12px 0 4px;border-top:1px solid var(--dsw-alias-border-l2)}
+.dwd-serverStatus{box-sizing:border-box;width:100%;min-height:84px;margin:0 0 8px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.14));border-radius:8px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1,#fff));color:var(--dsw-alias-label-primary,#111827)}
+.dwd-serverStatusHeader{display:flex;align-items:center;gap:6px;min-height:18px;color:var(--dsw-alias-label-secondary,#57534e);font-size:11px;font-weight:600;line-height:16px}
+.dwd-serverDot{width:7px;height:7px;flex:none;border-radius:50%;background:var(--dsw-alias-label-tertiary,#a8a29e)}
+.dwd-serverStatus[data-state="ok"] .dwd-serverDot{background:#16a34a}
+.dwd-serverStatus[data-state="error"] .dwd-serverDot{background:#dc2626}
+.dwd-serverStatus[data-state="loading"] .dwd-serverDot{background:#d97706}
+.dwd-serverGrid{display:flex;flex-direction:column;gap:5px;margin-top:8px;min-width:0}
+.dwd-serverMetricRow{display:flex;align-items:baseline;gap:7px;min-width:0;white-space:nowrap;overflow:hidden}
+.dwd-serverMetricLabel{flex:none;color:var(--dsw-alias-label-tertiary,#78716c);font-size:10px;line-height:16px}
+.dwd-serverMetricValue{display:inline-block;min-width:0;flex:0 1 auto;color:var(--dsw-alias-label-primary,#111827);font-size:12px;font-weight:600;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dwd-serverMetricValueNetwork{font-size:11px;font-weight:500}
+.dwd-serverMetricValue[data-tone="warn"]{color:#b45309}
+.dwd-serverMetricValue[data-tone="critical"]{color:#b91c1c}
+.dwd-serverError{margin-top:7px;color:var(--dsw-alias-state-error-primary,#b91c1c);font-size:10px;line-height:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dwd-serverStatusRail{box-sizing:border-box;width:28px;height:28px;margin:0 auto 8px;display:flex;align-items:center;justify-content:center;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.14));border-radius:8px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1,#fff));color:var(--dsw-alias-label-secondary,#57534e)}
+.dwd-serverStatusRail .dwd-serverDot{width:8px;height:8px}
+.dwd-serverStatusRail[data-state="ok"] .dwd-serverDot{background:#16a34a}
+.dwd-serverStatusRail[data-state="error"] .dwd-serverDot{background:#dc2626}
+.dwd-serverStatusRail[data-state="loading"] .dwd-serverDot{background:#d97706}
 `;
-
-			document.head.append(style);
+			if (style.parentNode === null) document.head.append(style);
 		}
 
 		async function api(path, payload) {
@@ -91,7 +112,106 @@ window.__ModuleLoader__.load({
 			return data;
 		}
 
-		function WebDaemonCard() {
+		function formatPercent(value) {
+			return typeof value === "number" && Number.isFinite(value) ? `${Math.round(value)}%` : "--";
+		}
+
+		function formatRate(value) {
+			if (typeof value !== "number" || !Number.isFinite(value)) return "--";
+			const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+			let scaled = Math.max(0, value);
+			let unit = 0;
+			while (scaled >= 1024 && unit < units.length - 1) {
+				scaled /= 1024;
+				unit += 1;
+			}
+			const amount = scaled >= 10 ? scaled.toFixed(0) : scaled.toFixed(1);
+			return `${amount} ${units[unit]}`;
+		}
+
+		function metricTone(value) {
+			if (typeof value !== "number" || !Number.isFinite(value)) return "unknown";
+			if (value >= 90) return "critical";
+			if (value >= 75) return "warn";
+			return "ok";
+		}
+
+		function createServerStatus(timer) {
+			return function ServerStatus(props) {
+				const [snapshot, setSnapshot] = React.useState(null);
+				const [error, setError] = React.useState(null);
+				const failuresRef = React.useRef(0);
+				const requestRef = React.useRef(false);
+
+				const refresh = React.useCallback(async () => {
+					if (requestRef.current) return;
+					requestRef.current = true;
+					try {
+						const next = await api("/_dsh/web-daemon/metrics");
+						failuresRef.current = 0;
+						setSnapshot(next);
+						setError(null);
+					} catch {
+						failuresRef.current += 1;
+						if (failuresRef.current >= 3) setError("服务器状态暂时不可用");
+					} finally {
+						requestRef.current = false;
+					}
+				}, []);
+
+				React.useEffect(() => {
+					void refresh();
+					return timer.interval(() => void refresh(), 3000);
+				}, [refresh]);
+
+				const state = error !== null ? "error" : snapshot === null ? "loading" : "ok";
+				const wide = props.wide !== false;
+				if (!wide) {
+					return React.createElement(
+						"div",
+						{ className: "dwd-serverStatusRail", "data-state": state, role: "status", "aria-label": error === null ? "服务器状态" : "服务器状态不可用", title: "服务器状态" },
+						React.createElement("span", { className: "dwd-serverDot", "aria-hidden": "true" }),
+					);
+				}
+
+				const cpu = snapshot?.cpu;
+				const memory = snapshot?.memory;
+				const network = snapshot?.network;
+				return React.createElement(
+					"section",
+					{ className: "dwd-serverStatus", "data-state": state, role: "status", "aria-label": "服务器状态" },
+					React.createElement(
+						"div",
+						{ className: "dwd-serverStatusHeader" },
+						React.createElement("span", { className: "dwd-serverDot", "aria-hidden": "true" }),
+						"服务器",
+					),
+					React.createElement(
+						"div",
+						{ className: "dwd-serverGrid" },
+						React.createElement(
+							"div",
+							{ className: "dwd-serverMetricRow" },
+							React.createElement("span", { className: "dwd-serverMetricLabel" }, "CPU："),
+							React.createElement("b", { className: "dwd-serverMetricValue", "data-tone": metricTone(cpu?.percent) }, formatPercent(cpu?.percent)),
+							React.createElement("span", { className: "dwd-serverMetricLabel" }, "内存"),
+							React.createElement("b", { className: "dwd-serverMetricValue", "data-tone": metricTone(memory?.percent) }, formatPercent(memory?.percent)),
+						),
+						React.createElement(
+							"div",
+							{ className: "dwd-serverMetricRow" },
+							React.createElement("span", { className: "dwd-serverMetricLabel" }, "网络："),
+							React.createElement("span", { className: "dwd-serverMetricValue dwd-serverMetricValueNetwork" }, "上行 ", formatRate(network?.txBytesPerSecond)),
+							React.createElement("span", { className: "dwd-serverMetricValue dwd-serverMetricValueNetwork" }, "下行 ", formatRate(network?.rxBytesPerSecond)),
+						),
+					),
+					error === null ? null : React.createElement("div", { className: "dwd-serverError" }, error),
+				);
+			};
+		}
+
+		function WebDaemonCard(props) {
+			const timer = props.timer;
 			const [open, setOpen] = React.useState(false);
 			const [snapshot, setSnapshot] = React.useState(null);
 			const [draft, setDraft] = React.useState(null);
@@ -118,8 +238,8 @@ window.__ModuleLoader__.load({
 
 			React.useEffect(() => {
 				void refresh();
-				const timer = window.setInterval(() => void refresh(), 4000);
-				return () => window.clearInterval(timer);
+				const cancel = timer.interval(() => void refresh(), 4000);
+				return cancel;
 			}, [refresh]);
 
 			const config = draft === null ? snapshot?.config : draft;
@@ -148,7 +268,7 @@ window.__ModuleLoader__.load({
 						// polling reconnect to the fresh process.
 						api("/_dsh/web-daemon/restart", {}).catch(() => {});
 						setNotice("Restart requested — waiting for the service to come back...");
-						window.setTimeout(() => void refresh(), 3000);
+						timer.timeout(() => void refresh(), 3000);
 					} else {
 						const result = await api(`/_dsh/web-daemon/${action}`, {});
 						setSnapshot(result);
@@ -311,11 +431,18 @@ window.__ModuleLoader__.load({
 
 		function apply(ctx) {
 			const slots = ctx.get("slots");
-			if (slots === undefined) return;
+			const timer = ctx.get("timer");
+			if (slots === undefined || timer === undefined) return;
+			const ServerStatus = createServerStatus(timer);
+			ctx.slots.inject("sidebar.server.status", () => ctx.slots.register({
+				name: "sidebar.server.status",
+				id: "web-daemon-server-status",
+				inject: () => ({})
+			}, ServerStatus));
 			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
 				name: "settings.plugin.item",
 				key: "web-daemon",
-				inject: () => ({})
+				inject: () => ({ timer })
 			}, WebDaemonCard));
 		}
 

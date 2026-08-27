@@ -1,14 +1,26 @@
 # @yiln-dsh/dsh-plugin-web-daemon
 
-A DSH plugin that manages the `dsh web` worker as a **real systemd unit**: the
-plugin generates the unit file, maps the GUI buttons onto
+A DSH plugin that manages the `dsh web` worker as a **real systemd unit** and adds a compact server-health monitor above the New Session button. The plugin generates the unit file, maps the GUI buttons onto
 `systemctl start/stop/restart/reset-failed`, and lets the Settings page edit
-the few fields that matter.
+the few fields that matter. It also keeps a durable registry of top-level
+sessions attached to the daemon so they can be resumed after a process restart.
 
 Crash recovery (`Restart=always` — it keeps restarting unless explicitly
-stopped with `systemctl stop`), boot autostart (`systemctl enable`),
-and logs (journald) are handled by systemd itself — there is no built-in
-child-process supervisor and no plugin-side restart logic.
+stopped with `systemctl stop`), boot autostart (`systemctl enable`), and logs
+(journald) are handled by systemd itself. Session recovery is handled by the
+plugin's registry at `$DSH_HOME/plugins/dsh-plugin-web-daemon/active-sessions.json`:
+attached top-level agents are recorded atomically with their live status. Only
+records marked `running: true` are resumed after the next daemon start; idle
+sessions are removed from the registry. A final turn terminated by a
+daemon shutdown is explicitly queued once for continuation after the Agent is
+restored. The registry stores only
+session identity, workspace, preset, and model options; it contains no
+credentials. Only the managed systemd worker (`DSH_WEB_DAEMON_WORKER=1`)
+owns this registry; a foreground owner sharing the same `DSH_HOME` never
+resumes the same identity. A small `active-sessions.lock` lease beside the
+registry prevents two managed workers from resuming the same session. A
+normal shutdown keeps the records for the next start, while an explicitly
+disposed session is removed.
 
 ## What it does
 
@@ -17,7 +29,10 @@ child-process supervisor and no plugin-side restart logic.
   Start/Stop/Restart/Reset buttons plus the editable fields.
 - Generates `/etc/systemd/system/<unit>` (system scope, needs root) or
   `~/.config/systemd/user/<unit>` (`user` scope) on save/start.
-- Exposes daemon state through `/_dsh/web-daemon/*` JSON routes.
+- Adds a compact **Server status** panel above New Session with live CPU percentage, memory percentage, and network download/upload rates. The panel collapses to a status dot with the sidebar rail.
+- Exposes daemon state through `/_dsh/web-daemon/*` JSON routes and server metrics through `/_dsh/web-daemon/metrics`.
+- Records top-level sessions and their live status in `$DSH_HOME/plugins/dsh-plugin-web-daemon/active-sessions.json`. Only sessions recorded with `running: true` are resumed; idle sessions are not started just because they have a transcript. Persisted sessions that were deleted are pruned; subagent sessions are intentionally excluded.
+- A resumed session restores its transcript and Agent. If the previous process stopped while the session was marked running, the plugin queues one internal recovery notice to continue it. Tool calls marked as unknown are explicitly left for the model to verify before retrying.
 - Registers the `web-daemon` settings namespace in the Host settings service
   (the card is keyed by that namespace on `settings.plugin.item`).
 - The worker runs `dsh web --profile <profile> --no-open --port <port>` bound
@@ -34,7 +49,7 @@ child-process supervisor and no plugin-side restart logic.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.3.2`.
+The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.5.8`.
 
 ### npm package
 
@@ -67,6 +82,6 @@ daemon, and restarts the worker if it was running.
 
 | File | Content |
 | --- | --- |
-| `index.js` | Host half: systemd unit generation, systemctl actions, settings namespace, JSON API. |
-| `lib/client.js` | Browser half: Settings plugin-configuration card (settings.plugin.item keyed by `web-daemon`) for daemon status and configuration. |
+| `index.js` | Host half: systemd unit generation, session registry and resume lifecycle, system metrics sampling, settings namespace, JSON API, and the sidebar client-bundle patch. |
+| `lib/client.js` | Browser half: server status panel above New Session plus the Settings plugin-configuration card. |
 | `cordis.patch.yml` | Adds the host row and default configuration to the composed profile. |
