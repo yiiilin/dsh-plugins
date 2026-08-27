@@ -1,9 +1,11 @@
+import { createReadStream } from 'node:fs'
+
 /**
  * dsh-plugin-file-explorer — Host half (static DSH bundle).
  *
  * Registers exact HTTP routes under /_dsh/file-explorer for the browser
- * bundle: list (with parent path), read (text/image preview), download (data URL),
- * and delete.
+ * bundle: list (with parent path), read (text/image preview), download
+ * (native streaming), and delete.
  */
 
 function parentOf(path) {
@@ -190,29 +192,52 @@ export function apply(ctx) {
   })
 
   addRoute('/_dsh/file-explorer/download', async (req, res) => {
-    if (req.method === 'POST') req = await readJson(req)
+    const url = new URL(req.url || '/', 'http://dsh.local')
+    const requestedPath = url.searchParams.get('path')
     const fs = ctx.get('fs')
     if (fs === undefined) {
       sendJson(res, 200, { ok: false, error: 'filesystem service unavailable' })
       return
     }
-    if (typeof req.path !== 'string') {
+    if (typeof requestedPath !== 'string' || requestedPath.trim() === '') {
       sendJson(res, 200, { ok: false, error: 'missing file path' })
       return
     }
 
     try {
-      const target = await fs.resolve(req.path)
+      const target = await fs.resolve(requestedPath)
       const info = await fs.stat(target)
-      const size = info && typeof info.size === 'number' ? info.size : null
-      const limit = 64 * 1024 * 1024
-      if (size !== null && size > limit) {
-        sendJson(res, 200, { ok: false, error: 'file too large for explorer download' })
+      if (info === undefined || info.type !== 'file') {
+        sendJson(res, 200, { ok: false, error: 'file does not exist' })
         return
       }
-      const bytes = await fs.readBytes(target, undefined, limit)
-      const name = target.displayPath.split('/').pop()
-      sendJson(res, 200, { ok: true, name, size, dataUrl: `data:${guessMime(name)};base64,${bytesToBase64(bytes)}` })
+      const size = typeof info.size === 'number' && Number.isFinite(info.size) && info.size >= 0 ? info.size : 0
+      const name = target.displayPath.split('/').pop() || 'download'
+      const safeName = String(name).replace(/[\r\n"\\]/gu, '_').replace(/[^\x20-\x7e]/gu, '_') || 'download'
+      const encodedName = encodeURIComponent(String(name)).replace(/['()]/gu, (value) => `%${value.charCodeAt(0).toString(16).toUpperCase()}`)
+
+      res.writeHead(200, {
+        'content-type': guessMime(name),
+        'content-disposition': `attachment; filename="${safeName}"; filename*=UTF-8''${encodedName}`,
+        'content-length': size,
+        'x-content-type-options': 'nosniff',
+        'cache-control': 'no-store',
+      })
+
+      // Native streaming download: pipe the resolved host path straight to the
+      // HTTP response. No full-file buffering, no base64, no 64 MiB ceiling.
+      const stream = createReadStream(fs.processPath(target))
+      stream.on('error', (error) => {
+        if (res.headersSent) res.destroy(error)
+        else {
+          try {
+            sendJson(res, 500, { ok: false, error: `failed to stream file: ${error && typeof error.message === 'string' ? error.message : String(error)}` })
+          } catch {
+            res.destroy(error)
+          }
+        }
+      })
+      stream.pipe(res)
     } catch (error) {
       sendJson(res, 200, { ok: false, error: error && typeof error.message === 'string' ? error.message : String(error) })
     }

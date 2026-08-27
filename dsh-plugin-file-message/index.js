@@ -1,3 +1,4 @@
+import { createReadStream } from 'node:fs'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -363,21 +364,36 @@ async function handleContent(ctx, req, res) {
     if (!ctx.fs.contains(await ctx.fs.resolve(record.cwd), target)) throw new Error('source file is outside the session workspace')
 
     const size = asPositiveSize(info)
-    if (size > MAX_TRANSFER_BYTES) throw new Error(`source file exceeds the ${MAX_TRANSFER_BYTES} byte transfer limit`)
     if (mode === 'preview' && (!String(record.mediaType).startsWith('image/') || size > MAX_PREVIEW_BYTES)) {
       throw new Error('image preview is unavailable for this file')
     }
 
-    const bytes = await ctx.fs.readBytes(target, undefined, MAX_TRANSFER_BYTES)
     const mediaType = mode === 'preview' ? String(record.mediaType) : (String(record.mediaType) || 'application/octet-stream')
     res.writeHead(200, {
       'content-type': mediaType,
       'cache-control': 'no-store',
       'content-disposition': contentDisposition(record.displayName, mode),
-      'content-length': bytes.byteLength,
+      'content-length': size,
       'x-content-type-options': 'nosniff',
     })
-    res.end(Buffer.from(bytes))
+
+    // Native streaming download: pipe the resolved host path straight to the
+    // HTTP response. No full-file buffering in Node or the browser, and no
+    // fixed transfer ceiling — the earlier MAX_TRANSFER_BYTES read bound no
+    // longer applies to `download` (preview stays capped at MAX_PREVIEW_BYTES).
+    const path = ctx.fs.processPath(target)
+    const stream = createReadStream(path)
+    stream.on('error', (error) => {
+      if (res.headersSent) res.destroy(error)
+      else {
+        try {
+          sendJson(res, 500, { ok: false, error: `failed to stream file: ${errorMessage(error)}` })
+        } catch {
+          res.destroy(error)
+        }
+      }
+    })
+    stream.pipe(res)
   } catch (error) {
     const status = /not found|no longer available|file message not found|session not found/iu.test(errorMessage(error)) ? 404 : 400
     sendJson(res, status, { ok: false, error: errorMessage(error) })

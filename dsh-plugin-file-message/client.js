@@ -135,52 +135,28 @@ window.__ModuleLoader__.load({
       return URL.createObjectURL(blob);
     }
 
+    function downloadUrl(sessionId, callId) {
+      const query = new URLSearchParams({ sessionId: String(sessionId), callId: String(callId), mode: "download" });
+      return `${API_PATH}?${query.toString()}`;
+    }
+
     function createDownloadLink(t) {
       return function DownloadLink({ sessionId, callId, name, className = "dfm-link", children = t("download") }) {
-        const [href, setHref] = React.useState(null);
-        const [busy, setBusy] = React.useState(false);
-        const busyRef = React.useRef(false);
-        const linkRef = React.useRef(null);
-
-        React.useEffect(() => () => {
-          if (href !== null) URL.revokeObjectURL(href);
-        }, [href]);
-
-        const onClick = async (event) => {
-          if (href !== null) return;
-          event.preventDefault();
-          if (busyRef.current) return;
-          busyRef.current = true;
-          setBusy(true);
-          try {
-            const next = await fetchResource(sessionId, callId, "download");
-            setHref(next);
-            const link = linkRef.current;
-            if (link !== null) {
-              link.href = next;
-              link.download = name;
-              link.click();
-            }
-          } catch (error) {
-            console.error("file-message download failed", error);
-          } finally {
-            busyRef.current = false;
-            setBusy(false);
-          }
-        };
-
+        // Native streaming download: the anchor navigates straight to the Host
+        // route, which streams the file with `Content-Disposition: attachment`.
+        // The browser handles the download natively — no fetch, no blob, no
+        // object URL, no full-file buffering in page memory.
+        const href = downloadUrl(sessionId, callId);
         return React.createElement("a", {
-          ref: linkRef,
           className,
-          href: href || "#",
-          download: href ? name : undefined,
-          onClick,
-          title: href ? t("download.withName", { name }) : t("preparing.withName", { name }),
-        }, busy ? t("preparing") : children);
+          href,
+          download: name,
+          title: t("download.withName", { name }),
+        }, children);
       };
     }
 
-    function createImageMessage(t) {
+    function createImageMessage(t, DownloadLink) {
       return function ImageMessage({ sessionId, callId, record }) {
         const [preview, setPreview] = React.useState({ status: "loading", url: null, error: null });
         const [lightbox, setLightbox] = React.useState(false);
@@ -249,7 +225,7 @@ window.__ModuleLoader__.load({
       };
     }
 
-    function createFileMessage(t) {
+    function createFileMessage(t, DownloadLink) {
       return function FileMessage({ sessionId, callId, record }) {
         const extension = record.displayName.includes(".") ? record.displayName.split(".").pop().slice(0, 5) : "file";
         const size = `${Math.max(0, Math.round(record.size / 1024))} KB`;
@@ -267,7 +243,7 @@ window.__ModuleLoader__.load({
       };
     }
 
-    function createFileMessageToolView(t) {
+    function createFileMessageToolView(t, ImageMessage, FileMessage) {
       return function FileMessageToolView(props) {
         const errorText = (block) => {
           if (!settledBlock(block) || !Array.isArray(block.content)) return t("send.failed");
@@ -303,9 +279,9 @@ window.__ModuleLoader__.load({
         ? locale.bind(LOCALE_NS)
         : (key, params) => applyParams(ZH_DICT[key] ?? EN_DICT[key] ?? key, params);
       const DownloadLink = createDownloadLink(t);
-      const ImageMessage = createImageMessage(t);
-      const FileMessage = createFileMessage(t);
-      const FileMessageToolView = createFileMessageToolView(t);
+      const ImageMessage = createImageMessage(t, DownloadLink);
+      const FileMessage = createFileMessage(t, DownloadLink);
+      const FileMessageToolView = createFileMessageToolView(t, ImageMessage, FileMessage);
       ctx.effect(() => installStyle(), "file-message: stylesheet");
       ctx.slots.inject("tool.call.toolview", function* () {
         yield ctx.slots.register({ name: "tool.call.toolview", key: "send_file" }, FileMessageToolView);

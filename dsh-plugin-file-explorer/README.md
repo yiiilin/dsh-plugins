@@ -36,7 +36,7 @@ A DSH `dsh.bundle` that contributes a workspace file explorer page to the
 
 ## Install
 
-The package version is `@yiln-dsh/dsh-plugin-file-explorer@0.5.1`.
+The package version is `@yiln-dsh/dsh-plugin-file-explorer@0.6.0`.
 
 The right-panel package must be installed in the same `web` profile:
 
@@ -53,7 +53,7 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./yiln-dsh-dsh-plugin-file-explorer-0.5.1.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-file-explorer-0.6.0.tgz
 ```
 
 ### npm package
@@ -76,8 +76,10 @@ apply the new profile composition.
 - The Host falls back to `sandboxPolicy.workspaceRoot` when no path is passed,
   and returns `{ ok, path, parent, entries }` JSON — never live objects.
 - `read` previews up to 1 MiB of UTF-8 text or 16 MiB of recognized images;
-  image previews return a data URL for inline rendering. `download` returns a
-  base64 data URL (64 MiB cap) that the browser triggers with `<a download>`.
+  image previews return a data URL for inline rendering. `download` is a GET
+  route (`/_dsh/file-explorer/download?path=...`) that streams the file
+  natively (`Content-Disposition: attachment`) — no base64, no JSON body, no
+  size ceiling. The browser triggers it with a transient `<a download>` link.
 - `delete` removes regular files (`rm -f`) and directories recursively
   (`rm -rf`); both are called only after a second-click confirm in the UI.
 - Git routes are read-only. They resolve the repository root with

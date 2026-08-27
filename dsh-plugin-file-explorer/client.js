@@ -1515,25 +1515,21 @@ window.__ModuleLoader__.load({
 
 				const downloadFile = (entry) => {
 					setPendingDelete(null)
-					api('download', { path: entry.path })
-						.then((raw) => {
-							if (!raw || raw.ok !== true) {
-								const message = raw && typeof raw.error === 'string' ? raw.error : t('files.downloadFailed')
-								setError(message)
-								return
-							}
-							try {
-								const link = document.createElement('a')
-								link.href = raw.dataUrl
-								link.download = entry.name
-								document.body.appendChild(link)
-								link.click()
-								link.remove()
-							} catch (err) {
-								setError(err && typeof err.message === 'string' ? err.message : String(err))
-							}
-						})
-						.catch((err) => setError(err && typeof err.message === 'string' ? err.message : String(err)))
+					// Native streaming download: navigate to the Host route, which
+					// streams the file with `Content-Disposition: attachment`. The
+					// browser handles the download natively — no JSON data URL, no
+					// base64, no full-file buffering in page memory.
+					try {
+						const query = new URLSearchParams({ path: entry.path })
+						const link = document.createElement('a')
+						link.href = `/_dsh/file-explorer/download?${query.toString()}`
+						link.download = entry.name
+						document.body.appendChild(link)
+						link.click()
+						link.remove()
+					} catch (err) {
+						setError(err && typeof err.message === 'string' ? err.message : String(err))
+					}
 				}
 
 				const requestDelete = (entry) => {
