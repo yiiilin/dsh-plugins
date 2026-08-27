@@ -1,0 +1,9 @@
+# dsh-plugin-right-panel bundle patch.
+#
+# The Host half is intentionally inert. Its Client half owns the Web GUI
+# `details` Slot and exposes the `rightPanel` Client registration service.
+
+- insert:
+    - id: dsh-right-panel
+      name: '@yiln-dsh/dsh-plugin-right-panel'
+      config: {}
