@@ -29,8 +29,18 @@ width, and collapse behavior.
 
 ## Install
 
+The package version is `@yiln-dsh/dsh-plugin-right-panel@0.1.0`.
+
 ```bash
 dsh plugin --profile web add file:/path/to/dsh-plugin-right-panel
 ```
 
-The page-contributing plugin must also be installed in the same `web` profile.
+Or from npm:
+
+```bash
+dsh plugin --profile web add @yiln-dsh/dsh-plugin-right-panel@latest
+```
+
+The page-contributing plugin (for example
+`@yiln-dsh/dsh-plugin-file-explorer`) must also be installed in the same
+`web` profile; restart `dsh web` after install so the client bundle loads.

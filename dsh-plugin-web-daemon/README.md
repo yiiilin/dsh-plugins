@@ -78,6 +78,51 @@ Everything else is intentionally fixed: `Restart=always` with
 journal (`journalctl -u <unit> -f`). Saving rewrites the unit, reloads the
 daemon, and restarts the worker if it was running.
 
+## Session recovery
+
+The registry lives at
+`$DSH_HOME/plugins/dsh-plugin-web-daemon/active-sessions.json` and stores one
+record per top-level session together with its live status:
+
+```json
+{
+  "version": 1,
+  "updatedAt": "2026-08-27T03:22:27.680Z",
+  "sessions": [
+    { "sessionId": "session-…", "running": true, "cwd": "/path", "agentPreset": "yiln", "agentOptions": { "provider": "…", "model": "…", "maxTokens": 128000 } }
+  ]
+}
+```
+
+Recorded state is the single source of truth:
+
+- `agent/status = running` adds or refreshes the record; `idle` or an explicit
+  disposal removes it.
+- On `SIGTERM` / `SIGINT` the plugin snapshots every Agent that is still
+  `running` before the process exits, so `systemctl restart` keeps the exact
+  set that was live.
+- On startup the systemd worker (`DSH_WEB_DAEMON_WORKER=1` — the only process
+  that owns the registry) loads the file and resumes each `running: true`
+  record: the Agent is rebuilt with the recorded `agentOptions` and
+  `agentPreset`, and one internal recovery notice is queued so the model
+  continues the interrupted task instead of sitting idle.
+- Legacy records without a `running` field are migrated once: they are resumed
+  only when the persisted log ends in an interrupted/disposed turn.
+- A foreground owner sharing `DSH_HOME` never resumes; `active-sessions.lock`
+  (pid + boot identity + token) prevents two workers from racing.
+- While recovery is in progress, Host API calls that would create or wake an
+  Agent (`session.prompt`, `session.models`, …) wait behind the same barrier,
+  so an auto-reconnecting browser cannot claim a session before resume.
+
+Each boot writes `recovery-diagnostics.json` next to the registry, recording
+the lock result, every session's decision (`resumed` / `skipped-already-live` /
+`skipped-not-running` / `failed` + error), and the API calls the gate held:
+
+```bash
+cat "$DSH_HOME/plugins/dsh-plugin-web-daemon/recovery-diagnostics.json"
+journalctl -u dsh-web.service -f   # look for "resumed session …"
+```
+
 ## Layout
 
 | File | Content |
