@@ -1,6 +1,6 @@
 {
   "name": "@yiln-dsh/dsh-plugin-terminal-tab",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "publishConfig": {
     "access": "public"
   },

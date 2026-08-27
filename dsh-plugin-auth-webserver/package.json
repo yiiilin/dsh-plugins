@@ -1,6 +1,6 @@
 {
   "name": "@yiln-dsh/dsh-plugin-auth-webserver",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publishConfig": {
     "access": "public"
   },

@@ -36,7 +36,7 @@ A DSH `dsh.bundle` that contributes a workspace file explorer page to the
 
 ## Install
 
-The package version is `@yiln-dsh/dsh-plugin-file-explorer@0.5.0`.
+The package version is `@yiln-dsh/dsh-plugin-file-explorer@0.5.1`.
 
 The right-panel package must be installed in the same `web` profile:
 
@@ -53,7 +53,7 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./yiln-dsh-dsh-plugin-file-explorer-0.5.0.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-file-explorer-0.5.1.tgz
 ```
 
 ### npm package

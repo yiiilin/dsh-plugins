@@ -29,7 +29,7 @@ width, and collapse behavior.
 
 ## Install
 
-The package version is `@yiln-dsh/dsh-plugin-right-panel@0.1.0`.
+The package version is `@yiln-dsh/dsh-plugin-right-panel@0.1.1`.
 
 ```bash
 dsh plugin --profile web add file:/path/to/dsh-plugin-right-panel

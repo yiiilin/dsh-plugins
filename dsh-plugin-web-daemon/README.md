@@ -49,7 +49,7 @@ disposed session is removed.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.5.8`.
+The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.5.9`.
 
 ### npm package
 
