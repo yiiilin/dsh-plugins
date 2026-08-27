@@ -1,11 +1,10 @@
 /**
  * dsh-plugin-file-explorer — browser bundle (static DSH client module).
  *
- * Renders the file explorer into the `details` slot (right layout column),
- * replacing the native tool-details panel while running. The column squeezes
- * the conversation and keeps the native resizer handle.
+ * Registers the file explorer as a page in the `right-panel` host. The host
+ * owns the right layout column, width, navigation rail, and page switching.
  *
- * Two views behind the header tabs:
+ * Two views behind the page's local tabs:
  *  - Files: directory browser (list / read / download / delete via the
  *    /_dsh/file-explorer API).
  *  - Git Graph: a vscode/git-graph style commit DAG with colored lanes, ref
@@ -20,12 +19,12 @@ window.__ModuleLoader__.load({
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 		let React = require("react");
 
-		const inject = ["slots", "layout"];
+		const inject = ["slots", "rightPanel"];
 
 		function apply(ctx) {
 			const slots = ctx.get('slots')
-			const layout = ctx.get('layout')
-			if (slots === undefined) return
+			const rightPanel = ctx.get('rightPanel')
+			if (slots === undefined || rightPanel === undefined) return
 
 			const style = document.createElement("style");
 			style.id = "dsh-plugin-file-explorer-style";
@@ -76,35 +75,6 @@ window.__ModuleLoader__.load({
 }
 .dsh-fe-icon:hover {
   background: var(--dsw-alias-interactive-bg-hover, var(--dsw-alias-bg-layer-2, #e7e5e4));
-}
-.dsh-fe-tabs {
-  display: flex;
-  gap: 2px;
-  padding: 8px 12px 0;
-}
-.dsh-fe-tab {
-  flex: 1 1 0;
-  height: 26px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary, #4b5563);
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-}
-.dsh-fe-tab:hover {
-  background: var(--dsw-alias-bg-layer-2, #e7e5e4);
-}
-.dsh-fe-tab-active,
-.dsh-fe-tab-active:hover {
-  background: var(--dsw-alias-bg-layer-2, #e7e5e4);
-  color: var(--dsw-alias-label-primary, #111827);
-  font-weight: 600;
 }
 .dsh-fe-path {
   min-width: 0;
@@ -587,153 +557,18 @@ window.__ModuleLoader__.load({
   font-size: 12px;
   unicode-bidi: plaintext;
 }
-.dsh-fe-rail {
+.dsh-fe-page {
   height: 100%;
-  width: 100%;
-  box-sizing: border-box;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 6px;
+  box-sizing: border-box;
+  overflow: hidden;
   background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-base, #f5f5f4));
-  border-left: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.16));
-}
-/* While collapsed, keep a real RAIL_WIDTH column in the layout (like the left
-   sidebar's 56px rail) instead of a floating overlay. This !important rule
-   overrides React's inline grid-template-columns on the app frame; the data
-   attribute is added by applyRail() and removed on expand/unload. */
-[data-dsh-fe-rail] {
-  grid-template-columns: var(--dsh-fe-rail-sidebar, 280px) minmax(0, 1fr) 56px !important;
-}
-.dsh-fe-rail-button {
-  width: 36px;
-  height: 36px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary, #4b5563);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.dsh-fe-rail-button:hover {
-  background: var(--dsw-alias-bg-layer-2, #e7e5e4);
-  color: var(--dsw-alias-brand-primary, #4f46e5);
+  color: var(--dsw-alias-label-primary, #111827);
 }
 `;
 			document.head.append(style);
-
-			// --- details-column width persistence ---------------------------------
-			// The shell's layout store is transient: openDetails() resets the column
-			// to its 360px contract default on every mount and session switch. The
-			// bound store actions reach the LayoutController after every client
-			// module has applied (the root entry's inject hook fires on first
-			// render and again on re-register), so wrapping attachPanels on the
-			// prototype captures them reliably. setDetails then restores the last
-			// user-chosen width, and a document-level pointerup listener persists
-			// the column width after each resizer drag.
-			const WIDTH_KEY = "dsh-plugin-file-explorer.detailsWidth";
-			const WIDTH_MIN = 300; // the layout contract's clamp floor
-			let panelActions = null;
-			let savedWidth = 0;
-			try { savedWidth = Number(window.localStorage.getItem(WIDTH_KEY)) || 0 } catch (_e) { }
-
-			const findDetailsColumn = () => {
-				// The details column's own class is the reliable anchor: the drag
-				// handle's previousElementSibling is the sidebar handle or the
-				// overlay layer, never the column itself.
-				const byClass = document.querySelector('[class*="detailsCol"]')
-				if (byClass !== null) return byClass
-				const handle = document.querySelector('[data-side="details"]')
-				if (handle !== null && handle.previousElementSibling !== null) return handle.previousElementSibling
-				return null
-			}
-			const persistWidth = () => {
-				const column = findDetailsColumn()
-				if (column === null) return
-				const width = Math.round(column.getBoundingClientRect().width)
-				if (width < WIDTH_MIN) return
-				savedWidth = width
-				try { window.localStorage.setItem(WIDTH_KEY, String(width)) } catch (_e) { }
-			}
-			const onDocumentPointerUp = () => { persistWidth() }
-			document.addEventListener("pointerup", onDocumentPointerUp, true)
-			ctx.effect(() => () => document.removeEventListener("pointerup", onDocumentPointerUp, true))
-
-			if (layout !== undefined) {
-				const proto = Object.getPrototypeOf(layout)
-				if (proto !== null && typeof proto.attachPanels === "function") {
-					const originalAttach = proto.attachPanels
-					proto.attachPanels = function (actions) {
-						panelActions = actions
-						return originalAttach.call(this, actions)
-					}
-					ctx.effect(() => () => { proto.attachPanels = originalAttach })
-				}
-			}
-			const restoreWidth = () => {
-				if (savedWidth < WIDTH_MIN) return
-				if (panelActions === null || typeof panelActions.setDetails !== "function") return
-				try { panelActions.setDetails(savedWidth) } catch (_e) { }
-			}
-
-			// --- collapsed rail as a real layout column --------------------------
-			// The layout contract gives the sidebar a 56px rail when closed but
-			// closes the details column to 0px (no rail). To collapse like the left
-			// sidebar, keep the store closed (no drag handle / border) and force the
-			// frame's third grid track to RAIL_WIDTH via an !important stylesheet
-			// rule keyed on a data attribute we own. CSS !important beats React's
-			// inline grid style, so there is no fight with React re-renders: set the
-			// attribute to collapse, remove it to expand. A MutationObserver only
-			// refreshes the sidebar-width variable (the first track) when the app
-			// re-renders the frame.
-			const RAIL_WIDTH = 56;
-			let railActive = false;
-			const frameOfDetails = () => {
-				const column = findDetailsColumn();
-				if (column === null || column.parentElement === null) return null;
-				return column.parentElement;
-			};
-			const syncRailVar = () => {
-				const frame = frameOfDetails();
-				if (frame === null) return;
-				const sideCol = frame.children.length > 0 ? frame.children[0] : null;
-				const sidebarPx = sideCol !== null ? Math.round(sideCol.getBoundingClientRect().width) : 280;
-				try { frame.style.setProperty("--dsh-fe-rail-sidebar", `${sidebarPx}px`) } catch (_e) { }
-			};
-			const applyRail = () => {
-				const frame = frameOfDetails();
-				if (frame === null) return;
-				if (railActive) {
-					frame.setAttribute("data-dsh-fe-rail", "");
-					syncRailVar();
-				} else {
-					frame.removeAttribute("data-dsh-fe-rail");
-				}
-			};
-			const releaseRail = () => {
-				railActive = false;
-				applyRail();
-			};
-			let railObserver = null;
-			if (typeof MutationObserver === "function") {
-				railObserver = new MutationObserver(() => {
-					if (railActive) syncRailVar();
-				});
-				ctx.effect(() => {
-					const frame = frameOfDetails();
-					if (frame !== null) railObserver.observe(frame, { attributes: true, attributeFilter: ["style"] });
-					return () => {
-						railObserver?.disconnect();
-						const frame = frameOfDetails();
-						if (frame !== null) frame.removeAttribute("data-dsh-fe-rail");
-						railActive = false;
-					};
-				});
-			}
-			// -----------------------------------------------------------------------
 
 			async function api(method, payload) {
 				const options = { headers: { "content-type": "application/json" } };
@@ -1331,7 +1166,7 @@ window.__ModuleLoader__.load({
 				)
 			}
 
-			function FileExplorerPanel(props) {
+			function FileExplorerPage(props) {
 				if (typeof props.useSessions !== 'function') return null
 
 				const sessionId = props.useSessions((state) => {
@@ -1364,23 +1199,11 @@ window.__ModuleLoader__.load({
 				const [imageDragging, setImageDragging] = React.useState(false)
 				const imageDrag = React.useRef(null)
 				const [pendingDelete, setPendingDelete] = React.useState(null)
-				const [view, setView] = React.useState('files')
-				const [collapsed, setCollapsed] = React.useState(false)
-
-				React.useEffect(() => {
-					if (sessionId === undefined) return
-					setCollapsed(false)
-					if (layout !== undefined) {
-						try { layout.openDetails() } catch (_e) { }
-					}
-					// Same-tick store updates batch in React, so restoring right after
-					// openDetails() replaces the 360px default without a visible jump.
-					restoreWidth()
-				}, [sessionId])
 
 				React.useEffect(() => {
 					if (sessionId === undefined) {
-						releaseRail()
+						setParentPath(null)
+						setRequestPath('')
 						return
 					}
 					setParentPath(null)
@@ -1432,34 +1255,6 @@ window.__ModuleLoader__.load({
 					return aDir - bDir || a.name.localeCompare(b.name)
 				})
 				const isRoot = parentPath === null || parentPath === currentPath
-				// Collapse into a slim icon rail that keeps a real 56px column in
-				// the layout (like the left sidebar's rail): the details store stays
-				// closed (no drag handle / border), and applyRail() toggles the
-				// [data-dsh-fe-rail] attribute so the !important stylesheet rule
-				// overrides the frame's third grid track. A MutationObserver keeps
-				// the sidebar-width variable fresh across app re-renders.
-				const collapse = () => {
-					setCollapsed(true)
-					railActive = true
-					closePreview()
-					setPendingDelete(null)
-					setEditingPath(false)
-					if (layout !== undefined) {
-						try { layout.closeDetails() } catch (_e) { }
-					}
-					applyRail()
-				}
-				const expand = (nextView) => {
-					releaseRail()
-					setCollapsed(false)
-					setView(nextView)
-					if (layout !== undefined) {
-						try { layout.openDetails() } catch (_e) { }
-					}
-					// Same-tick store updates batch in React, so restoring right after
-					// openDetails() replaces the 360px default without a visible jump.
-					restoreWidth()
-				}
 				const reload = () => { setPendingDelete(null); setReloadTick((tick) => tick + 1) }
 				const startEditPath = () => {
 					setDraftPath(currentPath)
@@ -1678,65 +1473,13 @@ window.__ModuleLoader__.load({
 					),
 				)
 
-				// Collapsed: a slim icon rail (file / git) that keeps a real 56px
-				// column in the layout (the [data-dsh-fe-rail] !important grid rule;
-				// see applyRail above), mirroring the left sidebar's collapsed rail.
-				// Placed after every handler declaration: a collapsed render must not
-				// return early and leave `expand` uninitialized (TDZ error on click).
-				if (collapsed) {
-					return React.createElement('div', {
-						className: 'dsh-fe-rail',
-						role: 'region',
-						'aria-label': 'File explorer (collapsed)',
-					},
-						React.createElement('button', {
-							type: 'button',
-							className: 'dsh-fe-rail-button',
-							onClick: () => expand('files'),
-							title: 'Files',
-							'aria-label': 'Open file explorer',
-						}, svgIcon(folderIcon, 16)),
-						React.createElement('button', {
-							type: 'button',
-							className: 'dsh-fe-rail-button',
-							onClick: () => expand('git'),
-							title: 'Git Graph',
-							'aria-label': 'Open git graph',
-						}, svgIcon(branchIcon, 16)),
-					)
-				}
-
 				return React.createElement(React.Fragment, null,
 					React.createElement('div', {
-						className: 'dsh-fe-panel',
+						className: 'dsh-fe-page',
 						role: 'region',
-						'aria-label': 'File explorer',
+						'aria-label': 'Files',
 					},
-						React.createElement('div', { className: 'dsh-fe-header' },
-							React.createElement('button', {
-								type: 'button',
-								className: 'dsh-fe-icon',
-								onClick: collapse,
-								'aria-label': 'Collapse file explorer into icon bar',
-								title: 'Collapse',
-							}, collapseIcon),
-							React.createElement('div', { className: 'dsh-fe-title' }, view === 'git' ? 'Git Graph' : 'Files'),
-						),
-						React.createElement('div', { className: 'dsh-fe-tabs' },
-							React.createElement('button', {
-								type: 'button',
-								className: 'dsh-fe-tab' + (view === 'files' ? ' dsh-fe-tab-active' : ''),
-								onClick: () => setView('files'),
-							}, svgIcon(folderIcon, 13), 'Files'),
-							React.createElement('button', {
-								type: 'button',
-								className: 'dsh-fe-tab' + (view === 'git' ? ' dsh-fe-tab-active' : ''),
-								onClick: () => setView('git'),
-							}, svgIcon(branchIcon, 13), 'Git Graph'),
-						),
-						view === 'git'
-							? React.createElement(GitGraphView, { api, cwd })
-							: filesView,
+						filesView,
 					),
 					preview &&
 						React.createElement('div', {
@@ -1835,10 +1578,63 @@ window.__ModuleLoader__.load({
 				)
 			}
 
-			ctx.effect(() => slots.inject('details', () => slots.register(
-				{ name: 'details', priority: -6 },
-				FileExplorerPanel,
-			)))
+			function FileExplorerGitPage(props) {
+				if (typeof props.useSessions !== 'function') return null
+
+				const sessionId = props.useSessions((state) => {
+					const current = state.current
+					if (current === undefined) return undefined
+					const row = state.byId[current]
+					if (!row || row.blank === true) return undefined
+					return current
+				})
+				const cwd = props.useSessions((state) => {
+					const current = state.current
+					if (current === undefined) return undefined
+					const row = state.byId[current]
+					return row ? row.cwd : undefined
+				})
+
+				if (sessionId === undefined) return null
+				return React.createElement('div', {
+					className: 'dsh-fe-page',
+					role: 'region',
+					'aria-label': 'Git Graph',
+				}, React.createElement(GitGraphView, { api, cwd }))
+			}
+
+			ctx.effect(() => {
+				const disposeFilesPage = rightPanel.registerPage({
+					id: 'file-explorer.files',
+					title: 'Files',
+					group: 'Workspace',
+					order: 20,
+					placement: 'rail',
+					icon: (size) => svgIcon(folderIcon, size),
+				})
+				const disposeGitPage = rightPanel.registerPage({
+					id: 'file-explorer.git',
+					title: 'Git Graph',
+					group: 'Workspace',
+					order: 21,
+					placement: 'rail',
+					icon: (size) => svgIcon(branchIcon, size),
+				})
+				const disposeFilesSlot = slots.inject('right-panel.page', () => slots.register({
+					name: 'right-panel.page',
+					key: 'file-explorer.files',
+				}, FileExplorerPage))
+				const disposeGitSlot = slots.inject('right-panel.page', () => slots.register({
+					name: 'right-panel.page',
+					key: 'file-explorer.git',
+				}, FileExplorerGitPage))
+				return () => {
+					disposeFilesSlot()
+					disposeGitSlot()
+					disposeFilesPage()
+					disposeGitPage()
+				}
+			})
 		}
 
 		exports.apply = apply;

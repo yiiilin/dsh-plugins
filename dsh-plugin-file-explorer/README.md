@@ -1,17 +1,17 @@
 # @yiln-dsh/dsh-plugin-file-explorer
 
-A DSH `dsh.bundle` that replaces the built-in **details** column of the Web
-GUI with a workspace file explorer.
+A DSH `dsh.bundle` that contributes a workspace file explorer page to the
+`@yiln-dsh/dsh-plugin-right-panel` host.
 
-- Replaces the built-in tool-details right column while the bundle row is
-  mounted (it is restored automatically when the plugin is disabled/removed).
-- Auto-opens when a conversation (non-blank session) starts.
-- **Files** tab: lists the active session's workspace directory, with folder
+- Registers two independent right-panel pages: **Files** and **Git Graph**. The
+  host owns the right-column layout, navigation rail, width, and collapse
+  behavior.
+- **Files** page: lists the active session's workspace directory, with folder
   navigation, editable path input, parent/refresh buttons, file and folder
   icons, and file sizes. File rows reveal view / download / delete buttons on
   hover; delete uses a second-click confirm. Image View supports fullscreen,
   25%-400% zoom, wheel zoom, and drag-to-pan after zooming.
-- **Git Graph** tab: a vscode/le-git-graph style commit graph rendered from
+- **Git Graph** page: a vscode/le-git-graph style commit graph rendered from
   the repository containing the current directory —
   - colored lane graph with commit dots and merge curves (all branches or the
     current branch, refreshable),
@@ -22,34 +22,26 @@ GUI with a workspace file explorer.
     A/M/D/R status badges,
   - click a file to open its diff patch (commit shows `git show`, working tree
     shows `git diff HEAD`) in a dialog.
-- The column is a real layout column: it squeezes the conversation and its
-  width can be dragged between 300–520px with the native splitter handle.
-- The chosen width persists across sessions and page reloads (localStorage):
-  the plugin captures the shell layout store actions when the root entry wires
-  them, restores the saved width right after `openDetails()`, and saves the
-  column width after every resizer drag.
-- **Collapse to icon bar**: the collapse button matches the DSH session
-  menu's circular panel-toggle style, with the direction mirrored for the
-  right-side column. Clicking it keeps a real 56px rail in the layout with
-  **Files** and **Git Graph** icons; clicking either reopens that tab at the
-  last chosen width. The rail is not a floating overlay, and the panel state
-  is preserved.
+- The host keeps a real 56px right-edge icon rail when collapsed. Other
+  right-panel pages can appear alongside Files and overflow into the host's
+  searchable More menu.
 
 ## Layout
 
 | File | Content |
 | --- | --- |
 | `index.js` | Host half: registers exact `/ _dsh/file-explorer/*` routes backed by the Host `fs`/`subprocess` services, plus read-only git routes (`/ _dsh/file-explorer/git-log`, `git-commit`, `git-diff`, `git-status`) that run `git` with machine-readable separators and return JSON only. |
-| `client.js` | Client half: a static DSH client module registered into the `details` slot; Files + Git Graph tabs. |
+| `client.js` | Client half: registers independent keyed `right-panel.page` entries for Files and Git Graph. |
 | `cordis.patch.yml` | Composition patch that mounts the host row — declared with `inject: [webServer]`, so it activates only after the stock webserver service (`127.0.0.1`) is up. |
 
 ## Install
 
-The package version is `@yiln-dsh/dsh-plugin-file-explorer@0.4.1`.
+The package version is `@yiln-dsh/dsh-plugin-file-explorer@0.5.0`.
 
-### Local source directory
+The right-panel package must be installed in the same `web` profile:
 
 ```bash
+dsh plugin --profile web add file:/path/to/dsh-plugin-right-panel
 dsh plugin --profile web add file:/path/to/dsh-plugin-file-explorer
 ```
 
@@ -61,7 +53,7 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./yiln-dsh-dsh-plugin-file-explorer-0.4.1.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-file-explorer-0.5.0.tgz
 ```
 
 ### npm package
@@ -98,7 +90,6 @@ apply the new profile composition.
   sentinel) and file paths against a non-option, non-control-character check.
 - Rows have a fixed 34px height, so the hover action swap never changes the
   row height; directories reveal a delete-only action set on hover.
-- The browser module uses the `details` slot (scope: session), registering at
-  priority `-6` to shadow the built-in tool-details occupant (priority `0`),
-  the `layout` service (`openDetails` / `closeDetails`), the standard
-  `useSessions` hook, and its own stylesheet.
+- The browser module registers `file-explorer.files` and
+  `file-explorer.git` into the keyed `right-panel.page` Slot and uses the
+  standard session `useSessions` hook.
