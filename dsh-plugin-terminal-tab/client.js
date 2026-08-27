@@ -19,6 +19,53 @@ window.__ModuleLoader__.load({
     const STYLE_ID = 'dsh-plugin-terminal-tab-style';
     let xtermPromise;
 
+    const LOCALE_NS = 'terminal-tab';
+    const ZH_DICT = {
+      'terminal.title': '终端',
+      'terminal.name': '终端 {name}',
+      'terminal.close': '关闭终端',
+      'terminal.close.for': '关闭{name}',
+      'terminal.rename': '双击重命名',
+      'terminal.rename.title': '重命名终端',
+      'terminal.rename.label': '终端名称',
+      'terminal.rename.placeholder': '例如：前端开发',
+      'terminal.rename.cancel': '取消',
+      'terminal.rename.save': '保存',
+      'terminal.rename.saving': '保存中...',
+      'terminal.closing': '正在关闭',
+      'terminal.closing.for': '正在关闭{name}',
+      'terminal.error': '终端操作失败',
+      'terminal.connection.failed': '终端连接失败',
+      'terminal.socket.failed': '终端 WebSocket 连接失败',
+      'terminal.new': '新建终端',
+      'terminal.empty': '暂无终端',
+    };
+    const EN_DICT = {
+      'terminal.title': 'Terminal',
+      'terminal.name': 'Terminal {name}',
+      'terminal.close': 'Close terminal',
+      'terminal.close.for': 'Close {name}',
+      'terminal.rename': 'Double-click to rename',
+      'terminal.rename.title': 'Rename terminal',
+      'terminal.rename.label': 'Terminal name',
+      'terminal.rename.placeholder': 'e.g. Frontend development',
+      'terminal.rename.cancel': 'Cancel',
+      'terminal.rename.save': 'Save',
+      'terminal.rename.saving': 'Saving…',
+      'terminal.closing': 'Closing',
+      'terminal.closing.for': 'Closing {name}',
+      'terminal.error': 'Terminal operation failed',
+      'terminal.connection.failed': 'Terminal connection failed',
+      'terminal.socket.failed': 'Terminal WebSocket connection failed',
+      'terminal.new': 'New terminal',
+      'terminal.empty': 'No terminals',
+    };
+
+    function applyParams(template, params) {
+      if (!params) return template;
+      return template.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match);
+    }
+
     async function api(method, payload) {
       const response = await fetch(`${API_PREFIX}/${method}`, {
         method: 'POST',
@@ -33,10 +80,6 @@ window.__ModuleLoader__.load({
       }
       if (!response.ok || value.ok === false) throw new Error(value.error || `terminal API returned HTTP ${response.status}`);
       return value;
-    }
-
-    function errorText(error) {
-      return error && typeof error.message === 'string' ? error.message : '终端操作失败';
     }
 
     function loadXterm() {
@@ -60,10 +103,11 @@ window.__ModuleLoader__.load({
       return xtermPromise;
     }
 
-    function TerminalTabs({ sessions, selectedId, onSelect, onClose, onRename, closingIds }) {
-      return React.createElement('div', { className: 'dtt-tab-strip', role: 'tablist', 'aria-label': '终端' },
+    function createTerminalTabs(t) {
+      return function TerminalTabs({ sessions, selectedId, onSelect, onClose, onRename, closingIds }) {
+      return React.createElement('div', { className: 'dtt-tab-strip', role: 'tablist', 'aria-label': t('terminal.title') },
         sessions.map((item, index) => {
-          const title = item.name || `终端 ${index + 1}`;
+          const title = item.name || t('terminal.name', { name: index + 1 });
           const active = item.sessionId === selectedId;
           const closing = closingIds.indexOf(item.sessionId) >= 0;
           const exited = item.status && item.status.kind === 'exited';
@@ -79,7 +123,7 @@ window.__ModuleLoader__.load({
               onClick: () => { if (!closing) onSelect(item.sessionId); },
               onDoubleClick: () => { if (!closing) onRename(item.sessionId); },
               disabled: closing,
-              title: closing ? '正在关闭' : '双击重命名',
+              title: closing ? t('terminal.closing') : t('terminal.rename'),
             },
               React.createElement('span', { className: exited ? 'dtt-tab-status dtt-tab-status-exited' : 'dtt-tab-status' }),
               title,
@@ -89,15 +133,20 @@ window.__ModuleLoader__.load({
               className: closing ? 'dtt-tab-close dtt-tab-close-loading' : 'dtt-tab-close',
               onClick: (event) => onClose(item.sessionId, event),
               disabled: closing,
-              title: closing ? '正在关闭' : '关闭终端',
-              'aria-label': closing ? `正在关闭${title}` : `关闭${title}`,
+              title: closing ? t('terminal.closing') : t('terminal.close'),
+              'aria-label': closing ? t('terminal.closing.for', { name: title }) : t('terminal.close.for', { name: title }),
             }, closing ? React.createElement('span', { className: 'dtt-tab-spinner', 'aria-hidden': 'true' }) : 'x'),
           );
         }),
       );
+    };
     }
 
-    function TerminalView({ sessionId }) {
+    function createTerminalView(t) {
+      const TerminalTabs = createTerminalTabs(t);
+      const errorText = (error) => error && typeof error.message === 'string' ? error.message : t('terminal.error');
+
+      return function TerminalView({ sessionId }) {
       const [sessions, setSessions] = React.useState([]);
       const [activeId, setActiveId] = React.useState(null);
       const [error, setError] = React.useState(null);
@@ -211,13 +260,13 @@ window.__ModuleLoader__.load({
               if (message.type === 'snapshot' || message.type === 'output') {
                 if (typeof message.data === 'string') terminal.write(message.data);
               } else if (message.type === 'error') {
-                setError(typeof message.message === 'string' ? message.message : '终端连接失败');
+                setError(typeof message.message === 'string' ? message.message : t('terminal.connection.failed'));
               }
             } catch (cause) {
               setError(errorText(cause));
             }
           });
-          socket.addEventListener('error', () => setError('终端 WebSocket 连接失败'));
+          socket.addEventListener('error', () => setError(t('terminal.socket.failed')));
           socket.addEventListener('close', () => {
             if (alive && runtimeRef.current === runtime && terminal !== undefined) terminal.write('\r\n\x1b[90m[WebSocket closed]\x1b[0m\r\n');
           });
@@ -248,13 +297,13 @@ window.__ModuleLoader__.load({
 
       const createTerminal = async () => {
         if (creating) return;
-        const usedNames = sessions.map((item, index) => item.name || `终端 ${index + 1}`);
+        const usedNames = sessions.map((item, index) => item.name || t('terminal.name', { name: index + 1 }));
         let number = 1;
-        while (usedNames.indexOf(`终端 ${number}`) >= 0) number += 1;
+        while (usedNames.indexOf(t('terminal.name', { name: number })) >= 0) number += 1;
         setCreating(true);
         setError(null);
         try {
-          const result = await api('spawn', { sessionId, name: `终端 ${number}` });
+          const result = await api('spawn', { sessionId, name: t('terminal.name', { name: number }) });
           const session = result.session;
           if (session && typeof session.sessionId === 'string') {
             setSessions((current) => current.some((item) => item.sessionId === session.sessionId) ? current : current.concat(session));
@@ -316,7 +365,7 @@ window.__ModuleLoader__.load({
       };
 
       const active = sessions.find((item) => item.sessionId === activeId);
-      return React.createElement('div', { className: 'dtt-xterm', ref: viewRef, role: 'application', 'aria-label': '终端' },
+      return React.createElement('div', { className: 'dtt-xterm', ref: viewRef, role: 'application', 'aria-label': t('terminal.title') },
         React.createElement('div', { className: 'dtt-terminal-bar' },
           React.createElement(TerminalTabs, {
             sessions,
@@ -334,14 +383,14 @@ window.__ModuleLoader__.load({
             className: 'dtt-new-terminal',
             onClick: () => void createTerminal(),
             disabled: creating,
-            title: '新建终端',
-            'aria-label': '新建终端',
+            title: t('terminal.new'),
+            'aria-label': t('terminal.new'),
           }, creating ? '...' : '+'),
           error ? React.createElement('span', { className: 'dtt-xterm-error', role: 'status' }, error) : null,
         ),
         active
           ? React.createElement('div', { className: 'dtt-xterm-host', ref: hostRef })
-          : React.createElement('div', { className: 'dtt-xterm-empty' }, '暂无终端'),
+          : React.createElement('div', { className: 'dtt-xterm-empty' }, t('terminal.empty')),
         nameDialogOpen ? React.createElement('div', {
           className: 'dtt-name-overlay',
           onMouseDown: () => setNameDialogOpen(false),
@@ -351,25 +400,26 @@ window.__ModuleLoader__.load({
             onSubmit: submitName,
             onMouseDown: (event) => event.stopPropagation(),
           },
-            React.createElement('h3', { className: 'dtt-name-title' }, '重命名终端'),
+            React.createElement('h3', { className: 'dtt-name-title' }, t('terminal.rename.title')),
             React.createElement('label', { className: 'dtt-name-label' },
-              '终端名称',
+              t('terminal.rename.label'),
               React.createElement('input', {
                 className: 'dtt-name-input',
                 value: nameDraft,
                 onChange: (event) => setNameDraft(event.target.value),
-                placeholder: '例如：前端开发',
+                placeholder: t('terminal.rename.placeholder'),
                 maxLength: 80,
                 autoFocus: true,
               }),
             ),
             React.createElement('div', { className: 'dtt-name-actions' },
-              React.createElement('button', { type: 'button', className: 'dtt-name-cancel', onClick: () => setNameDialogOpen(false) }, '取消'),
-              React.createElement('button', { type: 'submit', className: 'dtt-name-submit', disabled: creating }, creating ? '保存中...' : '保存'),
+              React.createElement('button', { type: 'button', className: 'dtt-name-cancel', onClick: () => setNameDialogOpen(false) }, t('terminal.rename.cancel')),
+              React.createElement('button', { type: 'submit', className: 'dtt-name-submit', disabled: creating }, creating ? t('terminal.rename.saving') : t('terminal.rename.save')),
             ),
           ),
         ) : null,
       );
+    };
     }
 
     function apply(ctx) {
@@ -415,11 +465,20 @@ window.__ModuleLoader__.load({
       document.head.appendChild(style);
       ctx.effect(() => () => style.remove(), 'terminal-tab stylesheet');
 
+      const locale = ctx.get('locale');
+      if (locale !== undefined) {
+        ctx.effect(() => locale.register(LOCALE_NS, { zh: ZH_DICT, en: EN_DICT }), 'terminal-tab: locale');
+      }
+      const t = locale !== undefined
+        ? locale.bind(LOCALE_NS)
+        : (key, params) => applyParams(ZH_DICT[key] ?? EN_DICT[key] ?? key, params);
+      const TerminalView = createTerminalView(t);
+
       ctx.slots.inject('conversation.view', () => ctx.slots.register({
         name: 'conversation.view',
         id: 'terminal',
         order: 20,
-        label: '终端',
+        label: t('terminal.title'),
       }, TerminalView));
     }
 

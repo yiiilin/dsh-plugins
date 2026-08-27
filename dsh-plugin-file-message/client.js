@@ -19,6 +19,39 @@ window.__ModuleLoader__.load({
     const API_PATH = "/_dsh/file-message/content";
     const STYLE_ID = "dsh-plugin-file-message-style";
 
+    const LOCALE_NS = "file-message";
+    const ZH_DICT = {
+      download: "下载",
+      "download.original": "下载原图",
+      close: "关闭",
+      preparing: "准备中…",
+      "loading.preview": "加载图片预览…",
+      "send.failed": "发送失败",
+      "meta.unavailable": "文件消息元数据不可用",
+      "view.original": "查看原图",
+      "download.withName": "下载 {name}",
+      "preparing.withName": "准备下载 {name}",
+      sending: "正在发送 {name}…",
+    };
+    const EN_DICT = {
+      download: "Download",
+      "download.original": "Download original",
+      close: "Close",
+      preparing: "Preparing…",
+      "loading.preview": "Loading image preview…",
+      "send.failed": "Failed to send",
+      "meta.unavailable": "File message metadata unavailable",
+      "view.original": "View original",
+      "download.withName": "Download {name}",
+      "preparing.withName": "Preparing {name}",
+      sending: "Sending {name}…",
+    };
+
+    function applyParams(template, params) {
+      if (!params) return template;
+      return template.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match);
+    }
+
     const STYLE_TEXT = `
 .dfm-card{box-sizing:border-box;display:flex;flex-direction:column;gap:10px;min-width:0;padding:10px 0;color:var(--dsw-alias-label-primary,#111827)}
 .dfm-caption{font-size:13px;line-height:19px;color:var(--dsw-alias-label-secondary,#4b5563);overflow-wrap:anywhere}
@@ -72,14 +105,6 @@ window.__ModuleLoader__.load({
       return meta;
     }
 
-    function errorText(block) {
-      if (!settledBlock(block) || !Array.isArray(block.content)) return "发送失败";
-      for (const item of block.content) {
-        if (item && item.type === "text" && typeof item.text === "string" && item.text.trim() !== "") return item.text;
-      }
-      return "发送失败";
-    }
-
     function argsName(block, fallback) {
       if (block && typeof block.argsRaw === "string") {
         try {
@@ -110,150 +135,177 @@ window.__ModuleLoader__.load({
       return URL.createObjectURL(blob);
     }
 
-    function DownloadLink({ sessionId, callId, name, className = "dfm-link", children = "下载" }) {
-      const [href, setHref] = React.useState(null);
-      const [busy, setBusy] = React.useState(false);
-      const busyRef = React.useRef(false);
-      const linkRef = React.useRef(null);
+    function createDownloadLink(t) {
+      return function DownloadLink({ sessionId, callId, name, className = "dfm-link", children = t("download") }) {
+        const [href, setHref] = React.useState(null);
+        const [busy, setBusy] = React.useState(false);
+        const busyRef = React.useRef(false);
+        const linkRef = React.useRef(null);
 
-      React.useEffect(() => () => {
-        if (href !== null) URL.revokeObjectURL(href);
-      }, [href]);
+        React.useEffect(() => () => {
+          if (href !== null) URL.revokeObjectURL(href);
+        }, [href]);
 
-      const onClick = async (event) => {
-        if (href !== null) return;
-        event.preventDefault();
-        if (busyRef.current) return;
-        busyRef.current = true;
-        setBusy(true);
-        try {
-          const next = await fetchResource(sessionId, callId, "download");
-          setHref(next);
-          const link = linkRef.current;
-          if (link !== null) {
-            link.href = next;
-            link.download = name;
-            link.click();
+        const onClick = async (event) => {
+          if (href !== null) return;
+          event.preventDefault();
+          if (busyRef.current) return;
+          busyRef.current = true;
+          setBusy(true);
+          try {
+            const next = await fetchResource(sessionId, callId, "download");
+            setHref(next);
+            const link = linkRef.current;
+            if (link !== null) {
+              link.href = next;
+              link.download = name;
+              link.click();
+            }
+          } catch (error) {
+            console.error("file-message download failed", error);
+          } finally {
+            busyRef.current = false;
+            setBusy(false);
           }
-        } catch (error) {
-          console.error("file-message download failed", error);
-        } finally {
-          busyRef.current = false;
-          setBusy(false);
-        }
+        };
+
+        return React.createElement("a", {
+          ref: linkRef,
+          className,
+          href: href || "#",
+          download: href ? name : undefined,
+          onClick,
+          title: href ? t("download.withName", { name }) : t("preparing.withName", { name }),
+        }, busy ? t("preparing") : children);
       };
-
-      return React.createElement("a", {
-        ref: linkRef,
-        className,
-        href: href || "#",
-        download: href ? name : undefined,
-        onClick,
-        title: href ? `下载 ${name}` : `准备下载 ${name}`,
-      }, busy ? "准备中…" : children);
     }
 
-    function ImageMessage({ sessionId, callId, record }) {
-      const [preview, setPreview] = React.useState({ status: "loading", url: null, error: null });
-      const [lightbox, setLightbox] = React.useState(false);
+    function createImageMessage(t) {
+      return function ImageMessage({ sessionId, callId, record }) {
+        const [preview, setPreview] = React.useState({ status: "loading", url: null, error: null });
+        const [lightbox, setLightbox] = React.useState(false);
 
-      React.useEffect(() => {
-        let active = true;
-        let objectUrl = null;
-        setPreview({ status: "loading", url: null, error: null });
-        fetchResource(sessionId, callId, "preview").then((url) => {
-          objectUrl = url;
-          if (active) setPreview({ status: "ready", url, error: null });
-          else URL.revokeObjectURL(url);
-        }).catch((error) => {
-          if (active) setPreview({ status: "error", url: null, error: messageOf(error) });
-        });
-        return () => {
-          active = false;
-          if (objectUrl !== null) URL.revokeObjectURL(objectUrl);
-        };
-      }, [sessionId, callId, record.path, record.version]);
+        React.useEffect(() => {
+          let active = true;
+          let objectUrl = null;
+          setPreview({ status: "loading", url: null, error: null });
+          fetchResource(sessionId, callId, "preview").then((url) => {
+            objectUrl = url;
+            if (active) setPreview({ status: "ready", url, error: null });
+            else URL.revokeObjectURL(url);
+          }).catch((error) => {
+            if (active) setPreview({ status: "error", url: null, error: messageOf(error) });
+          });
+          return () => {
+            active = false;
+            if (objectUrl !== null) URL.revokeObjectURL(objectUrl);
+          };
+        }, [sessionId, callId, record.path, record.version]);
 
-      React.useEffect(() => {
-        if (!lightbox) return undefined;
-        const onKeyDown = (event) => {
-          if (event.key === "Escape") setLightbox(false);
-        };
-        document.addEventListener("keydown", onKeyDown);
-        return () => document.removeEventListener("keydown", onKeyDown);
-      }, [lightbox]);
+        React.useEffect(() => {
+          if (!lightbox) return undefined;
+          const onKeyDown = (event) => {
+            if (event.key === "Escape") setLightbox(false);
+          };
+          document.addEventListener("keydown", onKeyDown);
+          return () => document.removeEventListener("keydown", onKeyDown);
+        }, [lightbox]);
 
-      const image = preview.status === "ready"
-        ? React.createElement("img", {
-          src: preview.url,
-          alt: record.displayName,
-          loading: "lazy",
-          decoding: "async",
-          onClick: () => setLightbox(true),
-        })
-        : React.createElement("div", { className: preview.status === "error" ? "dfm-error" : "dfm-placeholder", role: preview.status === "error" ? "alert" : undefined }, preview.status === "error" ? preview.error : "加载图片预览…");
+        const image = preview.status === "ready"
+          ? React.createElement("img", {
+            src: preview.url,
+            alt: record.displayName,
+            loading: "lazy",
+            decoding: "async",
+            onClick: () => setLightbox(true),
+          })
+          : React.createElement("div", { className: preview.status === "error" ? "dfm-error" : "dfm-placeholder", role: preview.status === "error" ? "alert" : undefined }, preview.status === "error" ? preview.error : t("loading.preview"));
 
-      const overlay = lightbox && preview.url !== null
-        ? React.createElement("div", {
-          className: "dfm-lightbox",
-          role: "presentation",
-          onClick: () => setLightbox(false),
-        }, React.createElement("div", {
-          className: "dfm-lightbox-inner",
-          role: "dialog",
-          "aria-modal": "true",
-          "aria-label": record.displayName,
-          onClick: (event) => event.stopPropagation(),
-        }, React.createElement("img", { src: preview.url, alt: record.displayName }), React.createElement("div", { className: "dfm-lightbox-actions" }, React.createElement(DownloadLink, { sessionId, callId, name: record.displayName, className: "dfm-link", children: "下载原图" }), React.createElement("button", { type: "button", className: "dfm-button", onClick: () => setLightbox(false) }, "关闭"))))
-        : null;
+        const overlay = lightbox && preview.url !== null
+          ? React.createElement("div", {
+            className: "dfm-lightbox",
+            role: "presentation",
+            onClick: () => setLightbox(false),
+          }, React.createElement("div", {
+            className: "dfm-lightbox-inner",
+            role: "dialog",
+            "aria-modal": "true",
+            "aria-label": record.displayName,
+            onClick: (event) => event.stopPropagation(),
+          }, React.createElement("img", { src: preview.url, alt: record.displayName }), React.createElement("div", { className: "dfm-lightbox-actions" }, React.createElement(DownloadLink, { sessionId, callId, name: record.displayName, className: "dfm-link", children: t("download.original") }), React.createElement("button", { type: "button", className: "dfm-button", onClick: () => setLightbox(false) }, t("close")))))
+          : null;
 
-      return React.createElement(React.Fragment, null,
-        React.createElement("div", { className: "dfm-card" },
+        return React.createElement(React.Fragment, null,
+          React.createElement("div", { className: "dfm-card" },
+            record.caption ? React.createElement("div", { className: "dfm-caption" }, record.caption) : null,
+            React.createElement("div", { className: "dfm-preview" }, image),
+            React.createElement("div", { className: "dfm-actions" },
+              preview.status === "ready" ? React.createElement("button", { type: "button", className: "dfm-button", onClick: () => setLightbox(true) }, t("view.original")) : null,
+              React.createElement(DownloadLink, { sessionId, callId, name: record.displayName, children: t("download.original") }),
+            ),
+          ),
+          overlay,
+        );
+      };
+    }
+
+    function createFileMessage(t) {
+      return function FileMessage({ sessionId, callId, record }) {
+        const extension = record.displayName.includes(".") ? record.displayName.split(".").pop().slice(0, 5) : "file";
+        const size = `${Math.max(0, Math.round(record.size / 1024))} KB`;
+        return React.createElement("div", { className: "dfm-card" },
           record.caption ? React.createElement("div", { className: "dfm-caption" }, record.caption) : null,
-          React.createElement("div", { className: "dfm-preview" }, image),
-          React.createElement("div", { className: "dfm-actions" },
-            preview.status === "ready" ? React.createElement("button", { type: "button", className: "dfm-button", onClick: () => setLightbox(true) }, "查看原图") : null,
-            React.createElement(DownloadLink, { sessionId, callId, name: record.displayName, children: "下载原图" }),
+          React.createElement("div", { className: "dfm-file" },
+            React.createElement("div", { className: "dfm-file-mark", "aria-hidden": "true" }, extension),
+            React.createElement("div", { className: "dfm-file-info" },
+              React.createElement("div", { className: "dfm-file-name", title: record.displayName }, record.displayName),
+              React.createElement("div", { className: "dfm-file-detail" }, `${size} · ${record.mediaType}`),
+            ),
+            React.createElement(DownloadLink, { sessionId, callId, name: record.displayName }),
           ),
-        ),
-        overlay,
-      );
+        );
+      };
     }
 
-    function FileMessage({ sessionId, callId, record }) {
-      const extension = record.displayName.includes(".") ? record.displayName.split(".").pop().slice(0, 5) : "file";
-      const size = `${Math.max(0, Math.round(record.size / 1024))} KB`;
-      return React.createElement("div", { className: "dfm-card" },
-        record.caption ? React.createElement("div", { className: "dfm-caption" }, record.caption) : null,
-        React.createElement("div", { className: "dfm-file" },
-          React.createElement("div", { className: "dfm-file-mark", "aria-hidden": "true" }, extension),
-          React.createElement("div", { className: "dfm-file-info" },
-            React.createElement("div", { className: "dfm-file-name", title: record.displayName }, record.displayName),
-            React.createElement("div", { className: "dfm-file-detail" }, `${size} · ${record.mediaType}`),
-          ),
-          React.createElement(DownloadLink, { sessionId, callId, name: record.displayName }),
-        ),
-      );
-    }
+    function createFileMessageToolView(t) {
+      return function FileMessageToolView(props) {
+        const errorText = (block) => {
+          if (!settledBlock(block) || !Array.isArray(block.content)) return t("send.failed");
+          for (const item of block.content) {
+            if (item && item.type === "text" && typeof item.text === "string" && item.text.trim() !== "") return item.text;
+          }
+          return t("send.failed");
+        };
 
-    function FileMessageToolView(props) {
-      const record = metadataOf(props.block);
-      if (!settledBlock(props.block)) {
-        return React.createElement("div", { className: "dfm-placeholder" }, `正在发送 ${argsName(props.block, props.toolName)}…`);
-      }
-      if (props.block.isError) {
-        return React.createElement("div", { className: "dfm-error", role: "alert" }, errorText(props.block));
-      }
-      if (record === null) {
-        return React.createElement("div", { className: "dfm-error", role: "alert" }, "文件消息元数据不可用");
-      }
-      return record.kind === "image"
-        ? React.createElement(ImageMessage, { sessionId: props.sessionId, callId: props.callId, record })
-        : React.createElement(FileMessage, { sessionId: props.sessionId, callId: props.callId, record });
+        const record = metadataOf(props.block);
+        if (!settledBlock(props.block)) {
+          return React.createElement("div", { className: "dfm-placeholder" }, t("sending", { name: argsName(props.block, props.toolName) }));
+        }
+        if (props.block.isError) {
+          return React.createElement("div", { className: "dfm-error", role: "alert" }, errorText(props.block));
+        }
+        if (record === null) {
+          return React.createElement("div", { className: "dfm-error", role: "alert" }, t("meta.unavailable"));
+        }
+        return record.kind === "image"
+          ? React.createElement(ImageMessage, { sessionId: props.sessionId, callId: props.callId, record })
+          : React.createElement(FileMessage, { sessionId: props.sessionId, callId: props.callId, record });
+      };
     }
 
     function apply(ctx) {
       if (ctx.get("slots") === undefined) return;
+      const locale = ctx.get("locale");
+      if (locale !== undefined) {
+        ctx.effect(() => locale.register(LOCALE_NS, { zh: ZH_DICT, en: EN_DICT }), "file-message: locale");
+      }
+      const t = locale !== undefined
+        ? locale.bind(LOCALE_NS)
+        : (key, params) => applyParams(ZH_DICT[key] ?? EN_DICT[key] ?? key, params);
+      const DownloadLink = createDownloadLink(t);
+      const ImageMessage = createImageMessage(t);
+      const FileMessage = createFileMessage(t);
+      const FileMessageToolView = createFileMessageToolView(t);
       ctx.effect(() => installStyle(), "file-message: stylesheet");
       ctx.slots.inject("tool.call.toolview", function* () {
         yield ctx.slots.register({ name: "tool.call.toolview", key: "send_file" }, FileMessageToolView);

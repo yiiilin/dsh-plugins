@@ -18,6 +18,29 @@ window.__ModuleLoader__.load({
     const API_PATH = "/_dsh/delete-session/delete";
     const STYLE_ID = "dsh-plugin-delete-session-style";
 
+    const LOCALE_NS = "delete-session";
+    const ZH_DICT = {
+      cancel: "取消",
+      "confirm.title": "删除会话",
+      "confirm.body": "确定要删除“{name}”吗？",
+      "confirm.warning": "会话日志及其会话专属临时文件将被永久删除，无法恢复。",
+      "delete.busy": "删除中…",
+      "delete.confirm": "永久删除",
+    };
+    const EN_DICT = {
+      cancel: "Cancel",
+      "confirm.title": "Delete session",
+      "confirm.body": "Delete “{name}”?",
+      "confirm.warning": "The session transcript and its temporary workspace files will be permanently deleted and cannot be recovered.",
+      "delete.busy": "Deleting…",
+      "delete.confirm": "Delete permanently",
+    };
+
+    function applyParams(template, params) {
+      if (!params) return template;
+      return template.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match);
+    }
+
     const STYLE_TEXT = `
 .dss-action{box-sizing:border-box;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;flex:none;border:0;border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer}
 .dss-action:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#e7e5e4);color:var(--dsw-alias-state-error-primary,#b91c1c)}
@@ -71,7 +94,8 @@ window.__ModuleLoader__.load({
       return result;
     }
 
-    function DeleteSessionAction(props) {
+    function createDeleteSessionAction(t) {
+      return function DeleteSessionAction(props) {
       const [confirming, setConfirming] = React.useState(false);
       const [busy, setBusy] = React.useState(false);
       const [error, setError] = React.useState(null);
@@ -132,21 +156,19 @@ window.__ModuleLoader__.load({
                 "aria-labelledby": "dss-delete-title",
                 onClick: (event) => event.stopPropagation(),
               },
-              React.createElement("h2", { id: "dss-delete-title", className: "dss-title" }, "删除会话"),
+              React.createElement("h2", { id: "dss-delete-title", className: "dss-title" }, t("confirm.title")),
               React.createElement(
                 "p",
                 { className: "dss-copy" },
-                "确定要删除“",
-                React.createElement("span", { className: "dss-name" }, title),
-                "”吗？",
+                t("confirm.body", { name: title }),
               ),
-              React.createElement("p", { className: "dss-warning" }, "会话日志及其会话专属临时文件将被永久删除，无法恢复。"),
+              React.createElement("p", { className: "dss-warning" }, t("confirm.warning")),
               error === null ? null : React.createElement("div", { className: "dss-error", role: "alert" }, error),
               React.createElement(
                 "div",
                 { className: "dss-buttons" },
-                React.createElement("button", { type: "button", className: "dss-button", disabled: busy, onClick: cancel }, "取消"),
-                React.createElement("button", { type: "button", className: "dss-button dss-button-danger", disabled: busy, onClick: () => void confirmDelete() }, busy ? "删除中…" : "永久删除"),
+                React.createElement("button", { type: "button", className: "dss-button", disabled: busy, onClick: cancel }, t("cancel")),
+                React.createElement("button", { type: "button", className: "dss-button dss-button-danger", disabled: busy, onClick: () => void confirmDelete() }, busy ? t("delete.busy") : t("delete.confirm")),
               ),
             ),
           )
@@ -160,8 +182,8 @@ window.__ModuleLoader__.load({
           {
             type: "button",
             className: "dss-action",
-            "aria-label": "删除会话",
-            title: "删除会话",
+            "aria-label": t("confirm.title"),
+            title: t("confirm.title"),
             disabled: busy,
             onClick: openConfirmation,
           },
@@ -169,11 +191,20 @@ window.__ModuleLoader__.load({
         ),
         dialog,
       );
+    };
     }
 
     function apply(ctx) {
       const slots = ctx.get("slots");
       if (slots === undefined || ctx.sessions === undefined) return;
+      const locale = ctx.get("locale");
+      if (locale !== undefined) {
+        ctx.effect(() => locale.register(LOCALE_NS, { zh: ZH_DICT, en: EN_DICT }), "delete-session: locale");
+      }
+      const t = locale !== undefined
+        ? locale.bind(LOCALE_NS)
+        : (key, params) => applyParams(ZH_DICT[key] ?? EN_DICT[key] ?? key, params);
+      const DeleteSessionAction = createDeleteSessionAction(t);
       ctx.effect(() => installStyle(), "delete-session: stylesheet");
       ctx.slots.inject("conversation.session.header.actions", () => ctx.slots.register({
         name: "conversation.session.header.actions",

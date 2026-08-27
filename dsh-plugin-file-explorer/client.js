@@ -21,10 +21,179 @@ window.__ModuleLoader__.load({
 
 		const inject = ["slots", "rightPanel"];
 
+		const LOCALE_NS = "file-explorer";
+		const ZH_DICT = {
+			"files.title": "文件",
+			"git.title": "Git 图谱",
+			"workspace": "工作区",
+			"files.refresh": "刷新",
+			"files.refreshList": "刷新文件列表",
+			"git.refreshGraph": "刷新图谱",
+			"files.up": "上一级",
+			"files.goUp": "返回上级目录",
+			"files.delete": "删除",
+			"files.deleteFile": "删除 {name}",
+			"files.confirmDelete": "确认删除 {name}",
+			"files.clickAgain": "再次点击确认删除",
+			"files.deleteFailed": "删除失败",
+			"files.view": "查看",
+			"files.viewFile": "查看 {name}",
+			"files.download": "下载",
+			"files.downloadFile": "下载 {name}",
+			"files.downloadFailed": "下载失败",
+			"files.closePreview": "关闭预览",
+			"files.preview": "预览",
+			"files.fullscreen": "全屏",
+			"files.enterFullscreen": "进入全屏",
+			"files.exitFullscreen": "退出全屏",
+			"files.imageControls": "图片控制",
+			"files.zoomIn": "放大",
+			"files.zoomOut": "缩小",
+			"files.resetZoom": "重置缩放",
+			"files.resetImageZoom": "重置图片缩放",
+			"files.imagePreview": "图片预览",
+			"files.previewDialog": "文件预览",
+			"files.workspaceRoot": "工作区根目录",
+			"files.loading": "加载中…",
+			"git.loading": "加载中…",
+			"files.empty": "空文件夹",
+			"files.listFailed": "文件列表加载失败",
+			"files.readFailed": "文件读取失败",
+			"files.imageMeta": "图片 / {size}",
+			"files.binary": "二进制文件",
+			"files.fileTooLarge": "文件过大，无法在此预览",
+			"files.imageTooLarge": "图片过大，无法在此预览",
+			"files.noPreview": "（无预览）",
+			"files.binaryNoPreview": "二进制文件无法预览",
+			"git.logFailed": "Git 提交记录加载失败",
+			"git.commitFailed": "提交详情加载失败",
+			"git.diffFailed": "差异加载失败",
+			"git.loadingChanges": "加载变更…",
+			"git.noDiff": "（无差异）",
+			"git.noMessage": "（无提交信息）",
+			"git.diffTruncated": "…（差异已截断）",
+			"git.uncommitted": "未提交的更改",
+			"git.workingTree": "工作区",
+			"git.workingTreeLabel": "工作区",
+			"git.noCommitsYet": "暂无提交",
+			"git.noCommitsYetSuffix": "（暂无提交）",
+			"git.noData": "暂无数据",
+			"git.detachedHead": "游离 HEAD",
+			"git.allBranches": "所有分支",
+			"git.branchFilter": "分支筛选",
+			"git.currentBranch": "当前分支",
+			"git.diff": "差异",
+			"git.closeDiff": "关闭差异",
+			"git.authorUnknown": "未知",
+			"git.changedFiles.one": "共 {count} 个变更文件",
+			"git.changedFiles.other": "共 {count} 个变更文件",
+			"git.changedVsHead.one": "共 {count} 个变更文件（对比 HEAD）",
+			"git.changedVsHead.other": "共 {count} 个变更文件（对比 HEAD）",
+			"git.changesCount.one": "{count} 个变更",
+			"git.changesCount.other": "{count} 个变更",
+			"time.justNow": "刚刚",
+			"time.minutesAgo": "{n} 分钟前",
+			"time.hoursAgo": "{n} 小时前",
+			"time.daysAgo": "{n} 天前",
+			"time.weeksAgo": "{n} 周前",
+			"time.monthsAgo": "{n} 个月前",
+			"time.yearsAgo": "{n} 年前",
+		};
+		const EN_DICT = {
+			"files.title": "Files",
+			"git.title": "Git Graph",
+			"workspace": "Workspace",
+			"files.refresh": "Refresh",
+			"files.refreshList": "Refresh file list",
+			"git.refreshGraph": "Refresh graph",
+			"files.up": "Up",
+			"files.goUp": "Go to parent directory",
+			"files.delete": "Delete",
+			"files.deleteFile": "Delete {name}",
+			"files.confirmDelete": "Confirm deleting {name}",
+			"files.clickAgain": "Click again to delete",
+			"files.deleteFailed": "Delete failed",
+			"files.view": "View",
+			"files.viewFile": "View {name}",
+			"files.download": "Download",
+			"files.downloadFile": "Download {name}",
+			"files.downloadFailed": "Download failed",
+			"files.closePreview": "Close preview",
+			"files.preview": "Preview",
+			"files.fullscreen": "Fullscreen",
+			"files.enterFullscreen": "Enter fullscreen",
+			"files.exitFullscreen": "Exit fullscreen",
+			"files.imageControls": "Image controls",
+			"files.zoomIn": "Zoom in",
+			"files.zoomOut": "Zoom out",
+			"files.resetZoom": "Reset zoom",
+			"files.resetImageZoom": "Reset image zoom",
+			"files.imagePreview": "Image preview",
+			"files.previewDialog": "File preview",
+			"files.workspaceRoot": "workspace root",
+			"files.loading": "Loading...",
+			"git.loading": "Loading…",
+			"files.empty": "Empty folder",
+			"files.listFailed": "Failed to list files",
+			"files.readFailed": "Failed to read file",
+			"files.imageMeta": "Image / {size}",
+			"files.binary": "Binary",
+			"files.fileTooLarge": "File is too large to preview here",
+			"files.imageTooLarge": "Image is too large to preview here",
+			"files.noPreview": "(No preview)",
+			"files.binaryNoPreview": "Binary file cannot be previewed",
+			"git.logFailed": "Failed to load git log",
+			"git.commitFailed": "Failed to load commit",
+			"git.diffFailed": "Failed to load diff",
+			"git.loadingChanges": "Loading changes…",
+			"git.noDiff": "(no diff)",
+			"git.noMessage": "(no message)",
+			"git.diffTruncated": "… (diff truncated)",
+			"git.uncommitted": "Uncommitted changes",
+			"git.workingTree": "Working tree",
+			"git.workingTreeLabel": "working tree",
+			"git.noCommitsYet": "No commits yet",
+			"git.noCommitsYetSuffix": " (no commits yet)",
+			"git.noData": "No data",
+			"git.detachedHead": "detached HEAD",
+			"git.allBranches": "All branches",
+			"git.branchFilter": "Branch filter",
+			"git.currentBranch": "Current branch",
+			"git.diff": "Diff",
+			"git.closeDiff": "Close diff",
+			"git.authorUnknown": "unknown",
+			"git.changedFiles.one": "{count} changed file",
+			"git.changedFiles.other": "{count} changed files",
+			"git.changedVsHead.one": "{count} changed file (vs HEAD)",
+			"git.changedVsHead.other": "{count} changed files (vs HEAD)",
+			"git.changesCount.one": "{count} change",
+			"git.changesCount.other": "{count} changes",
+			"time.justNow": "just now",
+			"time.minutesAgo": "{n}m ago",
+			"time.hoursAgo": "{n}h ago",
+			"time.daysAgo": "{n}d ago",
+			"time.weeksAgo": "{n}w ago",
+			"time.monthsAgo": "{n}mo ago",
+			"time.yearsAgo": "{n}y ago",
+		};
+
+		function applyParams(template, params) {
+			if (!params) return template;
+			return template.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match);
+		}
+
 		function apply(ctx) {
 			const slots = ctx.get('slots')
 			const rightPanel = ctx.get('rightPanel')
 			if (slots === undefined || rightPanel === undefined) return
+
+			const locale = ctx.get("locale");
+			if (locale !== undefined) {
+				ctx.effect(() => locale.register(LOCALE_NS, { zh: ZH_DICT, en: EN_DICT }), "file-explorer: locale");
+			}
+			const t = locale !== undefined
+				? locale.bind(LOCALE_NS)
+				: (key, params) => applyParams(ZH_DICT[key] ?? EN_DICT[key] ?? key, params);
 
 			const style = document.createElement("style");
 			style.id = "dsh-plugin-file-explorer-style";
@@ -703,16 +872,16 @@ window.__ModuleLoader__.load({
 				return STATUS_COLORS[letter] || '#6b7280'
 			}
 
-			function relTime(epochSeconds) {
+			function relTime(epochSeconds, t) {
 				if (typeof epochSeconds !== 'number' || !Number.isFinite(epochSeconds) || epochSeconds <= 0) return ''
 				const s = Math.max(0, Date.now() / 1000 - epochSeconds)
-				if (s < 60) return 'just now'
-				if (s < 3600) return `${Math.floor(s / 60)}m ago`
-				if (s < 86400) return `${Math.floor(s / 3600)}h ago`
-				if (s < 604800) return `${Math.floor(s / 86400)}d ago`
-				if (s < 2592000) return `${Math.floor(s / 604800)}w ago`
-				if (s < 31536000) return `${Math.floor(s / 2592000)}mo ago`
-				return `${Math.floor(s / 31536000)}y ago`
+				if (s < 60) return t('time.justNow')
+				if (s < 3600) return t('time.minutesAgo', { n: Math.floor(s / 60) })
+				if (s < 86400) return t('time.hoursAgo', { n: Math.floor(s / 3600) })
+				if (s < 604800) return t('time.daysAgo', { n: Math.floor(s / 86400) })
+				if (s < 2592000) return t('time.weeksAgo', { n: Math.floor(s / 604800) })
+				if (s < 31536000) return t('time.monthsAgo', { n: Math.floor(s / 2592000) })
+				return t('time.yearsAgo', { n: Math.floor(s / 31536000) })
 			}
 
 			function shortHash(hash) {
@@ -927,7 +1096,8 @@ window.__ModuleLoader__.load({
 			// line, the commit lane rows with an expandable per-commit detail, and a
 			// diff modal. Data comes entirely from the /_dsh/file-explorer/git-*
 			// JSON API.
-			function GitGraphView(props) {
+			function createGitGraphView(t) {
+				return function GitGraphView(props) {
 				const api = props.api
 				const cwd = props.cwd
 				const [scope, setScope] = React.useState('all')
@@ -955,7 +1125,7 @@ window.__ModuleLoader__.load({
 							if (raw && raw.ok === true) {
 								setLog(raw)
 							} else {
-								setError(raw && typeof raw.error === 'string' ? raw.error : 'Failed to load git log')
+								setError(raw && typeof raw.error === 'string' ? raw.error : t('git.logFailed'))
 							}
 						})
 						.catch((err) => {
@@ -981,7 +1151,7 @@ window.__ModuleLoader__.load({
 							if (raw && raw.ok === true) {
 								setDetails((prev) => ({ ...prev, [selected]: raw }))
 							} else {
-								setDetails((prev) => ({ ...prev, [selected]: { error: raw && typeof raw.error === 'string' ? raw.error : 'Failed to load commit' } }))
+								setDetails((prev) => ({ ...prev, [selected]: { error: raw && typeof raw.error === 'string' ? raw.error : t('git.commitFailed') } }))
 							}
 						})
 						.catch((err) => {
@@ -1000,10 +1170,10 @@ window.__ModuleLoader__.load({
 					api('git-diff', { path: cwd, hash, file: file.path })
 						.then((raw) => {
 							if (raw && raw.ok === true) {
-								const note = raw.truncated ? '\n\n… (diff truncated)' : ''
+								const note = raw.truncated ? '\n\n' + t('git.diffTruncated') : ''
 								setDiff({ title: file.path, hash, loading: false, text: (raw.patch || '') + note, error: null })
 							} else {
-								setDiff({ title: file.path, hash, loading: false, text: null, error: raw && typeof raw.error === 'string' ? raw.error : 'Failed to load diff' })
+								setDiff({ title: file.path, hash, loading: false, text: null, error: raw && typeof raw.error === 'string' ? raw.error : t('git.diffFailed') })
 							}
 						})
 						.catch((err) => {
@@ -1017,7 +1187,7 @@ window.__ModuleLoader__.load({
 				const renderCommitDetail = (hash, d) => {
 					if (d === undefined) {
 						return React.createElement('div', { className: 'dsh-git-detail' },
-							React.createElement('div', { className: 'dsh-git-files-title' }, 'Loading changes…'))
+							React.createElement('div', { className: 'dsh-git-files-title' }, t('git.loadingChanges')))
 					}
 					if (d.error) {
 						return React.createElement('div', { className: 'dsh-git-detail' },
@@ -1025,9 +1195,9 @@ window.__ModuleLoader__.load({
 					}
 					const files = Array.isArray(d.files) ? d.files : []
 					return React.createElement('div', { className: 'dsh-git-detail' },
-						React.createElement('div', { className: 'dsh-git-msg' }, d.message || '(no message)'),
+						React.createElement('div', { className: 'dsh-git-msg' }, d.message || t('git.noMessage')),
 						React.createElement('div', { className: 'dsh-git-files-title' },
-							`${files.length} changed file${files.length === 1 ? '' : 's'}`),
+							files.length === 1 ? t('git.changedFiles.one', { count: files.length }) : t('git.changedFiles.other', { count: files.length })),
 						files.length === 0 ? null : files.map((f, i) =>
 							React.createElement(GitFileRow, { key: i, file: f, onOpen: (file) => openDiff(hash, file) })),
 					)
@@ -1035,7 +1205,7 @@ window.__ModuleLoader__.load({
 
 				const rows = []
 				if (loading) {
-					rows.push(React.createElement('div', { key: 'loading', className: 'dsh-fe-status' }, 'Loading…'))
+					rows.push(React.createElement('div', { key: 'loading', className: 'dsh-fe-status' }, t('git.loading')))
 				} else if (error) {
 					rows.push(React.createElement('div', { key: 'error', className: 'dsh-fe-status dsh-fe-status-error' }, error))
 				} else if (graph !== null) {
@@ -1049,21 +1219,21 @@ window.__ModuleLoader__.load({
 								className: 'dsh-git-row',
 								onClick: () => toggle('WORKING'),
 								role: 'button',
-								title: 'Uncommitted changes',
+								title: t('git.uncommitted'),
 							},
 								React.createElement(WorkTreeCell, { lane: first !== null ? first.lane : 0, connectorColor }),
 								React.createElement('div', { className: 'dsh-git-main' },
 									React.createElement('div', { className: 'dsh-git-line1' },
-										React.createElement('span', { className: 'dsh-git-subject' }, 'Uncommitted changes'),
+										React.createElement('span', { className: 'dsh-git-subject' }, t('git.uncommitted')),
 										React.createElement('span', { className: 'dsh-git-pill dsh-git-pill-branch' }, String(changes.length)),
 									),
-									React.createElement('div', { className: 'dsh-git-line2' }, 'Working tree'),
+									React.createElement('div', { className: 'dsh-git-line2' }, t('git.workingTree')),
 								),
 							),
 							selected === 'WORKING'
 								? React.createElement('div', { className: 'dsh-git-detail' },
 									React.createElement('div', { className: 'dsh-git-files-title' },
-										`${changes.length} changed file${changes.length === 1 ? '' : 's'} (vs HEAD)`),
+										changes.length === 1 ? t('git.changedVsHead.one', { count: changes.length }) : t('git.changedVsHead.other', { count: changes.length })),
 									changes.map((f, i) =>
 										React.createElement(GitFileRow, { key: i, file: f, onOpen: (file) => openDiff('WORKING', file) })),
 								)
@@ -1086,23 +1256,23 @@ window.__ModuleLoader__.load({
 										React.createElement('span', { className: 'dsh-git-subject' }, c.subject),
 									),
 									React.createElement('div', { className: 'dsh-git-line2' },
-										`${c.author || 'unknown'} · ${relTime(c.date)} · ${shortHash(c.hash)}`),
+										`${c.author || t('git.authorUnknown')} · ${relTime(c.date, t)} · ${shortHash(c.hash)}`),
 								),
 							),
 							selected === c.hash ? renderCommitDetail(c.hash, details[c.hash]) : null,
 						))
 					})
 					if (rows.length === 0) {
-						rows.push(React.createElement('div', { key: 'empty', className: 'dsh-fe-status' }, 'No commits yet'))
+						rows.push(React.createElement('div', { key: 'empty', className: 'dsh-fe-status' }, t('git.noCommitsYet')))
 					}
 				} else {
-					rows.push(React.createElement('div', { key: 'none', className: 'dsh-fe-status' }, 'No data'))
+					rows.push(React.createElement('div', { key: 'none', className: 'dsh-fe-status' }, t('git.noData')))
 				}
 
 				const branchLabel = status
 					? (status.branch === null
-						? 'detached HEAD'
-						: status.branch + (status.unborn ? ' (no commits yet)' : ''))
+						? t('git.detachedHead')
+						: status.branch + (status.unborn ? t('git.noCommitsYetSuffix') : ''))
 					: null
 				const upstreamBits = []
 				if (status && status.ahead > 0) upstreamBits.push('↑' + status.ahead)
@@ -1114,17 +1284,17 @@ window.__ModuleLoader__.load({
 							type: 'button',
 							className: 'dsh-fe-toolbutton',
 							onClick: reload,
-							'aria-label': 'Refresh graph',
-							title: 'Refresh',
+							'aria-label': t('git.refreshGraph'),
+							title: t('files.refresh'),
 						}, svgIcon(refreshIcon, 15)),
 						React.createElement('select', {
 							className: 'dsh-git-scope',
 							value: scope,
-							'aria-label': 'Branch filter',
+							'aria-label': t('git.branchFilter'),
 							onChange: (event) => setScope(event.target.value),
 						},
-							React.createElement('option', { value: 'all' }, 'All branches'),
-							React.createElement('option', { value: 'current' }, 'Current branch'),
+							React.createElement('option', { value: 'all' }, t('git.allBranches')),
+							React.createElement('option', { value: 'current' }, t('git.currentBranch')),
 						),
 					),
 					branchLabel !== null
@@ -1132,7 +1302,7 @@ window.__ModuleLoader__.load({
 							svgIcon(branchIcon, 12),
 							React.createElement('span', { className: 'dsh-git-info-name' }, branchLabel),
 							upstreamBits.length > 0 ? React.createElement('span', null, upstreamBits.join(' ')) : null,
-							React.createElement('span', null, `${changes.length} change${changes.length === 1 ? '' : 's'}`),
+							React.createElement('span', null, changes.length === 1 ? t('git.changesCount.one', { count: changes.length }) : t('git.changesCount.other', { count: changes.length })),
 						)
 						: null,
 					React.createElement('div', { className: 'dsh-git-list' }, rows),
@@ -1144,29 +1314,31 @@ window.__ModuleLoader__.load({
 							React.createElement('div', {
 								className: 'dsh-fe-modal',
 								role: 'dialog',
-								'aria-label': 'Diff',
+								'aria-label': t('git.diff'),
 								onClick: (event) => event.stopPropagation(),
 							},
 								React.createElement('div', { className: 'dsh-fe-modal-head' },
 									React.createElement('div', { className: 'dsh-fe-modal-title' }, diff.title),
 									React.createElement('div', { className: 'dsh-fe-modal-meta' },
-										diff.hash === 'WORKING' ? 'working tree' : shortHash(diff.hash)),
+										diff.hash === 'WORKING' ? t('git.workingTreeLabel') : shortHash(diff.hash)),
 									React.createElement('button', {
 										type: 'button',
 										className: 'dsh-fe-icon',
 										onClick: () => setDiff(null),
-										'aria-label': 'Close diff',
+										'aria-label': t('git.closeDiff'),
 									}, svgIcon(closeIcon, 14)),
 								),
 								React.createElement('div', { className: 'dsh-fe-modal-body' },
-									diff.loading ? 'Loading…' : (diff.error || diff.text || '(no diff)')),
+									diff.loading ? t('git.loading') : (diff.error || diff.text || t('git.noDiff'))),
 							),
 						)
 						: null,
 				)
 			}
+			}
 
-			function FileExplorerPage(props) {
+			function createFileExplorerPage(t) {
+				return function FileExplorerPage(props) {
 				if (typeof props.useSessions !== 'function') return null
 
 				const sessionId = props.useSessions((state) => {
@@ -1231,7 +1403,7 @@ window.__ModuleLoader__.load({
 								setCurrentPath(requestPath)
 								setParentPath(null)
 								setEntries([])
-								setError(raw && typeof raw.error === 'string' ? raw.error : 'Failed to list files')
+								setError(raw && typeof raw.error === 'string' ? raw.error : t('files.listFailed'))
 							}
 						})
 						.catch((err) => {
@@ -1333,7 +1505,7 @@ window.__ModuleLoader__.load({
 					setPreview(null)
 					api('read', { path: entry.path })
 						.then((raw) => {
-							setPreview(raw && raw.ok === true ? raw : { ok: false, error: raw && typeof raw.error === 'string' ? raw.error : 'Failed to read file' })
+							setPreview(raw && raw.ok === true ? raw : { ok: false, error: raw && typeof raw.error === 'string' ? raw.error : t('files.readFailed') })
 						})
 						.catch((err) => {
 							setPreview({ ok: false, error: err && typeof err.message === 'string' ? err.message : String(err) })
@@ -1346,7 +1518,7 @@ window.__ModuleLoader__.load({
 					api('download', { path: entry.path })
 						.then((raw) => {
 							if (!raw || raw.ok !== true) {
-								const message = raw && typeof raw.error === 'string' ? raw.error : 'Download failed'
+								const message = raw && typeof raw.error === 'string' ? raw.error : t('files.downloadFailed')
 								setError(message)
 								return
 							}
@@ -1373,7 +1545,7 @@ window.__ModuleLoader__.load({
 					api('delete', { path: entry.path })
 						.then((raw) => {
 							if (!raw || raw.ok !== true) {
-								setError(raw && typeof raw.error === 'string' ? raw.error : 'Delete failed')
+								setError(raw && typeof raw.error === 'string' ? raw.error : t('files.deleteFailed'))
 								return
 							}
 							reload()
@@ -1397,9 +1569,9 @@ window.__ModuleLoader__.load({
 					: React.createElement('button', {
 						type: 'button',
 						className: 'dsh-fe-path',
-						title: currentPath || 'workspace root',
+						title: currentPath || t('files.workspaceRoot'),
 						onClick: startEditPath,
-					}, currentPath || 'workspace root')
+					}, currentPath || t('files.workspaceRoot'))
 
 				const filesView = React.createElement(React.Fragment, null,
 					pathControl,
@@ -1411,24 +1583,24 @@ window.__ModuleLoader__.load({
 							onClick: () => {
 								if (parentPath !== null && parentPath !== currentPath) setRequestPath(parentPath)
 							},
-							'aria-label': 'Go to parent directory',
-							title: 'Up',
+							'aria-label': t('files.goUp'),
+							title: t('files.up'),
 						}, svgIcon(upIcon, 15)),
 						React.createElement('button', {
 							type: 'button',
 							className: 'dsh-fe-toolbutton',
 							onClick: reload,
-							'aria-label': 'Refresh file list',
-							title: 'Refresh',
+							'aria-label': t('files.refreshList'),
+							title: t('files.refresh'),
 						}, svgIcon(refreshIcon, 15)),
 					),
 					React.createElement('div', { className: 'dsh-fe-list' },
 						loading
-							? React.createElement('div', { className: 'dsh-fe-status' }, 'Loading...')
+							? React.createElement('div', { className: 'dsh-fe-status' }, t('files.loading'))
 							: error
 								? React.createElement('div', { className: 'dsh-fe-status dsh-fe-status-error' }, error)
 								: sorted.length === 0
-									? React.createElement('div', { className: 'dsh-fe-status' }, 'Empty folder')
+									? React.createElement('div', { className: 'dsh-fe-status' }, t('files.empty'))
 									: sorted.map((entry) => {
 										const isDir = entry.type === 'directory'
 										return React.createElement('div', {
@@ -1449,22 +1621,22 @@ window.__ModuleLoader__.load({
 														type: 'button',
 														className: 'dsh-fe-action',
 														onClick: (event) => { event.stopPropagation(); openPreview(entry) },
-														'aria-label': `View ${entry.name}`,
-														title: 'View',
+														'aria-label': t('files.viewFile', { name: entry.name }),
+														title: t('files.view'),
 													}, svgIcon(eyeIcon, 14)),
 													!isDir && React.createElement('button', {
 														type: 'button',
 														className: 'dsh-fe-action',
 														onClick: (event) => { event.stopPropagation(); downloadFile(entry) },
-														'aria-label': `Download ${entry.name}`,
-														title: 'Download',
+														'aria-label': t('files.downloadFile', { name: entry.name }),
+														title: t('files.download'),
 													}, svgIcon(downloadIcon, 14)),
 													React.createElement('button', {
 														type: 'button',
 														className: pendingDelete === entry.path ? 'dsh-fe-action dsh-fe-action-confirm' : 'dsh-fe-action dsh-fe-action-danger',
 														onClick: (event) => { event.stopPropagation(); requestDelete(entry) },
-														'aria-label': pendingDelete === entry.path ? `Confirm deleting ${entry.name}` : `Delete ${entry.name}`,
-														title: pendingDelete === entry.path ? 'Click again to delete' : 'Delete',
+														'aria-label': pendingDelete === entry.path ? t('files.confirmDelete', { name: entry.name }) : t('files.deleteFile', { name: entry.name }),
+														title: pendingDelete === entry.path ? t('files.clickAgain') : t('files.delete'),
 													}, svgIcon(trashIcon, 14)),
 												),
 											),
@@ -1477,7 +1649,7 @@ window.__ModuleLoader__.load({
 					React.createElement('div', {
 						className: 'dsh-fe-page',
 						role: 'region',
-						'aria-label': 'Files',
+						'aria-label': t('files.title'),
 					},
 						filesView,
 					),
@@ -1489,50 +1661,50 @@ window.__ModuleLoader__.load({
 							React.createElement('div', {
 								className: preview.kind === 'image' && imageFullscreen ? 'dsh-fe-modal dsh-fe-modal-fullscreen' : 'dsh-fe-modal',
 								role: 'dialog',
-								'aria-label': 'File preview',
+								'aria-label': t('files.previewDialog'),
 								'aria-modal': true,
 								tabIndex: -1,
 								onKeyDown: handlePreviewKeyDown,
 								onClick: (event) => event.stopPropagation(),
 							},
 								React.createElement('div', { className: 'dsh-fe-modal-head' },
-									React.createElement('div', { className: 'dsh-fe-modal-title' }, preview.name || 'Preview'),
-									React.createElement('div', { className: 'dsh-fe-modal-meta' }, preview.kind === 'image' ? `Image / ${formatSize(preview.size)}` : preview.binary ? 'Binary' : formatSize(preview.size)),
+									React.createElement('div', { className: 'dsh-fe-modal-title' }, preview.name || t('files.preview')),
+									React.createElement('div', { className: 'dsh-fe-modal-meta' }, preview.kind === 'image' ? t('files.imageMeta', { size: formatSize(preview.size) }) : preview.binary ? t('files.binary') : formatSize(preview.size)),
 									preview.kind === 'image' && preview.dataUrl
 										? React.createElement('div', {
 											className: 'dsh-fe-image-tools',
 											role: 'toolbar',
-											'aria-label': 'Image controls',
+											'aria-label': t('files.imageControls'),
 										},
 											React.createElement('button', {
 												type: 'button',
 												className: 'dsh-fe-icon dsh-fe-image-tool',
 												disabled: imageScale <= 0.25,
 												onClick: () => changeImageZoom(-0.25),
-												'aria-label': 'Zoom out',
-												title: 'Zoom out',
+												'aria-label': t('files.zoomOut'),
+												title: t('files.zoomOut'),
 											}, svgIcon(zoomOutIcon, 14)),
 											React.createElement('button', {
 												type: 'button',
 												className: 'dsh-fe-icon dsh-fe-image-tool',
 												onClick: resetImageZoom,
-												'aria-label': 'Reset image zoom',
-												title: 'Reset zoom',
+												'aria-label': t('files.resetImageZoom'),
+												title: t('files.resetZoom'),
 											}, React.createElement('span', { className: 'dsh-fe-image-zoom-label' }, `${Math.round(imageScale * 100)}%`)),
 											React.createElement('button', {
 												type: 'button',
 												className: 'dsh-fe-icon dsh-fe-image-tool',
 												disabled: imageScale >= 4,
 												onClick: () => changeImageZoom(0.25),
-												'aria-label': 'Zoom in',
-												title: 'Zoom in',
+												'aria-label': t('files.zoomIn'),
+												title: t('files.zoomIn'),
 											}, svgIcon(zoomInIcon, 14)),
 											React.createElement('button', {
 												type: 'button',
 												className: 'dsh-fe-icon dsh-fe-image-tool',
 												onClick: () => setImageFullscreen((value) => !value),
-												'aria-label': imageFullscreen ? 'Exit fullscreen' : 'Enter fullscreen',
-												title: imageFullscreen ? 'Exit fullscreen' : 'Fullscreen',
+												'aria-label': imageFullscreen ? t('files.exitFullscreen') : t('files.enterFullscreen'),
+												title: imageFullscreen ? t('files.exitFullscreen') : t('files.fullscreen'),
 											}, svgIcon(imageFullscreen ? fullscreenExitIcon : fullscreenIcon, 14)),
 										)
 										: null,
@@ -1540,7 +1712,7 @@ window.__ModuleLoader__.load({
 										type: 'button',
 										className: 'dsh-fe-icon',
 										onClick: closePreview,
-										'aria-label': 'Close preview',
+										'aria-label': t('files.closePreview'),
 									}, svgIcon(closeIcon, 14)),
 								),
 								React.createElement('div', {
@@ -1552,7 +1724,7 @@ window.__ModuleLoader__.load({
 									onPointerCancel: preview.kind === 'image' && preview.dataUrl ? endImageDrag : undefined,
 								},
 									previewLoading
-										? 'Loading...'
+										? t('files.loading')
 										: preview.error
 											? preview.error
 											: preview.kind === 'image'
@@ -1562,23 +1734,25 @@ window.__ModuleLoader__.load({
 															className: 'dsh-fe-preview-image' + (imageScale > 1 ? ' dsh-fe-preview-image-pannable' : '') + (imageDragging ? ' dsh-fe-preview-image-dragging' : ''),
 															style: { transform: `translate3d(${imageOffset.x}px, ${imageOffset.y}px, 0) scale(${imageScale})` },
 															src: preview.dataUrl,
-															alt: preview.name || 'Image preview',
+															alt: preview.name || t('files.imagePreview'),
 															draggable: false,
 														})
 													)
-													: preview.tooLarge ? 'Image is too large to preview here' : '(No preview)'
+													: preview.tooLarge ? t('files.imageTooLarge') : t('files.noPreview')
 											: preview.text !== undefined && preview.text !== null
 												? preview.text
 												: preview.tooLarge
-													? 'File is too large to preview here'
-													: preview.binary ? 'Binary file cannot be previewed' : '(No preview)',
+													? t('files.fileTooLarge')
+													: preview.binary ? t('files.binaryNoPreview') : t('files.noPreview'),
 								),
 							),
 						),
 				)
 			}
+			}
 
-			function FileExplorerGitPage(props) {
+			function createFileExplorerGitPage(t) {
+				return function FileExplorerGitPage(props) {
 				if (typeof props.useSessions !== 'function') return null
 
 				const sessionId = props.useSessions((state) => {
@@ -1599,23 +1773,28 @@ window.__ModuleLoader__.load({
 				return React.createElement('div', {
 					className: 'dsh-fe-page',
 					role: 'region',
-					'aria-label': 'Git Graph',
+					'aria-label': t('git.title'),
 				}, React.createElement(GitGraphView, { api, cwd }))
 			}
+			}
+
+			const GitGraphView = createGitGraphView(t);
+			const FileExplorerPage = createFileExplorerPage(t);
+			const FileExplorerGitPage = createFileExplorerGitPage(t);
 
 			ctx.effect(() => {
 				const disposeFilesPage = rightPanel.registerPage({
 					id: 'file-explorer.files',
-					title: 'Files',
-					group: 'Workspace',
+					title: t('files.title'),
+					group: t('workspace'),
 					order: 20,
 					placement: 'rail',
 					icon: (size) => svgIcon(folderIcon, size),
 				})
 				const disposeGitPage = rightPanel.registerPage({
 					id: 'file-explorer.git',
-					title: 'Git Graph',
-					group: 'Workspace',
+					title: t('git.title'),
+					group: t('workspace'),
 					order: 21,
 					placement: 'rail',
 					icon: (size) => svgIcon(branchIcon, size),

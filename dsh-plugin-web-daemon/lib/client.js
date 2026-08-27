@@ -18,6 +18,119 @@ window.__ModuleLoader__.load({
 
 		const inject = ["slots", "timer"];
 
+		const LOCALE_NS = "web-daemon";
+		const ZH_DICT = {
+			server: "服务器",
+			"server.status": "服务器状态",
+			"server.status.unavailable": "服务器状态不可用",
+			"server.status.error": "服务器状态暂时不可用",
+			cpu: "CPU：",
+			memory: "内存",
+			"net.up": "上行 ",
+			"net.down": "下行 ",
+			network: "网络：",
+			"daemon.title": "Web 守护进程",
+			"daemon.desc": "以 systemd 单元形式管理 dsh Web 工作进程。",
+			"status.running": "运行中",
+			"status.failed": "失败",
+			"status.restarting": "重启中",
+			"status.starting": "启动中",
+			"status.stopped": "已停止",
+			"action.start": "启动",
+			"action.stop": "停止",
+			"action.restart": "重启",
+			"action.reset": "重置失败状态",
+			save: "保存设置",
+			discard: "放弃修改",
+			saved: "守护进程设置已保存。",
+			"lost.contact": "与守护进程 API 失去联系——正在重试…",
+			"loading.status": "正在加载守护进程状态…",
+			"status.na": "守护进程状态不可用。",
+			enabled: "启用",
+			"enabled.hint": "对应 systemctl enable/disable；停用后仍可执行启动/停止。",
+			boot: "开机自启并保持运行",
+			scope: "systemd 作用域",
+			"scope.hint": "system 作用域需要 root；用户单元使用 --user。",
+			unit: "systemd 单元",
+			profile: "配置文件",
+			"profile.hint": "由工作进程启动的 DSH 配置。",
+			port: "端口",
+			"port.hint": "工作进程始终绑定回环地址；局域网访问由 dsh-plugin-auth-webserver 处理。",
+			"journal.hint": "日志写入 systemd 日志：journalctl -u {name} -f",
+			"nested.notice": "当前进程即为受管工作进程：可在此重启（例如插件更新后）；启动/停止和配置由单元所有者管理。",
+			unsaved: "有未保存的更改",
+			"meta.pid": "PID：",
+			"meta.restarts": "重启次数：",
+			"meta.started": "启动于：",
+			"meta.unit": "单元：",
+			"meta.stateOpen": "（",
+			"meta.stateClose": "）",
+			"state.unknown": "未知",
+			"notice.start": "已请求启动守护进程。",
+			"notice.stop": "守护进程已停止。",
+			"notice.restart": "已请求重启守护进程。",
+			"notice.reset": "已重置守护进程启动次数限制。",
+			"notice.restarting": "已请求重启——正在等待服务恢复…",
+		};
+		const EN_DICT = {
+			server: "Server",
+			"server.status": "Server status",
+			"server.status.unavailable": "Server status unavailable",
+			"server.status.error": "Server status temporarily unavailable",
+			cpu: "CPU: ",
+			memory: "Memory",
+			"net.up": "Up ",
+			"net.down": "Down ",
+			network: "Network: ",
+			"daemon.title": "Web daemon",
+			"daemon.desc": "Manages the dsh web worker as a systemd unit.",
+			"status.running": "Running",
+			"status.failed": "Failed",
+			"status.restarting": "Restarting",
+			"status.starting": "Starting",
+			"status.stopped": "Stopped",
+			"action.start": "Start",
+			"action.stop": "Stop",
+			"action.restart": "Restart",
+			"action.reset": "Reset failed state",
+			save: "Save settings",
+			discard: "Discard",
+			saved: "Daemon settings saved.",
+			"lost.contact": "Lost contact with the daemon API — retrying...",
+			"loading.status": "Loading daemon status...",
+			"status.na": "Daemon status is not available.",
+			enabled: "Enabled",
+			"enabled.hint": "Maps to systemctl enable/disable; Start/Stop still work while disabled.",
+			boot: "start on boot and keep running",
+			scope: "Systemd scope",
+			"scope.hint": "system needs root; user units use --user.",
+			unit: "Systemd unit",
+			profile: "Profile",
+			"profile.hint": "DSH profile started by the worker.",
+			port: "Port",
+			"port.hint": "Worker always binds loopback; LAN access is handled by dsh-plugin-auth-webserver.",
+			"journal.hint": "Logs go to the systemd journal: journalctl -u {name} -f",
+			"nested.notice": "This process is the managed worker. Restart is available here (e.g. after plugin updates); Start/Stop and configuration live on the unit owner.",
+			unsaved: "Unsaved changes",
+			"meta.pid": "PID: ",
+			"meta.restarts": "restarts: ",
+			"meta.started": "started: ",
+			"meta.unit": "unit: ",
+			"meta.stateOpen": " (",
+			"meta.stateClose": ")",
+			"state.unknown": "unknown",
+			"notice.start": "Daemon start requested.",
+			"notice.stop": "Daemon stopped.",
+			"notice.restart": "Daemon restart requested.",
+			"notice.reset": "Daemon start limit reset.",
+			"notice.restarting": "Restart requested — waiting for the service to come back...",
+		};
+
+		function applyParams(template, params) {
+			if (!params) return template;
+			return template.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match);
+		}
+
 		const STYLE_ID = "dsh-plugin-web-daemon-settings";
 		if (typeof document !== "undefined") {
 			let style = document.getElementById(STYLE_ID);
@@ -136,7 +249,7 @@ window.__ModuleLoader__.load({
 			return "ok";
 		}
 
-		function createServerStatus(timer) {
+		function createServerStatus(timer, t) {
 			return function ServerStatus(props) {
 				const [snapshot, setSnapshot] = React.useState(null);
 				const [error, setError] = React.useState(null);
@@ -153,7 +266,7 @@ window.__ModuleLoader__.load({
 						setError(null);
 					} catch {
 						failuresRef.current += 1;
-						if (failuresRef.current >= 3) setError("服务器状态暂时不可用");
+						if (failuresRef.current >= 3) setError(t("server.status.error"));
 					} finally {
 						requestRef.current = false;
 					}
@@ -169,7 +282,7 @@ window.__ModuleLoader__.load({
 				if (!wide) {
 					return React.createElement(
 						"div",
-						{ className: "dwd-serverStatusRail", "data-state": state, role: "status", "aria-label": error === null ? "服务器状态" : "服务器状态不可用", title: "服务器状态" },
+						{ className: "dwd-serverStatusRail", "data-state": state, role: "status", "aria-label": error === null ? t("server.status") : t("server.status.unavailable"), title: t("server.status") },
 						React.createElement("span", { className: "dwd-serverDot", "aria-hidden": "true" }),
 					);
 				}
@@ -179,12 +292,12 @@ window.__ModuleLoader__.load({
 				const network = snapshot?.network;
 				return React.createElement(
 					"section",
-					{ className: "dwd-serverStatus", "data-state": state, role: "status", "aria-label": "服务器状态" },
+					{ className: "dwd-serverStatus", "data-state": state, role: "status", "aria-label": t("server.status") },
 					React.createElement(
 						"div",
 						{ className: "dwd-serverStatusHeader" },
 						React.createElement("span", { className: "dwd-serverDot", "aria-hidden": "true" }),
-						"服务器",
+						t("server"),
 					),
 					React.createElement(
 						"div",
@@ -192,17 +305,17 @@ window.__ModuleLoader__.load({
 						React.createElement(
 							"div",
 							{ className: "dwd-serverMetricRow" },
-							React.createElement("span", { className: "dwd-serverMetricLabel" }, "CPU："),
+							React.createElement("span", { className: "dwd-serverMetricLabel" }, t("cpu")),
 							React.createElement("b", { className: "dwd-serverMetricValue", "data-tone": metricTone(cpu?.percent) }, formatPercent(cpu?.percent)),
-							React.createElement("span", { className: "dwd-serverMetricLabel" }, "内存"),
+							React.createElement("span", { className: "dwd-serverMetricLabel" }, t("memory")),
 							React.createElement("b", { className: "dwd-serverMetricValue", "data-tone": metricTone(memory?.percent) }, formatPercent(memory?.percent)),
 						),
 						React.createElement(
 							"div",
 							{ className: "dwd-serverMetricRow" },
-							React.createElement("span", { className: "dwd-serverMetricLabel" }, "网络："),
-							React.createElement("span", { className: "dwd-serverMetricValue dwd-serverMetricValueNetwork" }, "上行 ", formatRate(network?.txBytesPerSecond)),
-							React.createElement("span", { className: "dwd-serverMetricValue dwd-serverMetricValueNetwork" }, "下行 ", formatRate(network?.rxBytesPerSecond)),
+							React.createElement("span", { className: "dwd-serverMetricLabel" }, t("network")),
+							React.createElement("span", { className: "dwd-serverMetricValue dwd-serverMetricValueNetwork" }, t("net.up"), formatRate(network?.txBytesPerSecond)),
+							React.createElement("span", { className: "dwd-serverMetricValue dwd-serverMetricValueNetwork" }, t("net.down"), formatRate(network?.rxBytesPerSecond)),
 						),
 					),
 					error === null ? null : React.createElement("div", { className: "dwd-serverError" }, error),
@@ -210,7 +323,8 @@ window.__ModuleLoader__.load({
 			};
 		}
 
-		function WebDaemonCard(props) {
+		function createWebDaemonCard(t) {
+			return function WebDaemonCard(props) {
 			const timer = props.timer;
 			const [open, setOpen] = React.useState(false);
 			const [snapshot, setSnapshot] = React.useState(null);
@@ -231,7 +345,7 @@ window.__ModuleLoader__.load({
 					// quiet until the daemon misses several polls in a row.
 					failuresRef.current += 1;
 					if (failuresRef.current >= 3) {
-						setError("Lost contact with the daemon API — retrying...");
+						setError(t("lost.contact"));
 					}
 				}
 			}, []);
@@ -261,22 +375,22 @@ window.__ModuleLoader__.load({
 						});
 						setSnapshot(result);
 						setDraft(null);
-						setNotice("Daemon settings saved.");
+						setNotice(t("saved"));
 					} else if (action === "restart" && snapshot?.nested) {
 						// The worker kills itself as part of `systemctl restart`,
 						// so this request never gets a response — fire it and let
 						// polling reconnect to the fresh process.
 						api("/_dsh/web-daemon/restart", {}).catch(() => {});
-						setNotice("Restart requested — waiting for the service to come back...");
+						setNotice(t("notice.restarting"));
 						timer.timeout(() => void refresh(), 3000);
 					} else {
 						const result = await api(`/_dsh/web-daemon/${action}`, {});
 						setSnapshot(result);
 						setDraft(null);
-						if (action === "start") setNotice("Daemon start requested.");
-						if (action === "stop") setNotice("Daemon stopped.");
-						if (action === "restart") setNotice("Daemon restart requested.");
-						if (action === "reset") setNotice("Daemon start limit reset.");
+						if (action === "start") setNotice(t("notice.start"));
+						if (action === "stop") setNotice(t("notice.stop"));
+						if (action === "restart") setNotice(t("notice.restart"));
+						if (action === "reset") setNotice(t("notice.reset"));
 					}
 				} catch (err) {
 					setError(err && err.message ? err.message : String(err));
@@ -306,10 +420,10 @@ window.__ModuleLoader__.load({
 					React.createElement(
 						"span",
 						{ className: "dwd-cardHead" },
-						React.createElement("span", { className: "dwd-cardTitle" }, "Web daemon"),
-						React.createElement("span", { className: "dwd-cardDesc" }, "Manages the dsh web worker as a systemd unit."),
+						React.createElement("span", { className: "dwd-cardTitle" }, t("daemon.title")),
+						React.createElement("span", { className: "dwd-cardDesc" }, t("daemon.desc")),
 					),
-					changed ? React.createElement("span", { className: "dwd-unsaved" }, "Unsaved changes") : null,
+					changed ? React.createElement("span", { className: "dwd-unsaved" }, t("unsaved")) : null,
 					React.createElement(
 						"svg",
 						{ className: "dwd-chevron", "data-open": String(open), viewBox: "0 0 14 14", width: 14, height: 14, "aria-hidden": "true" },
@@ -321,10 +435,10 @@ window.__ModuleLoader__.load({
 							"div",
 							{ className: "dwd-cardBody" },
 							snapshot === null && error === null
-								? React.createElement("div", { className: "dwd-section" }, "Loading daemon status...")
+								? React.createElement("div", { className: "dwd-section" }, t("loading.status"))
 								: null,
 							config === undefined && snapshot !== null
-								? React.createElement("p", { className: "dwd-empty" }, "Daemon status is not available.")
+								? React.createElement("p", { className: "dwd-empty" }, t("status.na"))
 								: null,
 							config !== undefined && snapshot !== null
 								? React.createElement(
@@ -336,27 +450,27 @@ window.__ModuleLoader__.load({
 											React.createElement(
 												"span",
 												{ className: "dwd-pill", "data-state": status, "aria-live": "polite" },
-												status === "running" ? "Running" : status === "failed" ? "Failed" : status === "restarting" ? "Restarting" : status === "starting" ? "Starting" : "Stopped",
+												status === "running" ? t("status.running") : status === "failed" ? t("status.failed") : status === "restarting" ? t("status.restarting") : status === "starting" ? t("status.starting") : t("status.stopped"),
 											),
 											React.createElement(
 												"span",
 												{ className: "dwd-meta" },
-												React.createElement("span", null, "PID: ", React.createElement("b", null, snapshot.pid || "-")),
-												React.createElement("span", null, "restarts: ", React.createElement("b", null, snapshot.restarts || 0)),
-												React.createElement("span", null, "started: ", React.createElement("b", null, snapshot.startedAt || "-")),
-												React.createElement("span", null, "unit: ", React.createElement("b", null, unit.name || "-"), " (", unit.activeState || "unknown", ")"),
+												React.createElement("span", null, t("meta.pid"), React.createElement("b", null, snapshot.pid || "-")),
+												React.createElement("span", null, t("meta.restarts"), React.createElement("b", null, snapshot.restarts || 0)),
+												React.createElement("span", null, t("meta.started"), React.createElement("b", null, snapshot.startedAt || "-")),
+												React.createElement("span", null, t("meta.unit"), React.createElement("b", null, unit.name || "-"), t("meta.stateOpen"), unit.activeState || t("state.unknown"), t("meta.stateClose")),
 											),
 											React.createElement(
 												"div",
 												{ className: "dwd-actions" },
-												React.createElement("button", { type: "button", className: "dwd-btn primary", disabled: busy || nested, onClick: () => void run("start") }, "Start"),
-												React.createElement("button", { type: "button", className: "dwd-btn danger", disabled: busy || nested, onClick: () => void run("stop") }, "Stop"),
-												React.createElement("button", { type: "button", className: "dwd-btn", disabled: busy, onClick: () => void run("restart") }, "Restart"),
-												React.createElement("button", { type: "button", className: "dwd-btn", disabled: busy || nested, onClick: () => void run("reset") }, "Reset failed state"),
+												React.createElement("button", { type: "button", className: "dwd-btn primary", disabled: busy || nested, onClick: () => void run("start") }, t("action.start")),
+												React.createElement("button", { type: "button", className: "dwd-btn danger", disabled: busy || nested, onClick: () => void run("stop") }, t("action.stop")),
+												React.createElement("button", { type: "button", className: "dwd-btn", disabled: busy, onClick: () => void run("restart") }, t("action.restart")),
+												React.createElement("button", { type: "button", className: "dwd-btn", disabled: busy || nested, onClick: () => void run("reset") }, t("action.reset")),
 											),
 										),
 										nested
-											? React.createElement("div", { className: "dwd-notice", role: "status" }, "This process is the managed worker. Restart is available here (e.g. after plugin updates); Start/Stop and configuration live on the unit owner.")
+											? React.createElement("div", { className: "dwd-notice", role: "status" }, t("nested.notice"))
 											: null,
 										error === null ? null : React.createElement("div", { className: "dwd-error", role: "alert" }, error),
 										notice === null ? null : React.createElement("div", { className: "dwd-notice", role: "status" }, notice),
@@ -366,79 +480,88 @@ window.__ModuleLoader__.load({
 											React.createElement(
 												"label",
 												{ className: "dwd-field" },
-												React.createElement("span", { className: "dwd-label" }, "Enabled"),
+												React.createElement("span", { className: "dwd-label" }, t("enabled")),
 												React.createElement(
 													"label",
 													{ className: "dwd-check" },
 													React.createElement("input", { type: "checkbox", checked: Boolean(config.enabled), disabled: disabled, onChange: (event) => update("enabled", event.target.checked) }),
-													"start on boot and keep running",
+													t("boot"),
 												),
-												React.createElement("span", { className: "dwd-hint" }, "Maps to systemctl enable/disable; Start/Stop still work while disabled."),
+												React.createElement("span", { className: "dwd-hint" }, t("enabled.hint")),
 											),
 											React.createElement(
 												"label",
 												{ className: "dwd-field" },
-												React.createElement("span", { className: "dwd-label" }, "Systemd scope"),
+												React.createElement("span", { className: "dwd-label" }, t("scope")),
 												React.createElement(
 													"select",
 													{ className: "dwd-input", value: config.systemdScope || "system", disabled: disabled, onChange: (event) => update("systemdScope", event.target.value) },
 													React.createElement("option", { value: "system" }, "system"),
 													React.createElement("option", { value: "user" }, "user"),
 												),
-												React.createElement("span", { className: "dwd-hint" }, "system needs root; user units use --user."),
+												React.createElement("span", { className: "dwd-hint" }, t("scope.hint")),
 											),
 											React.createElement(
 												"label",
 												{ className: "dwd-field" },
-												React.createElement("span", { className: "dwd-label" }, "Systemd unit"),
+												React.createElement("span", { className: "dwd-label" }, t("unit")),
 												React.createElement("input", { className: "dwd-input", value: config.systemdUnit || "dsh-web.service", disabled: disabled, onChange: (event) => update("systemdUnit", event.target.value) }),
 											),
 											React.createElement(
 												"label",
 												{ className: "dwd-field" },
-												React.createElement("span", { className: "dwd-label" }, "Profile"),
+												React.createElement("span", { className: "dwd-label" }, t("profile")),
 												React.createElement("input", { className: "dwd-input", value: config.profile || "", disabled: disabled, onChange: (event) => update("profile", event.target.value) }),
-												React.createElement("span", { className: "dwd-hint" }, "DSH profile started by the worker."),
+												React.createElement("span", { className: "dwd-hint" }, t("profile.hint")),
 											),
 											React.createElement(
 												"label",
 												{ className: "dwd-field" },
-												React.createElement("span", { className: "dwd-label" }, "Port"),
+												React.createElement("span", { className: "dwd-label" }, t("port")),
 												React.createElement("input", { type: "number", min: "0", max: "65535", className: "dwd-input", value: config.port ?? 3081, disabled: disabled, onChange: (event) => update("port", Number(event.target.value)) }),
-												React.createElement("span", { className: "dwd-hint" }, "Worker always binds loopback; LAN access is handled by dsh-plugin-auth-webserver."),
+												React.createElement("span", { className: "dwd-hint" }, t("port.hint")),
 											),
 										),
 										snapshot.command
 											? React.createElement("pre", { className: "dwd-command" }, snapshot.command)
 											: null,
 										unit.name
-											? React.createElement("p", { className: "dwd-hint" }, "Logs go to the systemd journal: journalctl -u ", unit.name, " -f")
+											? React.createElement("p", { className: "dwd-hint" }, t("journal.hint", { name: unit.name }))
 											: null,
 										React.createElement(
 											"div",
 											{ className: "dwd-cardFooter" },
 											changed
-												? React.createElement("button", { type: "button", className: "dwd-btn ghost", disabled: busy, onClick: () => setDraft(null) }, "Discard")
+												? React.createElement("button", { type: "button", className: "dwd-btn ghost", disabled: busy, onClick: () => setDraft(null) }, t("discard"))
 												: null,
-											React.createElement("button", { type: "button", className: "dwd-btn primary", disabled: disabled || !changed, onClick: () => void run("save") }, "Save settings"),
+											React.createElement("button", { type: "button", className: "dwd-btn primary", disabled: disabled || !changed, onClick: () => void run("save") }, t("save")),
 										),
 									)
 								: null,
 						)
 					: null,
 			);
+			};
 		}
 
 		function apply(ctx) {
 			const slots = ctx.get("slots");
 			const timer = ctx.get("timer");
 			if (slots === undefined || timer === undefined) return;
-			const ServerStatus = createServerStatus(timer);
+			const locale = ctx.get("locale");
+			if (locale !== undefined) {
+				ctx.effect(() => locale.register(LOCALE_NS, { zh: ZH_DICT, en: EN_DICT }), "web-daemon: locale");
+			}
+			const t = locale !== undefined
+				? locale.bind(LOCALE_NS)
+				: (key, params) => applyParams(ZH_DICT[key] ?? EN_DICT[key] ?? key, params);
+			const ServerStatus = createServerStatus(timer, t);
 			ctx.slots.inject("sidebar.server.status", () => ctx.slots.register({
 				name: "sidebar.server.status",
 				id: "web-daemon-server-status",
 				inject: () => ({})
 			}, ServerStatus));
+			const WebDaemonCard = createWebDaemonCard(t);
 			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
 				name: "settings.plugin.item",
 				key: "web-daemon",

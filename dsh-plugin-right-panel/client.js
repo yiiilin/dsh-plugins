@@ -21,6 +21,49 @@ window.__ModuleLoader__.load({
     const MAX_RAIL_PAGES = 6;
     const RAIL_WIDTH = 56;
 
+    const LOCALE_NS = "right-panel";
+    const ZH_DICT = {
+      "panel.title": "右侧面板",
+      "panel.region": "右侧面板",
+      "panel.regionCollapsed": "右侧面板（已收起）",
+      "panel.rail": "右侧面板页面",
+      "panel.page": "右侧面板页面",
+      collapse: "收起右侧面板",
+      "collapse.rail": "收起右侧面板到图标栏",
+      expand: "展开右侧面板",
+      more: "更多页面",
+      "more.label": "更多右侧面板页面",
+      search: "搜索页面",
+      "search.label": "搜索右侧面板页面",
+      empty: "无匹配页面",
+      unavailable: "此页面不可用",
+      "renderer.missing": "无页面渲染器",
+      current: "当前",
+    };
+    const EN_DICT = {
+      "panel.title": "Right Panel",
+      "panel.region": "Right panel",
+      "panel.regionCollapsed": "Right panel (collapsed)",
+      "panel.rail": "Right panel pages",
+      "panel.page": "Right panel page",
+      collapse: "Collapse right panel",
+      "collapse.rail": "Collapse right panel into icon rail",
+      expand: "Expand right panel",
+      more: "More pages",
+      "more.label": "More right panel pages",
+      search: "Search pages",
+      "search.label": "Search right panel pages",
+      empty: "No matching pages",
+      unavailable: "This page is unavailable",
+      "renderer.missing": "No page renderer",
+      current: "Current",
+    };
+
+    function applyParams(template, params) {
+      if (!params) return template;
+      return template.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match);
+    }
+
     function createPageRegistry() {
       const pages = new Map();
       const listeners = new Set();
@@ -141,7 +184,8 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function MoreMenu(props) {
+    function createMoreMenu(t) {
+      return function MoreMenu(props) {
       const [query, setQuery] = React.useState("");
       const normalized = query.trim().toLocaleLowerCase();
       const filtered = props.pages.filter((page) => {
@@ -167,14 +211,14 @@ window.__ModuleLoader__.load({
             type: "search",
             value: query,
             autoFocus: true,
-            placeholder: "Search pages",
-            "aria-label": "Search right panel pages",
+            placeholder: t("search"),
+            "aria-label": t("search.label"),
             onChange: (event) => setQuery(event.target.value),
           }),
         ),
         React.createElement("div", { className: "dsh-rp-menu-list" },
           groups.length === 0
-            ? React.createElement("div", { className: "dsh-rp-menu-empty" }, "No matching pages")
+            ? React.createElement("div", { className: "dsh-rp-menu-empty" }, t("empty"))
             : groups.map((group) => React.createElement("div", { key: group.name, className: "dsh-rp-menu-group" },
                 React.createElement("div", { className: "dsh-rp-menu-group-title" }, group.name),
                 group.pages.map((page) => React.createElement("button", {
@@ -186,14 +230,17 @@ window.__ModuleLoader__.load({
                 },
                   React.createElement("span", { className: "dsh-rp-menu-item-icon" }, pageIcon(page, 16)),
                   React.createElement("span", { className: "dsh-rp-menu-item-label" }, page.title),
-                  page.id === props.activeId ? React.createElement("span", { className: "dsh-rp-menu-item-current" }, "Current") : null,
+                  page.id === props.activeId ? React.createElement("span", { className: "dsh-rp-menu-item-current" }, t("current")) : null,
                 )),
               )),
         ),
       );
+      };
     }
 
-    function RightPanel(props) {
+    function createRightPanel(t) {
+      const MoreMenu = createMoreMenu(t);
+      return function RightPanel(props) {
       const service = props.rightPanel;
       const snapshot = React.useSyncExternalStore(service.subscribe, service.getSnapshot, service.getSnapshot);
       const pages = snapshot.pages;
@@ -261,14 +308,14 @@ window.__ModuleLoader__.load({
       const renderedPage = typeof props.renderSlot === "function" && activePage !== null
         ? props.renderSlot("right-panel.page", { pageId: activePage.id }, {
             entryKey: activePage.id,
-            fallback: React.createElement("div", { className: "dsh-rp-empty" }, "This page is unavailable"),
+            fallback: React.createElement("div", { className: "dsh-rp-empty" }, t("unavailable")),
           })
-        : React.createElement("div", { className: "dsh-rp-empty" }, "No page renderer");
+        : React.createElement("div", { className: "dsh-rp-empty" }, t("renderer.missing"));
 
       const rail = React.createElement("div", {
         className: "dsh-rp-rail",
         role: "tablist",
-        "aria-label": "Right panel pages",
+        "aria-label": t("panel.rail"),
       },
         railPages.map((page) => React.createElement(PageButton, {
           key: page.id,
@@ -281,8 +328,8 @@ window.__ModuleLoader__.load({
               type: "button",
               className: "dsh-rp-rail-button dsh-rp-more-button" + (menuOpen ? " dsh-rp-rail-button-active" : ""),
               onClick: () => setMenuOpen((value) => !value),
-              title: "More pages",
-              "aria-label": "More right panel pages",
+              title: t("more"),
+              "aria-label": t("more.label"),
               "aria-expanded": menuOpen,
             }, svgIcon(moreIcon, 17))
           : null,
@@ -292,8 +339,8 @@ window.__ModuleLoader__.load({
               type: "button",
               className: "dsh-rp-rail-button",
               onClick: expand,
-              title: "Expand right panel",
-              "aria-label": "Expand right panel",
+              title: t("expand"),
+              "aria-label": t("expand"),
             }, svgIcon(expandIcon, 17))
           : null,
       );
@@ -309,20 +356,20 @@ window.__ModuleLoader__.load({
                   type: "button",
                   className: "dsh-rp-icon-button",
                   onClick: collapse,
-                  title: "Collapse right panel",
-                  "aria-label": "Collapse right panel into icon rail",
+                  title: t("collapse"),
+                  "aria-label": t("collapse.rail"),
                 }, svgIcon(collapseIcon, 16)),
                 React.createElement("div", { className: "dsh-rp-header-icon" }, activePage ? pageIcon(activePage, 16) : svgIcon(panelIcon, 16)),
-                React.createElement("div", { className: "dsh-rp-title" }, activePage ? activePage.title : "Right Panel"),
+                React.createElement("div", { className: "dsh-rp-title" }, activePage ? activePage.title : t("panel.title")),
               ),
-              React.createElement("div", { className: "dsh-rp-page", role: "tabpanel", "aria-label": activePage ? activePage.title : "Right panel page" }, renderedPage),
+              React.createElement("div", { className: "dsh-rp-page", role: "tabpanel", "aria-label": activePage ? activePage.title : t("panel.page") }, renderedPage),
             ),
       );
 
       return React.createElement("div", {
         className: "dsh-rp-shell" + (collapsed ? " dsh-rp-shell-collapsed" : ""),
         role: "region",
-        "aria-label": collapsed ? "Right panel (collapsed)" : "Right panel",
+        "aria-label": collapsed ? t("panel.regionCollapsed") : t("panel.region"),
       },
         main,
         rail,
@@ -330,12 +377,21 @@ window.__ModuleLoader__.load({
           ? React.createElement(MoreMenu, { pages: overflowPages, activeId, onSelect: openPage })
           : null,
       );
+      };
     }
 
     function apply(ctx) {
       const slots = ctx.get("slots");
       const layout = ctx.get("layout");
       if (slots === undefined || layout === undefined) return;
+      const locale = ctx.get("locale");
+      if (locale !== undefined) {
+        ctx.effect(() => locale.register(LOCALE_NS, { zh: ZH_DICT, en: EN_DICT }), "right-panel: locale");
+      }
+      const t = locale !== undefined
+        ? locale.bind(LOCALE_NS)
+        : (key, params) => applyParams(ZH_DICT[key] ?? EN_DICT[key] ?? key, params);
+      const RightPanel = createRightPanel(t);
 
       const style = document.createElement("style");
       style.id = "dsh-plugin-right-panel-style";

@@ -64,6 +64,93 @@ window.__ModuleLoader__.load({
 			document.head.append(style);
 		}
 
+		const LOCALE_NS = "auth-webserver";
+		const ZH_DICT = {
+			"card.title": "认证网关",
+			"card.desc": "认证保护局域网网关的登录凭据。",
+			"card.unsaved": "未保存的更改",
+			"hint.credentials": "认证保护局域网网关的登录凭据。保存在设置文档（settings.yaml）中，密码绝不会以明文形式离开该文档。",
+			"warn.env": "环境中已设置 DSH_AUTH_USER/DSH_AUTH_PASS（或 AUTH_USER/AUTH_PASS）——它们优先于此处设置生效。",
+			"warn.config": "cordis.patch.yml 中的 webserver-auth 行带有用户名/密码——它们作为基础层生效，直到您在此处保存覆盖配置为止。",
+			username: "用户名",
+			password: "密码",
+			"password.placeholder.set": "••••••••  留空则保留原密码",
+			"password.placeholder.empty": "设置密码",
+			"password.hint.set": "已配置密码。",
+			"password.hint.empty": "未配置密码——网关将拒绝所有访问。",
+			currentPassword: "当前网关密码",
+			"currentPassword.placeholder": "更改密码或 2FA 时必填",
+			realm: "域名",
+			"realm.hint": "显示在登录页面和 Basic Auth 认证提示框中。",
+			"twoFactor.status": "两步验证：{state}",
+			"twoFactor.state.enabled": "已启用",
+			"twoFactor.state.disabled": "已禁用",
+			"twoFactor.warn.env": "2FA 由 AUTH_2FA_ENABLED/AUTH_2FA_SECRET 控制，无法在此处更改。",
+			"twoFactor.hint.enabled": "登录需要密码和六位验证器动态码；启用 2FA 期间 Basic Auth 被禁用。",
+			"twoFactor.hint.setup": "在验证器应用中添加密钥，然后输入验证器生成的动态码以完成设置。",
+			"twoFactor.hint.enterPassword": "请先在上方输入当前网关密码，再确认验证器应用生成的动态码。",
+			"twoFactor.setupKey": "设置密钥",
+			"twoFactor.uri": "验证器 URI",
+			"twoFactor.newCode": "新的验证器动态码",
+			"twoFactor.currentCode": "当前验证器动态码",
+			"twoFactor.enableButton": "启用 2FA",
+			"twoFactor.replaceButton": "更换验证器",
+			"twoFactor.disableButton": "禁用 2FA",
+			"twoFactor.setupButton": "设置 2FA",
+			cancel: "取消",
+			save: "保存",
+			discard: "放弃更改",
+			"notice.saved": "已保存，新凭据将在下次登录时生效。",
+			"notice.2faStart": "请将密钥添加到验证器应用，然后输入当前动态码进行确认。",
+			"notice.2faEnabled": "2FA 已启用。请使用验证器动态码重新登录。",
+			"notice.2faDisabled": "2FA 已禁用。请重新登录以继续。",
+		};
+		const EN_DICT = {
+			"card.title": "Auth webserver",
+			"card.desc": "Credentials for the auth-gated LAN gateway.",
+			"card.unsaved": "Unsaved changes",
+			"hint.credentials": "Credentials for the auth-gated LAN gateway. Stored in the settings document (settings.yaml); the password never leaves it unredacted.",
+			"warn.env": "DSH_AUTH_USER/DSH_AUTH_PASS (or AUTH_USER/AUTH_PASS) are set in the environment — they take precedence over these settings.",
+			"warn.config": "The webserver-auth row in cordis.patch.yml carries username/password — those act as the base layer and are effective until you save an override here.",
+			username: "Username",
+			password: "Password",
+			"password.placeholder.set": "••••••••  leave empty to keep",
+			"password.placeholder.empty": "set a password",
+			"password.hint.set": "A password is configured.",
+			"password.hint.empty": "No password configured — the gateway refuses everyone.",
+			currentPassword: "Current gateway password",
+			"currentPassword.placeholder": "required when changing password or 2FA",
+			realm: "Realm",
+			"realm.hint": "Shown on the login page and the Basic Auth challenge.",
+			"twoFactor.status": "Two-factor authentication: {state}",
+			"twoFactor.state.enabled": "enabled",
+			"twoFactor.state.disabled": "disabled",
+			"twoFactor.warn.env": "2FA is controlled by AUTH_2FA_ENABLED/AUTH_2FA_SECRET and cannot be changed here.",
+			"twoFactor.hint.enabled": "Login requires the password and a six-digit authenticator code. Basic Auth is disabled while 2FA is enabled.",
+			"twoFactor.hint.setup": "Finish setup by entering a code from your authenticator app.",
+			"twoFactor.hint.enterPassword": "Enter the current gateway password above before confirming a code from your authenticator app.",
+			"twoFactor.setupKey": "Setup key",
+			"twoFactor.uri": "Authenticator URI",
+			"twoFactor.newCode": "New authenticator code",
+			"twoFactor.currentCode": "Current authenticator code",
+			"twoFactor.enableButton": "Enable 2FA",
+			"twoFactor.replaceButton": "Replace authenticator",
+			"twoFactor.disableButton": "Disable 2FA",
+			"twoFactor.setupButton": "Set up 2FA",
+			cancel: "Cancel",
+			save: "Save",
+			discard: "Discard",
+			"notice.saved": "Saved. New credentials take effect on the next login.",
+			"notice.2faStart": "Add the key to an authenticator app, then enter the current code to confirm.",
+			"notice.2faEnabled": "2FA is enabled. Sign in again with your authenticator code.",
+			"notice.2faDisabled": "2FA is disabled. Sign in again to continue.",
+		};
+
+		function applyParams(template, params) {
+			if (!params) return template;
+			return template.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match);
+		}
+
 		async function api(path, payload) {
 			const headers = { "content-type": "application/json" };
 			const csrf = document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith("dsh_auth_csrf="));
@@ -92,7 +179,8 @@ window.__ModuleLoader__.load({
 			return data;
 		}
 
-		function AuthWebserverCard() {
+		function createAuthWebserverCard(t) {
+			return function AuthWebserverCard(props) {
 			const [open, setOpen] = React.useState(false);
 			const [meta, setMeta] = React.useState(null);
 			const [username, setUsername] = React.useState("");
@@ -144,7 +232,7 @@ window.__ModuleLoader__.load({
 					setPassword("");
 					setCurrentPassword("");
 					setCurrentOtp("");
-					setNotice("Saved. New credentials take effect on the next login.");
+					setNotice(t("notice.saved"));
 				} catch (err) {
 					setError(err instanceof Error ? err.message : String(err));
 				} finally {
@@ -161,7 +249,7 @@ window.__ModuleLoader__.load({
 					setTotpSecret(data.setup.secret);
 					setTotpUri(data.setup.otpauthUrl);
 					setTotpCode("");
-					setNotice("Add the key to an authenticator app, then enter the current code to confirm.");
+					setNotice(t("notice.2faStart"));
 				} catch (err) {
 					setError(err instanceof Error ? err.message : String(err));
 				} finally {
@@ -187,7 +275,7 @@ window.__ModuleLoader__.load({
 					setTotpCode("");
 					setCurrentPassword("");
 					setCurrentOtp("");
-					setNotice("2FA is enabled. Sign in again with your authenticator code.");
+					setNotice(t("notice.2faEnabled"));
 				} catch (err) {
 					setError(err instanceof Error ? err.message : String(err));
 				} finally {
@@ -208,7 +296,7 @@ window.__ModuleLoader__.load({
 					setMeta(data.state);
 					setCurrentPassword("");
 					setCurrentOtp("");
-					setNotice("2FA is disabled. Sign in again to continue.");
+					setNotice(t("notice.2faDisabled"));
 				} catch (err) {
 					setError(err instanceof Error ? err.message : String(err));
 				} finally {
@@ -234,10 +322,10 @@ window.__ModuleLoader__.load({
 					React.createElement(
 						"span",
 						{ className: "daw-cardHead" },
-						React.createElement("span", { className: "daw-cardTitle" }, "Auth webserver"),
-						React.createElement("span", { className: "daw-cardDesc" }, "Credentials for the auth-gated LAN gateway."),
+						React.createElement("span", { className: "daw-cardTitle" }, t("card.title")),
+						React.createElement("span", { className: "daw-cardDesc" }, t("card.desc")),
 					),
-					changed ? React.createElement("span", { className: "daw-unsaved" }, "Unsaved changes") : null,
+					changed ? React.createElement("span", { className: "daw-unsaved" }, t("card.unsaved")) : null,
 					React.createElement(
 						"svg",
 						{ className: "daw-chevron", "data-open": String(open), viewBox: "0 0 14 14", width: 14, height: 14, "aria-hidden": "true" },
@@ -251,20 +339,20 @@ window.__ModuleLoader__.load({
 							React.createElement(
 								"p",
 								{ className: "daw-hint" },
-								"Credentials for the auth-gated LAN gateway. Stored in the settings document (settings.yaml); the password never leaves it unredacted.",
+								t("hint.credentials"),
 							),
 							meta !== null && meta.overriddenByEnv
 								? React.createElement(
 										"div",
 										{ className: "daw-warn" },
-										"DSH_AUTH_USER/DSH_AUTH_PASS (or AUTH_USER/AUTH_PASS) are set in the environment — they take precedence over these settings.",
+										t("warn.env"),
 									)
 								: null,
 							meta !== null && meta.overriddenByConfig
 								? React.createElement(
 										"div",
 										{ className: "daw-warn" },
-										"The webserver-auth row in cordis.patch.yml carries username/password — those act as the base layer and are effective until you save an override here.",
+										t("warn.config"),
 									)
 								: null,
 							React.createElement(
@@ -273,7 +361,7 @@ window.__ModuleLoader__.load({
 								React.createElement(
 									"label",
 									{ className: "daw-field" },
-									React.createElement("span", { className: "daw-label" }, "Username"),
+									React.createElement("span", { className: "daw-label" }, t("username")),
 									React.createElement("input", {
 										className: "daw-input",
 										value: username,
@@ -284,78 +372,78 @@ window.__ModuleLoader__.load({
 								React.createElement(
 									"label",
 									{ className: "daw-field" },
-									React.createElement("span", { className: "daw-label" }, "Password"),
+									React.createElement("span", { className: "daw-label" }, t("password")),
 									React.createElement("input", {
 										type: "password",
 										className: "daw-input",
 										value: password,
 										disabled: disabled,
-										placeholder: meta?.hasPassword ? "••••••••  leave empty to keep" : "set a password",
+										placeholder: meta?.hasPassword ? t("password.placeholder.set") : t("password.placeholder.empty"),
 										onChange: (event) => setPassword(event.target.value),
 									}),
-									React.createElement("span", { className: "daw-hint" }, meta?.hasPassword ? "A password is configured." : "No password configured — the gateway refuses everyone."),
+									React.createElement("span", { className: "daw-hint" }, meta?.hasPassword ? t("password.hint.set") : t("password.hint.empty")),
 								),
 								React.createElement(
 									"label",
 									{ className: "daw-field" },
-									React.createElement("span", { className: "daw-label" }, "Current gateway password"),
+									React.createElement("span", { className: "daw-label" }, t("currentPassword")),
 									React.createElement("input", {
 										type: "password",
 										className: "daw-input",
 										value: currentPassword,
 										disabled: disabled,
-										placeholder: "required when changing password or 2FA",
+										placeholder: t("currentPassword.placeholder"),
 										onChange: (event) => setCurrentPassword(event.target.value),
 									}),
 								),
 								React.createElement(
 									"label",
 									{ className: "daw-field full" },
-									React.createElement("span", { className: "daw-label" }, "Realm"),
+									React.createElement("span", { className: "daw-label" }, t("realm")),
 									React.createElement("input", {
 										className: "daw-input",
 										value: realm,
 										disabled: disabled,
 										onChange: (event) => setRealm(event.target.value),
 									}),
-									React.createElement("span", { className: "daw-hint" }, "Shown on the login page and the Basic Auth challenge."),
+									React.createElement("span", { className: "daw-hint" }, t("realm.hint")),
 								),
 							),
 							React.createElement(
 								"div",
 								{ className: "daw-twoFactor" },
-								React.createElement("div", { className: "daw-twoFactorTitle" }, `Two-factor authentication: ${twoFactorEnabled ? "enabled" : "disabled"}`),
+								React.createElement("div", { className: "daw-twoFactorTitle" }, t("twoFactor.status", { state: twoFactorEnabled ? t("twoFactor.state.enabled") : t("twoFactor.state.disabled") })),
 								twoFactorOverriddenByEnv
-									? React.createElement("div", { className: "daw-warn" }, "2FA is controlled by AUTH_2FA_ENABLED/AUTH_2FA_SECRET and cannot be changed here.")
+									? React.createElement("div", { className: "daw-warn" }, t("twoFactor.warn.env"))
 									: null,
 								twoFactorEnabled || totpSecret
-									? React.createElement("div", { className: "daw-hint" }, twoFactorEnabled ? "Login requires the password and a six-digit authenticator code. Basic Auth is disabled while 2FA is enabled." : "Finish setup by entering a code from your authenticator app.")
-									: React.createElement("div", { className: "daw-hint" }, "Enter the current gateway password above before confirming a code from your authenticator app.")
+									? React.createElement("div", { className: "daw-hint" }, twoFactorEnabled ? t("twoFactor.hint.enabled") : t("twoFactor.hint.setup"))
+									: React.createElement("div", { className: "daw-hint" }, t("twoFactor.hint.enterPassword"))
 								, totpSecret
 									? React.createElement(
 										React.Fragment,
-										React.createElement("span", { className: "daw-label" }, "Setup key"),
+										React.createElement("span", { className: "daw-label" }, t("twoFactor.setupKey")),
 										React.createElement("code", { className: "daw-secret" }, totpSecret),
-										React.createElement("span", { className: "daw-label" }, "Authenticator URI"),
+										React.createElement("span", { className: "daw-label" }, t("twoFactor.uri")),
 										React.createElement("textarea", { className: "daw-input daw-uri", value: totpUri, readOnly: true, spellCheck: false }),
 										React.createElement("label", { className: "daw-field" },
-											React.createElement("span", { className: "daw-label" }, "New authenticator code"),
+											React.createElement("span", { className: "daw-label" }, t("twoFactor.newCode")),
 											React.createElement("input", { className: "daw-input daw-otp", inputMode: "numeric", autoComplete: "one-time-code", maxLength: 6, value: totpCode, disabled: disabled, onChange: (event) => setTotpCode(event.target.value) }),
 										),
 										React.createElement("div", { className: "daw-actions" },
-											React.createElement("button", { type: "button", className: "daw-btn primary", disabled: disabled || twoFactorOverriddenByEnv || currentPassword === "" || totpCode.trim() === "" || (twoFactorEnabled && currentOtp === ""), onClick: () => void confirmTwoFactor() }, twoFactorEnabled ? "Replace authenticator" : "Enable 2FA"),
-											React.createElement("button", { type: "button", className: "daw-btn ghost", disabled: busy, onClick: () => { setTotpSecret(""); setTotpUri(""); setTotpCode(""); setError(null); setNotice(null); } }, "Cancel"),
+											React.createElement("button", { type: "button", className: "daw-btn primary", disabled: disabled || twoFactorOverriddenByEnv || currentPassword === "" || totpCode.trim() === "" || (twoFactorEnabled && currentOtp === ""), onClick: () => void confirmTwoFactor() }, twoFactorEnabled ? t("twoFactor.replaceButton") : t("twoFactor.enableButton")),
+											React.createElement("button", { type: "button", className: "daw-btn ghost", disabled: busy, onClick: () => { setTotpSecret(""); setTotpUri(""); setTotpCode(""); setError(null); setNotice(null); } }, t("cancel")),
 										),
 									)
 									: twoFactorEnabled
 										? React.createElement("div", { className: "daw-actions" },
 											React.createElement("label", { className: "daw-field" },
-												React.createElement("span", { className: "daw-label" }, "Current authenticator code"),
+												React.createElement("span", { className: "daw-label" }, t("twoFactor.currentCode")),
 												React.createElement("input", { className: "daw-input daw-otp", inputMode: "numeric", autoComplete: "one-time-code", maxLength: 6, value: currentOtp, disabled: disabled, onChange: (event) => setCurrentOtp(event.target.value) }),
 											),
-											React.createElement("button", { type: "button", className: "daw-btn ghost", disabled: disabled || twoFactorOverriddenByEnv || currentPassword === "" || currentOtp === "", onClick: () => void disableTwoFactor() }, "Disable 2FA"),
+											React.createElement("button", { type: "button", className: "daw-btn ghost", disabled: disabled || twoFactorOverriddenByEnv || currentPassword === "" || currentOtp === "", onClick: () => void disableTwoFactor() }, t("twoFactor.disableButton")),
 										)
-										: React.createElement("button", { type: "button", className: "daw-btn primary", disabled: disabled || twoFactorOverriddenByEnv || !meta?.hasPassword, onClick: () => void startTwoFactor() }, "Set up 2FA"),
+										: React.createElement("button", { type: "button", className: "daw-btn primary", disabled: disabled || twoFactorOverriddenByEnv || !meta?.hasPassword, onClick: () => void startTwoFactor() }, t("twoFactor.setupButton")),
 							),
 							error ? React.createElement("div", { className: "daw-error" }, error) : null,
 							notice ? React.createElement("div", { className: "daw-notice" }, notice) : null,
@@ -363,18 +451,27 @@ window.__ModuleLoader__.load({
 								"div",
 								{ className: "daw-cardFooter" },
 								changed
-									? React.createElement("button", { type: "button", className: "daw-btn ghost", disabled: busy, onClick: () => { setUsername(meta.username); setRealm(meta.realm); setPassword(""); setError(null); setNotice(null); } }, "Discard")
+									? React.createElement("button", { type: "button", className: "daw-btn ghost", disabled: busy, onClick: () => { setUsername(meta.username); setRealm(meta.realm); setPassword(""); setError(null); setNotice(null); } }, t("discard"))
 									: null,
-								React.createElement("button", { type: "button", className: "daw-btn primary", disabled: disabled || !changed, onClick: () => void save() }, "Save"),
+								React.createElement("button", { type: "button", className: "daw-btn primary", disabled: disabled || !changed, onClick: () => void save() }, t("save")),
 							),
 						)
 					: null,
 			);
+		};
 		}
 
 		function apply(ctx) {
 			const slots = ctx.get("slots");
 			if (slots === undefined) return;
+			const locale = ctx.get("locale");
+			if (locale !== undefined) {
+				ctx.effect(() => locale.register(LOCALE_NS, { zh: ZH_DICT, en: EN_DICT }), "auth-webserver: locale");
+			}
+			const t = locale !== undefined
+				? locale.bind(LOCALE_NS)
+				: (key, params) => applyParams(ZH_DICT[key] ?? EN_DICT[key] ?? key, params);
+			const AuthWebserverCard = createAuthWebserverCard(t);
 			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
 				name: "settings.plugin.item",
 				key: "auth-webserver",
