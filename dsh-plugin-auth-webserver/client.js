@@ -85,7 +85,8 @@ window.__ModuleLoader__.load({
 			"twoFactor.status": "两步验证：{state}",
 			"twoFactor.state.enabled": "已启用",
 			"twoFactor.state.disabled": "已禁用",
-			"twoFactor.warn.env": "2FA 由 AUTH_2FA_ENABLED/AUTH_2FA_SECRET 控制，无法在此处更改。",
+			"twoFactor.warn.env": "2FA 由 AUTH_2FA_ENABLED/AUTH_2FA_REQUIRED/AUTH_2FA_SECRET 控制，无法在此处更改。",
+			"twoFactor.warn.required": "部署策略强制启用 2FA，无法在此处禁用。",
 			"twoFactor.hint.enabled": "登录需要密码和六位验证器动态码；启用 2FA 期间 Basic Auth 被禁用。",
 			"twoFactor.hint.setup": "在验证器应用中添加密钥，然后输入验证器生成的动态码以完成设置。",
 			"twoFactor.hint.enterPassword": "请先在上方输入当前网关密码，再确认验证器应用生成的动态码。",
@@ -125,7 +126,8 @@ window.__ModuleLoader__.load({
 			"twoFactor.status": "Two-factor authentication: {state}",
 			"twoFactor.state.enabled": "enabled",
 			"twoFactor.state.disabled": "disabled",
-			"twoFactor.warn.env": "2FA is controlled by AUTH_2FA_ENABLED/AUTH_2FA_SECRET and cannot be changed here.",
+			"twoFactor.warn.env": "2FA is controlled by AUTH_2FA_ENABLED/AUTH_2FA_REQUIRED/AUTH_2FA_SECRET and cannot be changed here.",
+			"twoFactor.warn.required": "Deployment policy requires 2FA and it cannot be disabled here.",
 			"twoFactor.hint.enabled": "Login requires the password and a six-digit authenticator code. Basic Auth is disabled while 2FA is enabled.",
 			"twoFactor.hint.setup": "Finish setup by entering a code from your authenticator app.",
 			"twoFactor.hint.enterPassword": "Enter the current gateway password above before confirming a code from your authenticator app.",
@@ -153,10 +155,12 @@ window.__ModuleLoader__.load({
 
 		async function api(path, payload) {
 			const headers = { "content-type": "application/json" };
-			const csrf = document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith("dsh_auth_csrf="));
+			const csrf = document.cookie.split(";").map((part) => part.trim()).find((part) =>
+				part.startsWith("__Host-dsh_auth_csrf=") || part.startsWith("dsh_auth_csrf="));
 			if (csrf !== undefined) {
 				try {
-					headers["X-DSH-CSRF"] = decodeURIComponent(csrf.slice("dsh_auth_csrf=".length));
+					const prefix = csrf.startsWith("__Host-dsh_auth_csrf=") ? "__Host-dsh_auth_csrf=" : "dsh_auth_csrf=";
+					headers["X-DSH-CSRF"] = decodeURIComponent(csrf.slice(prefix.length));
 				} catch {
 					// Let the server reject a malformed CSRF cookie.
 				}
@@ -307,6 +311,8 @@ window.__ModuleLoader__.load({
 			const disabled = busy || meta === null;
 			const twoFactorEnabled = Boolean(meta?.twoFactorEnabled);
 			const twoFactorOverriddenByEnv = Boolean(meta?.twoFactorOverriddenByEnv);
+			const twoFactorRequiredByConfig = Boolean(meta?.twoFactorRequiredByConfig);
+			const twoFactorLocked = twoFactorOverriddenByEnv || twoFactorRequiredByConfig;
 
 			return React.createElement(
 				"div",
@@ -416,6 +422,9 @@ window.__ModuleLoader__.load({
 								twoFactorOverriddenByEnv
 									? React.createElement("div", { className: "daw-warn" }, t("twoFactor.warn.env"))
 									: null,
+								twoFactorRequiredByConfig
+									? React.createElement("div", { className: "daw-warn" }, t("twoFactor.warn.required"))
+									: null,
 								twoFactorEnabled || totpSecret
 									? React.createElement("div", { className: "daw-hint" }, twoFactorEnabled ? t("twoFactor.hint.enabled") : t("twoFactor.hint.setup"))
 									: React.createElement("div", { className: "daw-hint" }, t("twoFactor.hint.enterPassword"))
@@ -431,7 +440,7 @@ window.__ModuleLoader__.load({
 											React.createElement("input", { className: "daw-input daw-otp", inputMode: "numeric", autoComplete: "one-time-code", maxLength: 6, value: totpCode, disabled: disabled, onChange: (event) => setTotpCode(event.target.value) }),
 										),
 										React.createElement("div", { className: "daw-actions" },
-											React.createElement("button", { type: "button", className: "daw-btn primary", disabled: disabled || twoFactorOverriddenByEnv || currentPassword === "" || totpCode.trim() === "" || (twoFactorEnabled && currentOtp === ""), onClick: () => void confirmTwoFactor() }, twoFactorEnabled ? t("twoFactor.replaceButton") : t("twoFactor.enableButton")),
+											React.createElement("button", { type: "button", className: "daw-btn primary", disabled: disabled || twoFactorLocked || currentPassword === "" || totpCode.trim() === "" || (twoFactorEnabled && currentOtp === ""), onClick: () => void confirmTwoFactor() }, twoFactorEnabled ? t("twoFactor.replaceButton") : t("twoFactor.enableButton")),
 											React.createElement("button", { type: "button", className: "daw-btn ghost", disabled: busy, onClick: () => { setTotpSecret(""); setTotpUri(""); setTotpCode(""); setError(null); setNotice(null); } }, t("cancel")),
 										),
 									)
@@ -441,9 +450,9 @@ window.__ModuleLoader__.load({
 												React.createElement("span", { className: "daw-label" }, t("twoFactor.currentCode")),
 												React.createElement("input", { className: "daw-input daw-otp", inputMode: "numeric", autoComplete: "one-time-code", maxLength: 6, value: currentOtp, disabled: disabled, onChange: (event) => setCurrentOtp(event.target.value) }),
 											),
-											React.createElement("button", { type: "button", className: "daw-btn ghost", disabled: disabled || twoFactorOverriddenByEnv || currentPassword === "" || currentOtp === "", onClick: () => void disableTwoFactor() }, t("twoFactor.disableButton")),
+											React.createElement("button", { type: "button", className: "daw-btn ghost", disabled: disabled || twoFactorLocked || currentPassword === "" || currentOtp === "", onClick: () => void disableTwoFactor() }, t("twoFactor.disableButton")),
 										)
-										: React.createElement("button", { type: "button", className: "daw-btn primary", disabled: disabled || twoFactorOverriddenByEnv || !meta?.hasPassword, onClick: () => void startTwoFactor() }, t("twoFactor.setupButton")),
+										: React.createElement("button", { type: "button", className: "daw-btn primary", disabled: disabled || twoFactorLocked || !meta?.hasPassword, onClick: () => void startTwoFactor() }, t("twoFactor.setupButton")),
 							),
 							error ? React.createElement("div", { className: "daw-error" }, error) : null,
 							notice ? React.createElement("div", { className: "daw-notice" }, notice) : null,

@@ -2,7 +2,7 @@ export const name: "auth-webserver";
 
 export const Config: object;
 
-export function apply(ctx: any, config: Partial<{
+export function apply(ctx: any, config?: Partial<{
   port: number;
   targetHost: string;
   targetPort: number;
@@ -11,5 +11,19 @@ export function apply(ctx: any, config: Partial<{
   password: string;
   realm: string;
   twoFactorEnabled: boolean;
+  requireTwoFactor: boolean;
   twoFactorSecret: string;
-}>): void;
+  allowedHosts: string[];
+  allowedOrigins: string[];
+  trustedProxyAddresses: string[];
+  requireHttps: boolean;
+  sessionMaxAgeSeconds: number;
+  sessionIdleTimeoutSeconds: number;
+  loginMaxAttempts: number;
+  loginWindowSeconds: number;
+  maxLoginAttemptEntries: number;
+  upstreamTimeoutMs: number;
+  requestTimeoutMs: number;
+  headersTimeoutMs: number;
+  keepAliveTimeoutMs: number;
+}>): Promise<void>;

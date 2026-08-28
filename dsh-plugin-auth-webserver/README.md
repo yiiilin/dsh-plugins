@@ -1,13 +1,15 @@
 # @yiln-dsh/dsh-plugin-auth-webserver
 
 A DSH `dsh.bundle` that keeps the stock webserver untouched and adds an
-**auth-gated reverse proxy** for LAN access:
+**auth-gated reverse proxy** for LAN or explicitly configured public access:
 
 - the stock `dsh web` server stays on `127.0.0.1:3080` (loopback, no auth);
 - this bundle listens on every **non-loopback NIC address** at the same port
   (e.g. `192.168.1.5:3080`);
-- it requires HTTP Basic Auth or an HMAC login cookie; optional TOTP 2FA
-  upgrades the login to password + authenticator code;
+- it requires HTTP Basic Auth or an HMAC login cookie; TOTP can be required to disable Basic Auth;
+- configured Host/Origin policy, HTTPS enforcement, bounded authentication
+  rate limits, short absolute/idle sessions, and security response headers are
+  available for internet-facing deployments;
 - every accepted request — including WebSocket upgrades — is proxied to the
   stock `127.0.0.1:3080` server.
 
@@ -17,7 +19,7 @@ authentication.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.3.1`.
+The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.4.0`.
 
 The plugin is plain JavaScript source; there is no build step.
 
@@ -39,7 +41,7 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.3.1.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.4.0.tgz
 ```
 
 The tarball already contains the runnable source. A user can also unpack it,
@@ -61,7 +63,7 @@ dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@latest
 Pin a version if you want reproducible installs:
 
 ```bash
-dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.3.1
+dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.4.0
 ```
 
 ### Direct GitHub
@@ -86,7 +88,7 @@ The plugin version is defined by the `version` field in `package.json`:
 ```json
 {
   "name": "@yiln-dsh/dsh-plugin-auth-webserver",
-  "version": "0.3.0"
+  "version": "0.4.0"
 }
 ```
 
@@ -98,8 +100,8 @@ Semantic versioning is recommended:
 
 The selected version is used for:
 
-- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.3.1`
-- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.3.1.tgz`
+- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.4.0`
+- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.4.0.tgz`
 - the metadata inside the tarball/npm package
 
 A `file:` source install uses the version that is currently in the source tree;
@@ -122,15 +124,33 @@ works for `AUTH_*` (DSH reserves the `DSH_` prefix):
 ```bash
 # $DSH_HOME/.env
 AUTH_USER=admin
-AUTH_PASS='change-me'
-# Optional: a 32-character Base32 TOTP secret enables 2FA.
+AUTH_PASS='<random password of at least 20 characters>'
+# Require TOTP; this also disables Basic Auth.
 AUTH_2FA_ENABLED=true
-AUTH_2FA_SECRET='JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP'
+AUTH_2FA_REQUIRED=true
+AUTH_2FA_SECRET='<32-character Base32 secret>'
+# Public reverse-proxy policy. Comma-separated values are accepted.
+AUTH_ALLOWED_HOSTS=dsh.yiln.de
+AUTH_ALLOWED_ORIGINS=https://dsh.yiln.de
+AUTH_REQUIRE_HTTPS=true
+# IP address(es) of the TLS-terminating reverse proxy, not client-supplied.
+AUTH_TRUSTED_PROXY_ADDRESSES=192.0.2.10
 ```
 
-`AUTH_2FA_SECRET` is a secret-role value. When 2FA is enabled, Basic Auth is
-rejected completely; use the browser login form or POST the password and OTP to
-`/api/auth.login` and keep the returned session cookie.
+`AUTH_2FA_REQUIRED=true` is a deployment policy: it keeps TOTP enabled even if
+settings or `AUTH_2FA_ENABLED=false` try to disable it. `AUTH_2FA_SECRET` is a
+secret-role value. When 2FA is enabled, Basic Auth is rejected completely; use
+the browser login form or POST the password and OTP to `/api/auth.login` and
+keep the returned session cookie.
+
+For a public hostname, `AUTH_ALLOWED_HOSTS` is required. Without an explicit
+list, the gateway falls back to its bind addresses for backwards-compatible
+LAN operation, which does not include a DNS name. `AUTH_ALLOWED_ORIGINS` is an optional additional allowlist; an attached Origin
+must still match the request Host. It may be omitted when same-Host Origins are
+sufficient. `AUTH_REQUIRE_HTTPS=true` requires either native TLS on the request
+or an `X-Forwarded-Proto: https` header from an address listed in
+`AUTH_TRUSTED_PROXY_ADDRESSES`; the header must be exactly `https` and an
+unlisted client cannot assert HTTPS with a forged header.
 
 Or start it explicitly:
 
@@ -138,9 +158,13 @@ Or start it explicitly:
 DSH_AUTH_USER=admin DSH_AUTH_PASS='change-me' dsh web --no-open
 ```
 
-The browser login form sets a 7-day HttpOnly cookie plus a CSRF cookie. Without
-2FA, CLI and automation clients can use a standard Basic Auth header against a
-LAN address:
+The browser login form sets a 24-hour `HttpOnly` session cookie plus a CSRF
+cookie by default. Over HTTPS it uses `__Host-` cookie names, `Secure`, and
+`SameSite=Strict`; the legacy names remain only for plain-HTTP LAN
+compatibility. The session also expires after 12 hours of inactivity by default.
+automation clients can use a standard Basic Auth header against a LAN address,
+but every failed Basic attempt is subject to the same bounded rate limiter as
+form login.
 
 ```bash
 curl -u admin:'change-me' http://192.168.1.5:3080/
@@ -160,7 +184,10 @@ curl -c cookies.txt -H 'Content-Type: application/json' \
 Settings > Plugins > Plugin configuration has an "Auth webserver" card that
 edits the username, password, realm, and optional TOTP 2FA. Saving writes the
 `auth-webserver` namespace of `$DSH_HOME/settings.yaml` (the password and TOTP
-secret are secret-role fields: they never leave the Host unredacted).
+secret are secret-role fields: they never leave the Host unredacted). Public
+Host/Origin policy, HTTPS enforcement, proxy trust addresses, rate limits, and
+session lifetimes belong in the deployment row or environment, not in the
+browser settings card.
 
 To enable 2FA, choose **Set up 2FA**, add the one-time setup key or URI to a
 TOTP authenticator, enter the current password and the new six-digit code, then
@@ -172,9 +199,9 @@ sign in again.
 
 The `AUTH_*` env vars outrank settings, and the `webserver-auth` row config acts
 as the base layer until you save an override. Leave the password field empty to
-keep the current password. The equivalent environment variables for enforced
-TOTP are `AUTH_2FA_ENABLED=true` and `AUTH_2FA_SECRET=<base32-secret>` (the
-`DSH_AUTH_*` names are also accepted).
+keep the current password. `AUTH_2FA_REQUIRED=true` is the recommended public
+setting because it prevents a settings change from re-enabling Basic Auth. The
+`DSH_AUTH_*` names are also accepted for all deployment policy variables.
 
 Older releases stored credentials in
 `$DSH_HOME/plugins/dsh-plugin-auth-webserver/state.json`; on first boot the
@@ -194,7 +221,22 @@ Edit `$DSH_HOME/profiles/web/cordis.patch.yml` after installing:
     addresses: []       # optional explicit bind list; empty = auto-detect NICs
     username: 'admin'
     password: 'your-password'
-    twoFactorEnabled: true    # pair with AUTH_2FA_SECRET; never put the secret here
+    twoFactorEnabled: true
+    requireTwoFactor: true
+    allowedHosts: ['dsh.yiln.de']
+    allowedOrigins: ['https://dsh.yiln.de']
+    trustedProxyAddresses: ['192.0.2.10']
+    requireHttps: true
+    sessionMaxAgeSeconds: 86400
+    sessionIdleTimeoutSeconds: 43200
+    loginMaxAttempts: 10
+    loginWindowSeconds: 60
+    maxLoginAttemptEntries: 10000
+    upstreamTimeoutMs: 30000
+    requestTimeoutMs: 120000
+    headersTimeoutMs: 15000
+    keepAliveTimeoutMs: 5000
+    # Never put the TOTP secret in this non-secret config layer.
 ```
 
 `port`/`targetPort` default to the stock web port (`dsh web --port ...`).
@@ -211,8 +253,20 @@ keeping the GUI usable over plain HTTP on LAN addresses.
 
 TOTP protects against password-only compromise; it does not encrypt the LAN
 connection. Put the gateway behind HTTPS or a trusted VPN/tunnel before using
-it across an untrusted network. The gateway adds `Secure` to cookies when it is
-running over TLS, and uses CSRF headers for all browser settings mutations.
+it across an untrusted network. For a TLS-terminating reverse proxy, configure
+`trustedProxyAddresses` and `X-Forwarded-Proto: https`; the gateway then emits
+`Secure` cookies only for that trusted proxy path. Direct clients cannot make a
+forged forwarding header turn an HTTP request into a secure one. HTTPS responses
+include HSTS, frame, MIME, referrer, and permissions hardening headers; private
+responses are marked `no-store`.
+
+The gateway validates the configured Host and browser Origin before any
+authentication or proxying. It rejects malformed request targets, requires JSON
+for the login endpoint, accepts logout only by POST with CSRF validation for
+browser sessions, bounds failed-authentication memory, rate-limits both Basic
+and form attempts, and tears down both sides of upgraded WebSockets on revoke or
+disposal. A fresh process also starts with a new session generation, so old
+cookies cannot be revived by a restart.
 
 The login page links the stock `/manifest.webmanifest` and `/favicon.svg`, and
 those two metadata paths are available before authentication so Chromium can

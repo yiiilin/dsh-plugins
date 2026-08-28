@@ -17,12 +17,20 @@
 
 import { createServer, request } from "node:http";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, lstatSync, chmodSync, writeFileSync } from "node:fs";
+import { isIP } from "node:net";
 import { homedir, networkInterfaces } from "node:os";
 import { join, resolve } from "node:path";
 import { settingsNamespace } from "@deepseek-ai/dsh-settings";
 import z from "@deepseek-ai/schemastery";
 import { generateTotpSecret, verifyTotp } from "./totp.js";
+import {
+  hostMatches,
+  originMatches,
+  parseAllowedHost,
+  parseAllowedOrigin,
+  parseList,
+} from "./policy.js";
 
 export const name = "auth-webserver";
 
@@ -35,9 +43,21 @@ const NS = settingsNamespace("auth-webserver");
 
 const COOKIE_NAME = "dsh_auth_token";
 const CSRF_COOKIE_NAME = "dsh_auth_csrf";
-const SESSION_MAX_AGE_SECONDS = 7 * 24 * 3600;
-const SESSION_MAX_AGE_MS = SESSION_MAX_AGE_SECONDS * 1000;
+const SECURE_COOKIE_NAME = "__Host-dsh_auth_token";
+const SECURE_CSRF_COOKIE_NAME = "__Host-dsh_auth_csrf";
+const DEFAULT_SESSION_MAX_AGE_SECONDS = 24 * 3600;
+const DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS = 12 * 3600;
+const DEFAULT_LOGIN_WINDOW_SECONDS = 60;
+const DEFAULT_LOGIN_MAX_ATTEMPTS = 10;
+const DEFAULT_MAX_LOGIN_ATTEMPT_ENTRIES = 10_000;
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 30_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+const DEFAULT_HEADERS_TIMEOUT_MS = 15_000;
+const DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 5_000;
 const STATE_DIR_SEGMENTS = ["plugins", "dsh-plugin-auth-webserver"];
+const GATEWAY_REQUEST = Symbol("auth-webserver gateway request");
+const RATE_LIMITED_REQUEST = Symbol("auth-webserver rate limited request");
+const RATE_LIMIT_RETRY_AFTER = Symbol("auth-webserver rate limit retry after");
 
 // These files contain only install metadata and the public app icon. Keeping
 // them reachable before login lets the browser discover the PWA entry point;
@@ -47,6 +67,43 @@ const PUBLIC_PWA_PATHS = new Set(["/manifest.webmanifest", "/favicon.svg"]);
 function isPublicPwaRequest(req, rawPath) {
   return (req.method === "GET" || req.method === "HEAD") && PUBLIC_PWA_PATHS.has(rawPath);
 }
+
+function requestPath(req) {
+  try {
+    return new URL(req.url ?? "/", "http://x").pathname;
+  } catch {
+    return null;
+  }
+}
+
+function rejectUpgrade(socket, status, message, extraHeaders = {}) {
+  const body = `${message}\n`;
+  try {
+    const headers = [
+      `HTTP/1.1 ${status} ${message}`,
+      "Connection: close",
+      "Content-Type: text/plain; charset=utf-8",
+      `Content-Length: ${Buffer.byteLength(body)}`,
+      "X-Content-Type-Options: nosniff",
+      ...Object.entries(extraHeaders).map(([key, value]) => `${key}: ${value}`),
+      "",
+      body,
+    ];
+    socket.end(headers.join("\r\n"));
+  } catch {
+    socket.destroy();
+  }
+}
+function writeSocket(socket, value) {
+  try {
+    if (!socket.destroyed) socket.write(value);
+    return true;
+  } catch {
+    socket.destroy();
+    return false;
+  }
+}
+
 function dshHome() {
   const env = process.env.DSH_HOME;
   if (env !== undefined && env.trim().length > 0) {
@@ -90,9 +147,15 @@ function parseCookies(req) {
 
 function stripGatewayCookies(header) {
   if (typeof header !== "string") return header;
+  const removed = new Set([
+    COOKIE_NAME,
+    CSRF_COOKIE_NAME,
+    SECURE_COOKIE_NAME,
+    SECURE_CSRF_COOKIE_NAME,
+  ]);
   const kept = header.split(";").filter((part) => {
     const key = part.split("=", 1)[0].trim();
-    return key !== COOKIE_NAME && key !== CSRF_COOKIE_NAME;
+    return !removed.has(key);
   });
   return kept.length > 0 ? kept.join(";") : undefined;
 }
@@ -114,6 +177,19 @@ function parseBasic(header) {
   };
 }
 
+function parseBooleanEnv(value, label) {
+  if (value === undefined) return undefined;
+  const normalized = String(value).trim().toLowerCase();
+  if (/^(1|true|yes|on)$/u.test(normalized)) return true;
+  if (/^(0|false|no|off)$/u.test(normalized)) return false;
+  throw new Error(`auth-webserver: ${label} must be a boolean (true/false)`);
+}
+
+function normalizeRemoteAddress(address) {
+  if (typeof address !== "string") return "";
+  return address.startsWith("::ffff:") ? address.slice("::ffff:".length) : address;
+}
+
 async function readBody(req, limit = 65536) {
   const chunks = [];
   let size = 0;
@@ -125,12 +201,25 @@ async function readBody(req, limit = 65536) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-function sendJson(res, status, value) {
+function securityHeaders({ secure = false, noStore = true } = {}) {
+  return {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    ...(secure ? { "Strict-Transport-Security": "max-age=31536000" } : {}),
+    ...(noStore ? { "Cache-Control": "no-store" } : {}),
+  };
+}
+
+function sendJson(res, status, value, extra = {}) {
   const body = JSON.stringify(value);
   res.writeHead(status, {
+    ...securityHeaders(),
     "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
     "Content-Length": Buffer.byteLength(body),
+    ...extra,
   });
   res.end(body);
 }
@@ -149,8 +238,36 @@ export const Config = z.object({
   realm: z.string().default("DeepSeek Harness Authentication"),
   /** Enable time-based one-time passwords for the LAN gateway. */
   twoFactorEnabled: z.boolean().default(false),
+  /** Require TOTP and thereby disable Basic Auth, regardless of settings. */
+  requireTwoFactor: z.boolean().default(false),
   /** Base32 TOTP secret. Keep this in a secret environment variable or settings secret. */
   twoFactorSecret: z.string().role("secret").default(""),
+  /** Allowed public Host authorities; an empty list falls back to bound addresses. */
+  allowedHosts: z.array(z.string()).default([]),
+  /** Additional allowed browser Origins; requests must still match Host. */
+  allowedOrigins: z.array(z.string()).default([]),
+  /** Proxy source addresses allowed to assert HTTPS through X-Forwarded-Proto. */
+  trustedProxyAddresses: z.array(z.string()).default([]),
+  /** Refuse every gateway request that is not observed as HTTPS. */
+  requireHttps: z.boolean().default(false),
+  /** Absolute lifetime of a browser session. */
+  sessionMaxAgeSeconds: z.natural().min(300).max(30 * 24 * 3600).default(DEFAULT_SESSION_MAX_AGE_SECONDS),
+  /** Idle lifetime of a browser session; zero disables the idle check. */
+  sessionIdleTimeoutSeconds: z.natural().max(30 * 24 * 3600).default(DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS),
+  /** Failed authentication attempts allowed per client/user window. */
+  loginMaxAttempts: z.natural().min(1).max(1000).default(DEFAULT_LOGIN_MAX_ATTEMPTS),
+  /** Duration of the failed-authentication window. */
+  loginWindowSeconds: z.natural().min(1).max(3600).default(DEFAULT_LOGIN_WINDOW_SECONDS),
+  /** Maximum failed-authentication keys retained in memory. */
+  maxLoginAttemptEntries: z.natural().min(100).max(100000).default(DEFAULT_MAX_LOGIN_ATTEMPT_ENTRIES),
+  /** Per-request timeout while waiting for an upstream response. */
+  upstreamTimeoutMs: z.natural().min(1000).max(10 * 60 * 1000).default(DEFAULT_UPSTREAM_TIMEOUT_MS),
+  /** Maximum time allowed to receive one complete incoming request body. */
+  requestTimeoutMs: z.natural().min(1000).max(10 * 60 * 1000).default(DEFAULT_REQUEST_TIMEOUT_MS),
+  /** Maximum time allowed to receive request headers. */
+  headersTimeoutMs: z.natural().min(1000).max(10 * 60 * 1000).default(DEFAULT_HEADERS_TIMEOUT_MS),
+  /** Keep-alive timeout for gateway clients. */
+  keepAliveTimeoutMs: z.natural().min(1000).max(10 * 60 * 1000).default(DEFAULT_KEEP_ALIVE_TIMEOUT_MS),
 });
 
 /**
@@ -180,6 +297,10 @@ function stateFile() {
 function migrateLegacyState(ctx, settings, scope) {
   try {
     if (!existsSync(stateFile())) return;
+    if (!lstatSync(stateFile()).isFile()) {
+      throw new Error("legacy state is not a regular file");
+    }
+    chmodSync(stateFile(), 0o600);
     const descriptor = settings
       .describe({ redactSecrets: true })
       .find((entry) => entry.ns === NS);
@@ -198,24 +319,45 @@ function migrateLegacyState(ctx, settings, scope) {
     void settings.update(NS, next, descriptor.revision).catch((error) => {
       ctx.logger?.warn?.("auth-webserver: legacy state migration failed: %s", error);
     });
-  } catch {
-    // Keep the old file untouched; env variables and row config still stand.
+  } catch (error) {
+    ctx.logger?.warn?.("auth-webserver: legacy state could not be secured or migrated: %s", error);
+    // Env variables and row config still stand if the legacy backup is unusable.
   }
+}
+
+function readPrivateSecret(file) {
+  if (!lstatSync(file).isFile()) throw new Error("auth-webserver: persistent session secret must be a regular file");
+  const value = readFileSync(file, "utf8").trim();
+  if (!value) throw new Error("auth-webserver: persistent session secret is empty");
+  const mode = statSync(file).mode & 0o777;
+  if ((mode & 0o077) !== 0) {
+    chmodSync(file, 0o600);
+    const repaired = statSync(file).mode & 0o777;
+    if ((repaired & 0o077) !== 0) {
+      throw new Error("auth-webserver: persistent session secret must be owner-readable only");
+    }
+  }
+  return value;
 }
 
 function loadOrCreateSecret() {
   const file = join(stateDir(), ".secret");
+  if (existsSync(file)) return readPrivateSecret(file);
+  const secret = randomBytes(32).toString("hex");
   try {
-    if (existsSync(file)) {
-      const value = readFileSync(file, "utf8").trim();
-      if (value) return value;
-    }
-    const secret = randomBytes(32).toString("hex");
-    mkdirSync(stateDir(), { recursive: true });
-    writeFileSync(file, secret, { encoding: "utf8", mode: 0o600 });
-    return secret;
+    mkdirSync(stateDir(), { recursive: true, mode: 0o700 });
   } catch {
-    // An ephemeral secret keeps the server usable when the home is read-only.
+    // An ephemeral secret keeps the server usable when the home is read-only;
+    // every restart then invalidates all sessions by design.
+    return randomBytes(32).toString("hex");
+  }
+  try {
+    writeFileSync(file, secret, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    return secret;
+  } catch (error) {
+    if (error?.code === "EEXIST") return readPrivateSecret(file);
+    // An ephemeral secret keeps the server usable when persistent storage is
+    // unavailable; every restart then invalidates all sessions by design.
     return randomBytes(32).toString("hex");
   }
 }
@@ -313,44 +455,103 @@ function renderLoginPage(realm, twoFactorEnabled = false) {
 </html>`;
 }
 
-function sendUnauthorized(req, res, realm, rawPath, twoFactorEnabled = false) {
+function sendUnauthorized(req, res, realm, rawPath, twoFactorEnabled = false, secure = false) {
+  const limited = req[RATE_LIMITED_REQUEST] === true;
+  if (limited) {
+    sendJson(res, 429, { ok: false, error: "Too many login attempts" }, {
+      "Retry-After": String(req[RATE_LIMIT_RETRY_AFTER] ?? 60),
+    });
+    return;
+  }
   const accept = req.headers.accept ?? "";
   const wantsHtml = rawPath === "/" || rawPath === "/index.html"
     || (req.method === "GET" && accept.includes("text/html"));
   if (wantsHtml) {
     res.writeHead(200, {
+      ...securityHeaders({ secure }),
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
+      // The login page is intentionally self-contained; all other script and
+      // frame sources remain disallowed by this policy.
+      "Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
     });
     res.end(renderLoginPage(realm, twoFactorEnabled));
     return;
   }
   const headers = {
+    ...securityHeaders({ secure }),
     "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
   };
   if (!twoFactorEnabled) {
-    headers["WWW-Authenticate"] = `Basic realm="${String(realm ?? "DeepSeek Harness Authentication").replace(/"/g, '\\"')}"`;
+    const safeRealm = String(realm ?? "DeepSeek Harness Authentication")
+      .replace(/[^\x20-\x7e]/gu, "?")
+      .replace(/[\\"]/gu, "\\$&");
+    headers["WWW-Authenticate"] = `Basic realm="${safeRealm}"`;
   }
   res.writeHead(401, headers);
   res.end(JSON.stringify({ ok: false, error: "Authentication required", twoFactorRequired: twoFactorEnabled }));
 }
 
-export function apply(ctx, config) {
+export async function apply(ctx, config) {
+  config = {
+    port: config?.port ?? 3080,
+    targetHost: config?.targetHost ?? "127.0.0.1",
+    targetPort: config?.targetPort ?? 3080,
+    addresses: config?.addresses ?? [],
+    username: config?.username ?? "admin",
+    password: config?.password ?? "",
+    realm: config?.realm ?? "DeepSeek Harness Authentication",
+    twoFactorEnabled: config?.twoFactorEnabled ?? false,
+    requireTwoFactor: config?.requireTwoFactor ?? false,
+    twoFactorSecret: config?.twoFactorSecret ?? "",
+    allowedHosts: config?.allowedHosts ?? [],
+    allowedOrigins: config?.allowedOrigins ?? [],
+    trustedProxyAddresses: config?.trustedProxyAddresses ?? [],
+    requireHttps: config?.requireHttps ?? false,
+    sessionMaxAgeSeconds: config?.sessionMaxAgeSeconds ?? DEFAULT_SESSION_MAX_AGE_SECONDS,
+    sessionIdleTimeoutSeconds: config?.sessionIdleTimeoutSeconds ?? DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS,
+    loginMaxAttempts: config?.loginMaxAttempts ?? DEFAULT_LOGIN_MAX_ATTEMPTS,
+    loginWindowSeconds: config?.loginWindowSeconds ?? DEFAULT_LOGIN_WINDOW_SECONDS,
+    maxLoginAttemptEntries: config?.maxLoginAttemptEntries ?? DEFAULT_MAX_LOGIN_ATTEMPT_ENTRIES,
+    upstreamTimeoutMs: config?.upstreamTimeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS,
+    requestTimeoutMs: config?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+    headersTimeoutMs: config?.headersTimeoutMs ?? DEFAULT_HEADERS_TIMEOUT_MS,
+    keepAliveTimeoutMs: config?.keepAliveTimeoutMs ?? DEFAULT_KEEP_ALIVE_TIMEOUT_MS,
+  };
   const secret = loadOrCreateSecret();
-  let sessionGeneration = 0;
-  const activeSockets = new Set();
+  let sessionGeneration = randomBytes(32).toString("hex");
+  const activeSockets = new Map();
+  const sessionActivity = new Map();
+  const locallyWrittenAuthEpochs = new Set();
+  let authEpochFloor = 0;
+  let authMutationTail = Promise.resolve();
+  const runAuthMutation = (operation) => {
+    const current = authMutationTail.then(operation, operation);
+    authMutationTail = current.catch(() => undefined);
+    return current;
+  };
+
+  const destroySocketPair = (clientSocket, upstreamSocket) => {
+    for (const socket of [clientSocket, upstreamSocket]) {
+      try {
+        socket?.destroy?.();
+      } catch (_e) {
+        // Best-effort teardown during credential changes and disposal.
+      }
+    }
+  };
 
   const revokeSessions = () => {
-    sessionGeneration += 1;
-    for (const socket of activeSockets) {
-      try {
-        socket.destroy();
-      } catch (_e) {
-        // Best-effort teardown during credential changes.
+    sessionGeneration = randomBytes(32).toString("hex");
+    for (const [clientSocket, pair] of activeSockets) {
+      if (typeof pair.close === "function") pair.close();
+      else {
+        pair.closed = true;
+        destroySocketPair(clientSocket, pair.upstream ?? pair.request);
       }
     }
     activeSockets.clear();
+    sessionActivity.clear();
   };
 
   // In non-secure contexts (plain http on a LAN address) `crypto.randomUUID`
@@ -386,15 +587,77 @@ export function apply(ctx, config) {
       applies: "live",
     });
     migrateLegacyState(ctx, settings, settingsScope);
+    ctx.effect(() => settingsScope.watch((next, previous) => {
+      const nextEpoch = Number.isSafeInteger(next.authEpoch) ? next.authEpoch : 0;
+      const epochWasWrittenLocally = locallyWrittenAuthEpochs.delete(nextEpoch);
+      authEpochFloor = Math.max(authEpochFloor, nextEpoch);
+      const credentialsChanged = next.username !== previous.username
+        || next.password !== previous.password
+        || next.twoFactorEnabled !== previous.twoFactorEnabled
+        || next.twoFactorSecret !== previous.twoFactorSecret;
+      if (!epochWasWrittenLocally && (credentialsChanged || nextEpoch !== previous.authEpoch)) {
+        revokeSessions();
+      }
+    }), "auth-webserver: revoke sessions on settings changes");
   }
 
   const envUser = process.env.DSH_AUTH_USER || process.env.AUTH_USER;
   const envPass = process.env.DSH_AUTH_PASS || process.env.AUTH_PASS;
   const envTwoFactorSecret = process.env.DSH_AUTH_2FA_SECRET || process.env.AUTH_2FA_SECRET;
   const rawEnvTwoFactorEnabled = process.env.DSH_AUTH_2FA_ENABLED ?? process.env.AUTH_2FA_ENABLED;
-  const envTwoFactorEnabled = rawEnvTwoFactorEnabled === undefined
-    ? undefined
-    : /^(1|true|yes|on)$/i.test(String(rawEnvTwoFactorEnabled).trim());
+  const envTwoFactorEnabled = parseBooleanEnv(rawEnvTwoFactorEnabled, "AUTH_2FA_ENABLED");
+  const rawEnvTwoFactorRequired = process.env.DSH_AUTH_2FA_REQUIRED ?? process.env.AUTH_2FA_REQUIRED;
+  const envTwoFactorRequired = parseBooleanEnv(rawEnvTwoFactorRequired, "AUTH_2FA_REQUIRED");
+  const envAllowedHosts = parseList(process.env.DSH_AUTH_ALLOWED_HOSTS ?? process.env.AUTH_ALLOWED_HOSTS);
+  const envAllowedOrigins = parseList(process.env.DSH_AUTH_ALLOWED_ORIGINS ?? process.env.AUTH_ALLOWED_ORIGINS);
+  const envTrustedProxyAddresses = parseList(process.env.DSH_AUTH_TRUSTED_PROXY_ADDRESSES ?? process.env.AUTH_TRUSTED_PROXY_ADDRESSES);
+  const envRequireHttps = parseBooleanEnv(process.env.DSH_AUTH_REQUIRE_HTTPS ?? process.env.AUTH_REQUIRE_HTTPS, "AUTH_REQUIRE_HTTPS");
+  const allowedHostValues = envAllowedHosts ?? (config.allowedHosts.length > 0
+    ? config.allowedHosts
+    : pickAddresses(config));
+  const allowedHosts = allowedHostValues.map((value, index) => parseAllowedHost(value, index));
+  const allowedOriginValues = envAllowedOrigins ?? config.allowedOrigins;
+  const allowedOrigins = allowedOriginValues.map((value, index) => parseAllowedOrigin(value, index));
+  const trustedProxyValues = envTrustedProxyAddresses ?? config.trustedProxyAddresses;
+  for (const address of trustedProxyValues) {
+    if (isIP(normalizeRemoteAddress(address)) === 0) {
+      throw new Error(`auth-webserver: trustedProxyAddresses entry ${JSON.stringify(address)} must be an IP address`);
+    }
+  }
+  const trustedProxyAddresses = new Set(trustedProxyValues.map(normalizeRemoteAddress));
+  const requireHttps = envRequireHttps ?? config.requireHttps;
+  const isTrustedProxy = (req) => trustedProxyAddresses.has(normalizeRemoteAddress(req.socket?.remoteAddress));
+  const clientAddress = (req) => {
+    if (isTrustedProxy(req)) {
+      const forwarded = req.headers["x-forwarded-for"];
+      const first = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+      const values = typeof first === "string" ? first.split(",").map((value) => value.trim()).filter(Boolean) : [];
+      if (values.length === 1 && isIP(normalizeRemoteAddress(values[0])) !== 0) {
+        return normalizeRemoteAddress(values[0]);
+      }
+    }
+    return normalizeRemoteAddress(req.socket?.remoteAddress) || "unknown";
+  };
+  const isSecureRequest = (req) => {
+    if (req.socket?.encrypted) return true;
+    if (!isTrustedProxy(req)) return false;
+    const forwardedProto = req.headers["x-forwarded-proto"];
+    return typeof forwardedProto === "string" && forwardedProto.trim().toLowerCase() === "https";
+  };
+  const validateGatewayRequest = (req) => {
+    const host = req.headers.host;
+    if (!hostMatches(host, allowedHosts, isSecureRequest(req))) {
+      return { ok: false, status: 421, error: "Misdirected request" };
+    }
+    const origin = req.headers.origin;
+    if (req.headers["sec-fetch-site"] === "cross-site" || !originMatches(origin, host, allowedOrigins)) {
+      return { ok: false, status: 403, error: "Cross-origin request rejected" };
+    }
+    if (requireHttps && !isSecureRequest(req)) {
+      return { ok: false, status: 400, error: "HTTPS is required" };
+    }
+    return { ok: true };
+  };
   const resolved = () => {
     const value = settingsScope?.get() ?? {
       username: config.username,
@@ -405,7 +668,10 @@ export function apply(ctx, config) {
       authEpoch: 0,
     };
     const twoFactorSecret = envTwoFactorSecret || value.twoFactorSecret || "";
-    const twoFactorEnabled = envTwoFactorEnabled ?? (Boolean(value.twoFactorEnabled) || Boolean(envTwoFactorSecret));
+    const configuredTwoFactorEnabled = envTwoFactorEnabled ?? (Boolean(value.twoFactorEnabled) || Boolean(envTwoFactorSecret));
+    const twoFactorEnabled = envTwoFactorRequired === true
+      || Boolean(config.requireTwoFactor)
+      || configuredTwoFactorEnabled;
     return { ...value, twoFactorEnabled, twoFactorSecret };
   };
   const description = () => settings
@@ -428,20 +694,32 @@ export function apply(ctx, config) {
       overriddenBySettings: userLayerHasCredential(descriptor),
       twoFactorEnabled: Boolean(value.twoFactorEnabled),
       hasTwoFactorSecret: Boolean(value.twoFactorSecret),
-      twoFactorOverriddenByEnv: rawEnvTwoFactorEnabled !== undefined || Boolean(envTwoFactorSecret),
-      twoFactorOverriddenByConfig: Boolean(config.twoFactorEnabled || config.twoFactorSecret),
+      twoFactorOverriddenByEnv: rawEnvTwoFactorEnabled !== undefined || rawEnvTwoFactorRequired !== undefined || Boolean(envTwoFactorSecret),
+      twoFactorOverriddenByConfig: Boolean(config.twoFactorEnabled || config.requireTwoFactor || config.twoFactorSecret),
+      twoFactorRequiredByConfig: Boolean(config.requireTwoFactor),
       twoFactorOverriddenBySettings: userLayerHasField(descriptor, "twoFactorEnabled") || userLayerHasField(descriptor, "twoFactorSecret"),
     };
   };
 
-  const updateSettingsAndRevoke = async (next) => {
-    const currentEpoch = Number.isSafeInteger(resolved().authEpoch) ? resolved().authEpoch : 0;
-    await settings.update(NS, {
-      ...next,
-      authEpoch: currentEpoch + 1,
-    }, description()?.revision);
+  const updateSettingsAndRevoke = async (next) => runAuthMutation(async () => {
+    const currentEpoch = Math.max(
+      Number.isSafeInteger(resolved().authEpoch) ? resolved().authEpoch : 0,
+      authEpochFloor,
+    );
+    const nextEpoch = currentEpoch + 1;
+    authEpochFloor = nextEpoch;
+    locallyWrittenAuthEpochs.add(nextEpoch);
+    try {
+      await settings.update(NS, {
+        ...next,
+        authEpoch: nextEpoch,
+      });
+    } catch (error) {
+      locallyWrittenAuthEpochs.delete(nextEpoch);
+      throw error;
+    }
     revokeSessions();
-  };
+  });
 
   const handleState = (req, res) => {
     if (req.method !== "GET" && req.method !== "HEAD") {
@@ -544,11 +822,14 @@ export function apply(ctx, config) {
 
     const action = typeof body.action === "string" ? body.action : "";
     const current = resolved();
-    const environmentControlsTwoFactor = rawEnvTwoFactorEnabled !== undefined || Boolean(envTwoFactorSecret);
+    const environmentControlsTwoFactor = rawEnvTwoFactorEnabled !== undefined
+      || rawEnvTwoFactorRequired !== undefined
+      || Boolean(envTwoFactorSecret)
+      || Boolean(config.requireTwoFactor);
     if (environmentControlsTwoFactor) {
       sendJson(res, 400, {
         ok: false,
-        error: "2FA is controlled by AUTH_2FA_* environment variables",
+        error: "2FA is controlled by deployment configuration and cannot be changed here",
       });
       return;
     }
@@ -643,13 +924,18 @@ export function apply(ctx, config) {
 
   const credentials = () => {
     const value = resolved();
+    const storedEpoch = Number.isSafeInteger(value.authEpoch) ? value.authEpoch : 0;
+    authEpochFloor = Math.max(authEpochFloor, storedEpoch);
     return {
       user: process.env.DSH_AUTH_USER || process.env.AUTH_USER || value.username || "admin",
       pass: process.env.DSH_AUTH_PASS || process.env.AUTH_PASS || value.password || "",
       realm: value.realm || "DeepSeek Harness Authentication",
       twoFactorEnabled: Boolean(value.twoFactorEnabled),
       twoFactorSecret: value.twoFactorSecret || "",
-      authEpoch: Number.isSafeInteger(value.authEpoch) ? value.authEpoch : 0,
+      authEpoch: Math.max(
+        Number.isSafeInteger(value.authEpoch) ? value.authEpoch : 0,
+        authEpochFloor,
+      ),
     };
   };
 
@@ -674,7 +960,8 @@ export function apply(ctx, config) {
     const timestamp = Number(parts[0]);
     if (!Number.isFinite(timestamp)) return false;
     const age = Date.now() - timestamp;
-    if (age < -60000 || age > SESSION_MAX_AGE_MS) return false;
+    const maxAgeMs = config.sessionMaxAgeSeconds * 1000;
+    if (age < -60000 || age > maxAgeMs) return false;
     const expected = createHmac("sha256", secret)
       .update(`${user}\u0000${pass}\u0000${authEpoch}\u0000${sessionGeneration}\u0000${tokenFactor(twoFactorEnabled, twoFactorSecret)}\u0000${timestamp}`)
       .digest();
@@ -686,6 +973,36 @@ export function apply(ctx, config) {
     }
     if (actual.length !== expected.length) return false;
     return timingSafeEqual(actual, expected);
+  };
+
+  const pruneSessionActivity = (now) => {
+    const idleMs = config.sessionIdleTimeoutSeconds * 1000;
+    if (idleMs <= 0) {
+      sessionActivity.clear();
+      return;
+    }
+    for (const [token, lastSeen] of sessionActivity) {
+      if (lastSeen + idleMs <= now) sessionActivity.delete(token);
+    }
+    while (sessionActivity.size > config.maxLoginAttemptEntries) {
+      const oldest = sessionActivity.keys().next().value;
+      if (oldest === undefined) break;
+      sessionActivity.delete(oldest);
+    }
+  };
+  const sessionIsActive = (token, issuedAt) => {
+    const now = Date.now();
+    pruneSessionActivity(now);
+    const idleMs = config.sessionIdleTimeoutSeconds * 1000;
+    if (idleMs <= 0) return true;
+    const lastSeen = sessionActivity.get(token) ?? issuedAt;
+    if (now - lastSeen > idleMs) {
+      sessionActivity.delete(token);
+      return false;
+    }
+    sessionActivity.delete(token);
+    sessionActivity.set(token, now);
+    return true;
   };
 
   const usedTotpCodes = new Map();
@@ -704,67 +1021,127 @@ export function apply(ctx, config) {
   };
 
   const loginAttempts = new Map();
-  const LOGIN_WINDOW_MS = 60_000;
-  const LOGIN_MAX_ATTEMPTS = 10;
-  const loginAttemptKey = (req, username) => `${req.socket?.remoteAddress ?? "unknown"}:${username}`;
-  const loginRateLimited = (req, username) => {
-    const key = loginAttemptKey(req, username);
-    const current = loginAttempts.get(key);
-    const now = Date.now();
-    if (current === undefined || current.expiresAt <= now) {
-      loginAttempts.delete(key);
-      return false;
+  const clientLoginAttempts = new Map();
+  const loginWindowMs = config.loginWindowSeconds * 1000;
+  const loginAttemptKey = (req, username) => `${clientAddress(req)}:${String(username).slice(0, 256)}`;
+  const clientLoginAttemptKey = (req) => clientAddress(req);
+  const pruneAttempts = (attempts, now) => {
+    for (const [key, attempt] of attempts) {
+      if (attempt.expiresAt <= now) attempts.delete(key);
     }
-    return current.count >= LOGIN_MAX_ATTEMPTS;
+  };
+  const pruneLoginAttempts = (now) => {
+    pruneAttempts(loginAttempts, now);
+    pruneAttempts(clientLoginAttempts, now);
+  };
+  const evictAttempt = (attempts) => {
+    const oldest = attempts.keys().next().value;
+    if (oldest !== undefined) attempts.delete(oldest);
+  };
+  const loginRateLimited = (req, username) => {
+    req[RATE_LIMITED_REQUEST] = false;
+    req[RATE_LIMIT_RETRY_AFTER] = config.loginWindowSeconds;
+    const now = Date.now();
+    pruneLoginAttempts(now);
+    const userAttempt = loginAttempts.get(loginAttemptKey(req, username));
+    const clientAttempt = clientLoginAttempts.get(clientLoginAttemptKey(req));
+    if ((userAttempt?.count ?? 0) >= config.loginMaxAttempts
+      || (clientAttempt?.count ?? 0) >= config.loginMaxAttempts) {
+      req[RATE_LIMITED_REQUEST] = true;
+      return true;
+    }
+    return false;
   };
   const noteLoginFailure = (req, username) => {
-    const key = loginAttemptKey(req, username);
     const now = Date.now();
-    const current = loginAttempts.get(key);
-    if (current === undefined || current.expiresAt <= now) {
-      loginAttempts.set(key, { count: 1, expiresAt: now + LOGIN_WINDOW_MS });
-      return;
+    pruneLoginAttempts(now);
+    const entries = [
+      [loginAttempts, loginAttemptKey(req, username)],
+      [clientLoginAttempts, clientLoginAttemptKey(req)],
+    ];
+    for (const [attempts, key] of entries) {
+      const current = attempts.get(key);
+      if (current === undefined || current.expiresAt <= now) {
+        if (attempts.size >= config.maxLoginAttemptEntries) evictAttempt(attempts);
+        attempts.set(key, { count: 1, expiresAt: now + loginWindowMs });
+      } else {
+        current.count += 1;
+      }
     }
-    current.count += 1;
   };
   const clearLoginFailures = (req, username) => {
     loginAttempts.delete(loginAttemptKey(req, username));
+    clientLoginAttempts.delete(clientLoginAttemptKey(req));
   };
+
+  const cookieNames = (secure) => secure
+    ? { token: SECURE_COOKIE_NAME, csrf: SECURE_CSRF_COOKIE_NAME, legacyToken: COOKIE_NAME, legacyCsrf: CSRF_COOKIE_NAME }
+    : { token: COOKIE_NAME, csrf: CSRF_COOKIE_NAME, legacyToken: SECURE_COOKIE_NAME, legacyCsrf: SECURE_CSRF_COOKIE_NAME };
+  const cookieValue = (cookies, names, key) => cookies[names[key]];
+  const cookieHeader = (name, value, secure, maxAge, httpOnly) =>
+    `${name}=${value}; Path=/;${httpOnly ? " HttpOnly;" : ""} SameSite=Strict; Max-Age=${maxAge}${secure || name.startsWith("__Host-") ? "; Secure" : ""}`;
+  const loginCookieHeaders = (token, csrf, secure) => {
+    const names = cookieNames(secure);
+    return [
+      cookieHeader(names.token, token, secure, config.sessionMaxAgeSeconds, true),
+      cookieHeader(names.csrf, csrf, secure, config.sessionMaxAgeSeconds, false),
+      cookieHeader(names.legacyToken, "", secure, 0, true),
+      cookieHeader(names.legacyCsrf, "", secure, 0, false),
+    ];
+  };
+  const clearCookieHeaders = (secure) => [
+    cookieHeader(COOKIE_NAME, "", secure, 0, true),
+    cookieHeader(CSRF_COOKIE_NAME, "", secure, 0, false),
+    cookieHeader(SECURE_COOKIE_NAME, "", true, 0, true),
+    cookieHeader(SECURE_CSRF_COOKIE_NAME, "", true, 0, false),
+  ];
 
   const authenticateRequest = (req) => {
     const { user, pass, twoFactorEnabled, twoFactorSecret, authEpoch } = credentials();
     if (!pass) return null;
 
     const cookies = parseCookies(req);
-    const token = cookies[COOKIE_NAME];
+    const names = cookieNames(isSecureRequest(req));
+    const token = cookieValue(cookies, names, "token");
     if (token && verifyToken(token, user, pass, authEpoch, twoFactorEnabled, twoFactorSecret)) {
-      return { kind: "cookie", csrf: csrfForToken(token) };
+      const issuedAt = Number(token.split(".", 1)[0]);
+      if (sessionIsActive(token, issuedAt)) {
+        return { kind: "cookie", token, issuedAt, csrf: csrfForToken(token) };
+      }
     }
 
     // Basic Auth cannot carry a second factor and is deliberately disabled when
     // TOTP is active. Use the password + OTP login endpoint to obtain a cookie.
     if (twoFactorEnabled) return null;
     const basic = parseBasic(req.headers.authorization);
-    if (basic && safeEqual(basic.user, user) && safeEqual(basic.pass, pass)) {
-      return { kind: "basic", csrf: null };
+    if (!basic) return null;
+    if (loginRateLimited(req, basic.user)) return null;
+    if (safeEqual(basic.user, user) && safeEqual(basic.pass, pass)) {
+      clearLoginFailures(req, basic.user);
+      return { kind: "basic", issuedAt: Date.now(), csrf: null };
     }
+    noteLoginFailure(req, basic.user);
     return null;
   };
 
-  const checkAuth = (req) => authenticateRequest(req) !== null;
+  const checkAuth = (req) => authenticateRequest(req);
 
   const requireSession = (req, res) => {
     const auth = authenticateRequest(req);
     if (auth === null || auth.kind !== "cookie") {
-      if (isLoopbackAddress(req.socket?.remoteAddress)) return { kind: "local", csrf: null };
+      if (req[GATEWAY_REQUEST] !== true && isLoopbackAddress(req.socket?.remoteAddress)) {
+        return { kind: "local", csrf: null };
+      }
       sendJson(res, 403, { ok: false, error: "A browser login session is required" });
       return null;
     }
     const cookies = parseCookies(req);
+    const names = cookieNames(isSecureRequest(req));
+    const csrfCookie = cookieValue(cookies, names, "csrf");
     const header = req.headers["x-dsh-csrf"];
     const submitted = Array.isArray(header) ? header[0] : header;
-    if (!cookies[CSRF_COOKIE_NAME] || typeof submitted !== "string" ||
-      !safeEqual(cookies[CSRF_COOKIE_NAME], auth.csrf) || !safeEqual(submitted, auth.csrf)) {
+    if (!csrfCookie || typeof submitted !== "string" ||
+      !safeEqual(csrfCookie, auth.csrf) || !safeEqual(submitted, auth.csrf)) {
       sendJson(res, 403, { ok: false, error: "CSRF validation failed" });
       return null;
     }
@@ -773,8 +1150,14 @@ export function apply(ctx, config) {
 
   const handleLogin = async (req, res) => {
     if (req.method !== "POST") {
-      res.writeHead(405, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ ok: false, error: "Method not allowed" }));
+      sendJson(res, 405, { ok: false, error: "Method not allowed" });
+      return;
+    }
+    const mediaType = typeof req.headers["content-type"] === "string"
+      ? req.headers["content-type"].split(";", 1)[0].trim().toLowerCase()
+      : "";
+    if (mediaType !== "application/json") {
+      sendJson(res, 415, { ok: false, error: "Content-Type must be application/json" });
       return;
     }
 
@@ -782,63 +1165,105 @@ export function apply(ctx, config) {
     try {
       body = JSON.parse(await readBody(req));
     } catch {
-      res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ ok: false, error: "Invalid request body" }));
+      sendJson(res, 400, { ok: false, error: "Invalid request body" });
       return;
     }
     if (body === null || typeof body !== "object" || Array.isArray(body)) {
-      res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ ok: false, error: "Invalid request body" }));
+      sendJson(res, 400, { ok: false, error: "Invalid request body" });
       return;
     }
 
-    const { user, pass, twoFactorEnabled, twoFactorSecret, authEpoch } = credentials();
-    const submittedUser = typeof body.username === "string" ? body.username : "";
-    const submittedPass = typeof body.password === "string" ? body.password : "";
-    if (loginRateLimited(req, submittedUser)) {
-      res.writeHead(429, {
-        "Content-Type": "application/json; charset=utf-8",
-        "Retry-After": "60",
+    return runAuthMutation(async () => {
+      const { user, pass, twoFactorEnabled, twoFactorSecret, authEpoch } = credentials();
+      const submittedUser = typeof body.username === "string" ? body.username.slice(0, 256) : "";
+      const submittedPass = typeof body.password === "string" ? body.password : "";
+      if (loginRateLimited(req, submittedUser)) {
+        sendJson(res, 429, { ok: false, error: "Too many login attempts" }, { "Retry-After": String(config.loginWindowSeconds) });
+        return;
+      }
+      const passwordValid = Boolean(pass) && safeEqual(submittedUser, user) && safeEqual(submittedPass, pass);
+      const otpValid = !twoFactorEnabled || (passwordValid && consumeTotp(twoFactorSecret, body.otp));
+      if (!passwordValid || !otpValid) {
+        noteLoginFailure(req, submittedUser);
+        sendJson(res, 401, { ok: false, error: "Invalid username, password, or authenticator code" });
+        return;
+      }
+      clearLoginFailures(req, submittedUser);
+
+      const token = generateToken(user, pass, authEpoch, twoFactorEnabled, twoFactorSecret);
+      const csrf = csrfForToken(token);
+      const secure = isSecureRequest(req);
+      sendJson(res, 200, { ok: true, username: user }, {
+        "Set-Cookie": loginCookieHeaders(token, csrf, secure),
+        ...securityHeaders({ secure }),
       });
-      res.end(JSON.stringify({ ok: false, error: "Too many login attempts" }));
-      return;
-    }
-    const passwordValid = Boolean(pass) && safeEqual(submittedUser, user) && safeEqual(submittedPass, pass);
-    const otpValid = !twoFactorEnabled || (passwordValid && consumeTotp(twoFactorSecret, body.otp));
-    if (!passwordValid || !otpValid) {
-      noteLoginFailure(req, submittedUser);
-      res.writeHead(401, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-      res.end(JSON.stringify({ ok: false, error: "Invalid username, password, or authenticator code" }));
-      return;
-    }
-    clearLoginFailures(req, submittedUser);
-
-    const token = generateToken(user, pass, authEpoch, twoFactorEnabled, twoFactorSecret);
-    const csrf = csrfForToken(token);
-    const secure = req.socket?.encrypted ? "; Secure" : "";
-    res.writeHead(200, {
-      "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
-      "Set-Cookie": [
-        `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SECONDS}${secure}`,
-        `${CSRF_COOKIE_NAME}=${csrf}; Path=/; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SECONDS}${secure}`,
-      ],
     });
-    res.end(JSON.stringify({ ok: true, username: user }));
   };
 
-  const handleLogout = (req, res) => {
-    if (authenticateRequest(req) !== null) revokeSessions();
-    const secure = req.socket?.encrypted ? "; Secure" : "";
-    res.writeHead(200, {
-      "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
-      "Set-Cookie": [
-        `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`,
-        `${CSRF_COOKIE_NAME}=; Path=/; SameSite=Lax; Max-Age=0${secure}`,
-      ],
+  let epochWriteTail = Promise.resolve();
+  const persistAuthEpoch = () => {
+    if (settings === undefined || settings.writable !== true) return Promise.resolve();
+    const task = epochWriteTail.then(async () => {
+      const currentEpoch = Math.max(
+        Number.isSafeInteger(resolved().authEpoch) ? resolved().authEpoch : 0,
+        authEpochFloor,
+      );
+      const nextEpoch = currentEpoch + 1;
+      authEpochFloor = nextEpoch;
+      locallyWrittenAuthEpochs.add(nextEpoch);
+      try {
+        await settings.update(NS, { authEpoch: nextEpoch });
+      } catch (error) {
+        locallyWrittenAuthEpochs.delete(nextEpoch);
+        throw error;
+      }
     });
-    res.end(JSON.stringify({ ok: true }));
+    epochWriteTail = task.catch((error) => {
+      ctx.logger?.warn?.("auth-webserver: persistent session revocation failed: %s", error);
+    });
+    return task;
+  };
+
+  const handleLogout = async (req, res) => {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { ok: false, error: "Method not allowed" });
+      return;
+    }
+    return runAuthMutation(async () => {
+      const auth = authenticateRequest(req);
+      if (auth?.kind === "cookie") {
+        const cookies = parseCookies(req);
+        const names = cookieNames(isSecureRequest(req));
+        const csrfCookie = cookieValue(cookies, names, "csrf");
+        const header = req.headers["x-dsh-csrf"];
+        const submitted = Array.isArray(header) ? header[0] : header;
+        if (!csrfCookie || typeof submitted !== "string" ||
+          !safeEqual(csrfCookie, auth.csrf) || !safeEqual(submitted, auth.csrf)) {
+          sendJson(res, 403, { ok: false, error: "CSRF validation failed" });
+          return;
+        }
+        revokeSessions();
+        try {
+          await persistAuthEpoch();
+        } catch {
+          sendJson(res, 503, { ok: false, error: "Session revocation could not be persisted" });
+          return;
+        }
+      } else if (auth?.kind === "basic") {
+        revokeSessions();
+        try {
+          await persistAuthEpoch();
+        } catch {
+          sendJson(res, 503, { ok: false, error: "Session revocation could not be persisted" });
+          return;
+        }
+      }
+      const secure = isSecureRequest(req);
+      sendJson(res, 200, { ok: true }, {
+        "Set-Cookie": clearCookieHeaders(secure),
+        ...securityHeaders({ secure }),
+      });
+    });
   };
 
   const targetHost = config.targetHost;
@@ -856,13 +1281,36 @@ export function apply(ctx, config) {
     return patched;
   };
 
-  const proxyRequest = (req, res) => {
-    const rawPath = new URL(req.url ?? "/", "http://x").pathname;
+  const gatewayResponseHeaders = (headers, req, rawPath) => {
+    const publicPwaRequest = isPublicPwaRequest(req, rawPath);
+    const additions = securityHeaders({ secure: isSecureRequest(req), noStore: !publicPwaRequest });
+    const result = { ...headers };
+    for (const [key, value] of Object.entries(additions)) {
+      if (result[key.toLowerCase()] === undefined) result[key.toLowerCase()] = value;
+    }
+    if (!publicPwaRequest) result["cache-control"] = "no-store";
+    return result;
+  };
+
+  const cleanForwardedHeaders = (headers) => {
+    for (const header of [
+      "authorization",
+      "proxy-authorization",
+      "x-dsh-otp",
+      "x-dsh-csrf",
+      "forwarded",
+      "via",
+      "x-forwarded-for",
+      "x-forwarded-host",
+      "x-forwarded-proto",
+      "x-forwarded-port",
+    ]) delete headers[header];
+    return headers;
+  };
+
+  const proxyRequest = (req, res, rawPath) => {
     const shouldPatchConnectionClient = req.method === "GET" && rawPath === CONNECTION_CLIENT_PATH;
-    const headers = { ...req.headers };
-    delete headers.authorization;
-    delete headers["x-dsh-otp"];
-    delete headers["x-dsh-csrf"];
+    const headers = cleanForwardedHeaders({ ...req.headers });
     if (headers.cookie !== undefined) {
       headers.cookie = stripGatewayCookies(headers.cookie);
       if (headers.cookie === undefined) delete headers.cookie;
@@ -874,17 +1322,16 @@ export function apply(ctx, config) {
     }
     headers.host = `${targetHost}:${targetPort}`;
     // The upstream API guard accepts a request only when its Origin matches
-    // the (rewritten) Host header, so a LAN Origin must be rewritten too —
-    // otherwise every stateful /api call comes back 403 from the stock server.
-    if (headers.origin !== undefined) {
-      headers.origin = `http://${targetHost}:${targetPort}`;
-    }
-    const remote = req.socket?.remoteAddress;
-    if (remote) {
-      headers["x-forwarded-for"] = headers["x-forwarded-for"]
-        ? `${headers["x-forwarded-for"]}, ${remote}`
-        : remote;
-    }
+    // the rewritten Host header, so a validated public Origin is translated
+    // to the local upstream authority after the gateway policy has run.
+    if (headers.origin !== undefined) headers.origin = `http://${targetHost}:${targetPort}`;
+    headers["x-forwarded-for"] = clientAddress(req);
+
+    let proxyResponse;
+    const abortUpstream = () => {
+      proxyReq.destroy();
+      proxyResponse?.destroy();
+    };
 
     const proxyReq = request({
       hostname: targetHost,
@@ -893,7 +1340,18 @@ export function apply(ctx, config) {
       method: req.method,
       headers,
     }, (proxyRes) => {
-      const resHeaders = { ...proxyRes.headers };
+      proxyResponse = proxyRes;
+      const respondProxyError = () => {
+        if (res.headersSent || res.writableEnded || res.destroyed) {
+          res.destroy();
+          return;
+        }
+        res.writeHead(502, gatewayResponseHeaders({ "content-type": "application/json; charset=utf-8" }, req, rawPath));
+        res.end(JSON.stringify({ ok: false, error: "upstream response failed" }));
+      };
+      proxyRes.once("error", respondProxyError);
+      res.once("error", () => proxyRes.destroy());
+      const resHeaders = gatewayResponseHeaders({ ...proxyRes.headers }, req, rawPath);
       for (const h of ["connection", "keep-alive", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"]) {
         delete resHeaders[h];
       }
@@ -915,33 +1373,48 @@ export function apply(ctx, config) {
         res.writeHead(proxyRes.statusCode, resHeaders);
         res.end(body);
       });
-      proxyRes.on("error", () => {
-        if (!res.headersSent) res.writeHead(502, { "Content-Type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify({ ok: false, error: "upstream connection client response failed" }));
-      });
+    });
+    res.once("close", () => {
+      if (!res.writableEnded) abortUpstream();
+    });
+    proxyReq.setTimeout(config.upstreamTimeoutMs, () => {
+      proxyReq.destroy(new Error("upstream request timed out"));
     });
     proxyReq.on("error", (error) => {
       if (res.headersSent) {
         res.destroy();
         return;
       }
-      res.writeHead(502, { "Content-Type": "application/json; charset=utf-8" });
+      res.writeHead(502, gatewayResponseHeaders({ "content-type": "application/json; charset=utf-8" }, req, rawPath));
       res.end(JSON.stringify({ ok: false, error: `upstream unreachable: ${error.code ?? error.message}` }));
     });
+    req.on("aborted", () => proxyReq.destroy());
     req.pipe(proxyReq);
   };
 
-  const proxyUpgrade = (req, socket, head) => {
-    const headers = { ...req.headers };
-    delete headers.authorization;
-    delete headers["x-dsh-otp"];
-    delete headers["x-dsh-csrf"];
+  const proxyUpgrade = (req, socket, head, auth) => {
+    if (disposed) {
+      rejectUpgrade(socket, 503, "Service Unavailable");
+      return;
+    }
+    const rawPath = requestPath(req);
+    if (rawPath === null) {
+      rejectUpgrade(socket, 400, "Bad Request");
+      return;
+    }
+    const headers = cleanForwardedHeaders({ ...req.headers });
     if (headers.cookie !== undefined) {
       headers.cookie = stripGatewayCookies(headers.cookie);
       if (headers.cookie === undefined) delete headers.cookie;
     }
     headers.host = `${targetHost}:${targetPort}`;
     if (headers.origin) headers.origin = `http://${targetHost}:${targetPort}`;
+    headers["x-forwarded-for"] = clientAddress(req);
+    for (const h of ["connection", "keep-alive", "proxy-connection", "te", "trailer", "transfer-encoding"]) {
+      delete headers[h];
+    }
+    headers.connection = "Upgrade";
+    headers.upgrade = "websocket";
     const proxyReq = request({
       hostname: targetHost,
       port: targetPort,
@@ -949,7 +1422,40 @@ export function apply(ctx, config) {
       method: "GET",
       headers,
     });
+    const pair = { request: proxyReq, upstream: null, closed: false, close: null };
+    const removePair = () => {
+      if (activeSockets.get(socket) === pair) activeSockets.delete(socket);
+    };
+    let idleTimer;
+    let expiryTimer;
+    let activityListener;
+    const closePair = () => {
+      if (pair.closed) return;
+      pair.closed = true;
+      removePair();
+      if (idleTimer !== undefined) clearTimeout(idleTimer);
+      if (expiryTimer !== undefined) clearTimeout(expiryTimer);
+      if (activityListener !== undefined) {
+        socket.removeListener("data", activityListener);
+        pair.upstream?.removeListener("data", activityListener);
+      }
+      destroySocketPair(socket, pair.upstream ?? pair.request);
+    };
+    pair.close = closePair;
+    activeSockets.set(socket, pair);
+    socket.once("close", closePair);
+    socket.once("error", closePair);
+    proxyReq.once("error", closePair);
+    proxyReq.setTimeout(config.upstreamTimeoutMs, () => {
+      proxyReq.destroy(new Error("upstream WebSocket handshake timed out"));
+    });
     proxyReq.on("upgrade", (proxyRes, proxySocket, proxyHead) => {
+      if (pair.closed || activeSockets.get(socket) !== pair) {
+        destroySocketPair(socket, proxySocket);
+        return;
+      }
+      pair.request = null;
+      pair.upstream = proxySocket;
       const statusMessage = proxyRes.statusMessage || "Switching Protocols";
       // A 101 response is only valid for the browser when it carries the
       // Connection/Upgrade hop-by-hop headers, so re-add them explicitly.
@@ -965,17 +1471,45 @@ export function apply(ctx, config) {
         }
       }
       lines.push("", "");
-      socket.write(lines.join("\r\n"));
-     activeSockets.add(socket);
-       const removeSocket = () => activeSockets.delete(socket);
-       socket.once("close", removeSocket);
-       proxySocket.once("close", removeSocket);
-       if (proxyHead && proxyHead.length) socket.write(proxyHead);
-      proxySocket.pipe(socket).pipe(proxySocket);
+      if (writeSocket(socket, lines.join("\r\n")) === false) return;
+      const idleMs = config.sessionIdleTimeoutSeconds * 1000;
+      activityListener = () => {
+        if (idleMs <= 0 || pair.closed) return;
+        if (idleTimer !== undefined) clearTimeout(idleTimer);
+        idleTimer = setTimeout(closePair, idleMs);
+      };
+      const expiryDeadline = auth?.issuedAt + config.sessionMaxAgeSeconds * 1000;
+      const armExpiry = () => {
+        if (!Number.isFinite(expiryDeadline) || pair.closed) return;
+        const remaining = expiryDeadline - Date.now();
+        if (remaining <= 0) {
+          closePair();
+          return;
+        }
+        expiryTimer = setTimeout(armExpiry, Math.min(remaining, 0x7fffffff));
+      };
+      socket.once("close", closePair);
+      socket.once("error", closePair);
+      proxySocket.once("close", closePair);
+      proxySocket.once("error", closePair);
+      if (idleMs > 0) {
+        socket.on("data", activityListener);
+        proxySocket.on("data", activityListener);
+        activityListener();
+      }
+      armExpiry();
+      if (head && head.length) writeSocket(proxySocket, head);
+      if (proxyHead && proxyHead.length) writeSocket(socket, proxyHead);
+      proxySocket.pipe(socket);
+      socket.pipe(proxySocket);
     });
     // Upstream refused the upgrade (e.g. 403): relay that response instead of
     // leaving the browser socket hanging without a handshake answer.
     proxyReq.on("response", (proxyRes) => {
+      pair.closed = true;
+      removePair();
+      socket.off("close", closePair);
+      socket.off("error", closePair);
       const statusMessage = proxyRes.statusMessage || "";
       const lines = [`HTTP/1.1 ${proxyRes.statusCode} ${statusMessage}`.trimEnd()];
       for (const [key, value] of Object.entries(proxyRes.headers)) {
@@ -986,11 +1520,10 @@ export function apply(ctx, config) {
         }
       }
       lines.push("", "");
-      socket.write(lines.join("\r\n"));
+      if (writeSocket(socket, lines.join("\r\n")) === false) return;
+      socket.once("error", () => proxyRes.destroy());
+      proxyRes.once("error", () => socket.destroy());
       proxyRes.pipe(socket);
-    });
-    proxyReq.on("error", () => {
-      socket.destroy();
     });
     proxyReq.end();
   };
@@ -1001,67 +1534,176 @@ export function apply(ctx, config) {
     ctx.logger?.warn?.("auth-webserver: no non-loopback network addresses found; LAN gateway is idle");
   }
 
+  const closeServer = async (record) => {
+    const cancellation = record.cancelListen?.();
+    if (cancellation !== undefined) await cancellation;
+    try {
+      record.server.closeAllConnections?.();
+    } catch (_e) {
+      // Best-effort teardown.
+    }
+    if (!record.server.listening) return;
+    await new Promise((resolve) => {
+      record.server.close(() => resolve());
+    });
+  };
+
+  const listenServer = (record) => new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      record.cancelListen = undefined;
+      record.server.off("error", onError);
+      callback(value);
+    };
+    const onError = (error) => {
+      if (settled) {
+        ctx.logger?.warn?.(`auth-webserver: listener error on ${record.address}:${config.port}`, error);
+        return;
+      }
+      finish(reject, error);
+    };
+    record.cancelListen = () => {
+      if (settled) return undefined;
+      record.cancelled = true;
+      return new Promise((resolveClose) => {
+        const finishCancellation = () => {
+          finish(reject, new Error("auth-webserver: listener startup cancelled"));
+          resolveClose();
+        };
+        try {
+          record.server.close(finishCancellation);
+        } catch {
+          finishCancellation();
+        }
+      });
+    };
+    record.server.once("error", onError);
+    record.server.listen(config.port, record.address, () => {
+      if (record.cancelled) {
+        try {
+          record.server.close(() => {});
+        } catch (_e) {
+          // The cancellation path already owns teardown.
+        }
+        finish(reject, new Error("auth-webserver: listener startup cancelled"));
+        return;
+      }
+      finish(resolve);
+      record.server.on("error", (error) => {
+        ctx.logger?.warn?.(`auth-webserver: listener error on ${record.address}:${config.port}`, error);
+      });
+    });
+  });
+
   for (const address of addresses) {
     const server = createServer((req, res) => {
-      const rawPath = new URL(req.url ?? "/", "http://x").pathname;
-      if (rawPath === "/api/auth.login") {
-        handleLogin(req, res);
-        return;
-      }
-      if (rawPath === "/api/auth.logout") {
-        handleLogout(req, res);
-        return;
-      }
-      if (rawPath === "/_dsh/auth-webserver/state" ||
-        rawPath === "/_dsh/auth-webserver/save" ||
-        rawPath === "/_dsh/auth-webserver/2fa") {
-        if (!checkAuth(req)) {
-          sendUnauthorized(req, res, credentials().realm, rawPath, credentials().twoFactorEnabled);
+      void Promise.resolve().then(() => {
+        if (disposed) {
+          sendJson(res, 503, { ok: false, error: "Service unavailable" });
           return;
         }
-        if (rawPath === "/_dsh/auth-webserver/state") handleState(req, res);
-        else if (rawPath === "/_dsh/auth-webserver/save") handleSave(req, res);
-        else handleTwoFactorSetup(req, res);
-        return;
-      }
-      const publicPwaRequest = isPublicPwaRequest(req, rawPath);
-      if (!publicPwaRequest && !checkAuth(req)) {
-        sendUnauthorized(req, res, credentials().realm, rawPath, credentials().twoFactorEnabled);
-        return;
-      }
-      proxyRequest(req, res);
+        const policy = validateGatewayRequest(req);
+        if (!policy.ok) {
+          sendJson(res, policy.status, { ok: false, error: policy.error });
+          return;
+        }
+        const rawPath = requestPath(req);
+        if (rawPath === null) {
+          sendJson(res, 400, { ok: false, error: "Invalid request target" });
+          return;
+        }
+        req[GATEWAY_REQUEST] = true;
+        if (rawPath === "/api/auth.login") {
+          return handleLogin(req, res);
+        }
+        if (rawPath === "/api/auth.logout") {
+          return handleLogout(req, res);
+        }
+        if (rawPath === "/_dsh/auth-webserver/state" ||
+          rawPath === "/_dsh/auth-webserver/save" ||
+          rawPath === "/_dsh/auth-webserver/2fa") {
+          if (!checkAuth(req)) {
+            sendUnauthorized(req, res, credentials().realm, rawPath, credentials().twoFactorEnabled, isSecureRequest(req));
+            return;
+          }
+          if (rawPath === "/_dsh/auth-webserver/state") return handleState(req, res);
+          if (rawPath === "/_dsh/auth-webserver/save") return handleSave(req, res);
+          return handleTwoFactorSetup(req, res);
+        }
+        const publicPwaRequest = isPublicPwaRequest(req, rawPath);
+        if (!publicPwaRequest && !checkAuth(req)) {
+          sendUnauthorized(req, res, credentials().realm, rawPath, credentials().twoFactorEnabled, isSecureRequest(req));
+          return;
+        }
+        return proxyRequest(req, res, rawPath);
+      }).catch((error) => {
+        ctx.logger?.warn?.("auth-webserver: request handler failed", error);
+        if (res.headersSent) res.destroy();
+        else sendJson(res, 500, { ok: false, error: "Request handling failed" });
+      });
     });
-
     server.on("upgrade", (req, socket, head) => {
-      if (!checkAuth(req)) {
-        socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+      void Promise.resolve().then(() => {
+        if (disposed) {
+          rejectUpgrade(socket, 503, "Service Unavailable");
+          return;
+        }
+        const policy = validateGatewayRequest(req);
+        if (!policy.ok) {
+          rejectUpgrade(socket, policy.status, policy.error);
+          return;
+        }
+        const rawPath = requestPath(req);
+        if (rawPath === null) {
+          rejectUpgrade(socket, 400, "Bad Request");
+          return;
+        }
+        req[GATEWAY_REQUEST] = true;
+        const auth = checkAuth(req);
+        if (auth === null) {
+          rejectUpgrade(socket, req[RATE_LIMITED_REQUEST] === true ? 429 : 401,
+            req[RATE_LIMITED_REQUEST] === true ? "Too Many Requests" : "Unauthorized",
+            req[RATE_LIMITED_REQUEST] === true ? { "Retry-After": String(config.loginWindowSeconds) } : {});
+          return;
+        }
+        return proxyUpgrade(req, socket, head, auth);
+      }).catch((error) => {
+        ctx.logger?.warn?.("auth-webserver: upgrade handler failed", error);
         socket.destroy();
-        return;
-      }
-      proxyUpgrade(req, socket, head);
+      });
     });
-
-    server.on("error", (error) => {
-      ctx.logger?.warn?.(`auth-webserver: failed to listen on ${address}:${config.port}`, error);
-    });
-
-    server.listen(config.port, address);
+    server.requestTimeout = config.requestTimeoutMs;
+    server.headersTimeout = config.headersTimeoutMs;
+    server.keepAliveTimeout = config.keepAliveTimeoutMs;
     servers.push({ address, server });
-    ctx.logger?.info?.(`auth-webserver: LAN gateway listening on http://${address}:${config.port} -> http://${targetHost}:${targetPort}`);
   }
 
-  ctx.effect(() => () => {
-    for (const { server } of servers) {
-      try {
-        server.closeAllConnections?.();
-      } catch (_e) {
-        // Best-effort teardown.
-      }
-      try {
-        server.close();
-      } catch (_e) {
-        // Already closed.
-      }
+  let disposed = false;
+  let closeAllPromise;
+  const closeAll = () => {
+    if (closeAllPromise !== undefined) return closeAllPromise;
+    disposed = true;
+    revokeSessions();
+    closeAllPromise = Promise.all(servers.map(closeServer)).then(() => undefined);
+    return closeAllPromise;
+  };
+  ctx.effect(() => closeAll, "auth-webserver: listeners and sessions");
+
+  try {
+    for (const record of servers) {
+      if (disposed) return;
+      await listenServer(record);
     }
-  });
+    if (disposed) return;
+  } catch (error) {
+    await closeAll();
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`auth-webserver: failed to bind gateway on ${config.port}: ${detail}`);
+  }
+
+  for (const { address } of servers) {
+    ctx.logger?.info?.(`auth-webserver: LAN gateway listening on http://${address}:${config.port} -> http://${targetHost}:${targetPort}`);
+  }
 }

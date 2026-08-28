@@ -7,7 +7,7 @@ own directory.
 
 | Plugin | Purpose |
 | --- | --- |
-| [`@yiln-dsh/dsh-plugin-auth-webserver`](./dsh-plugin-auth-webserver) | Auth-gated reverse proxy on every non-loopback NIC, forwarding to the stock `127.0.0.1:3080` web server, with optional TOTP 2FA. |
+| [`@yiln-dsh/dsh-plugin-auth-webserver`](./dsh-plugin-auth-webserver) | Auth-gated reverse proxy with enforced deployment Host/Origin, HTTPS, TOTP, bounded sessions/rate limits, and WebSocket lifecycle protection. |
 | [`@yiln-dsh/dsh-plugin-file-explorer`](./dsh-plugin-file-explorer) | Contribute workspace Files and Git Graph pages to the right-panel host. |
 | [`@yiln-dsh/dsh-plugin-right-panel`](./dsh-plugin-right-panel) | Fixed right-side page host with keyed Slots, icon rail, and overflow page menu. |
 | [`@yiln-dsh/dsh-plugin-file-message`](./dsh-plugin-file-message) | Let the model send workspace-backed files and images into the conversation. |
@@ -37,7 +37,7 @@ Supported install formats:
 
   ```bash
   cd /path/to/dsh-plugin-auth-webserver && pnpm pack
-  dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.3.1.tgz
+  dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.4.0.tgz
   ```
 
 - **npm package.** Publish one plugin directory, then install by name:
@@ -60,7 +60,7 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 
 | Package | Version |
 | --- | --- |
-| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.3.1` |
+| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.4.0` |
 | `@yiln-dsh/dsh-plugin-file-explorer` | `0.6.0` |
 | `@yiln-dsh/dsh-plugin-right-panel` | `0.1.1` |
 | `@yiln-dsh/dsh-plugin-delete-session` | `0.1.2` |
@@ -93,7 +93,7 @@ shared three ways:
 
   ```bash
   cd dsh-plugin-auth-webserver && pnpm pack
-  dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.3.1.tgz
+  dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.4.0.tgz
   ```
 
 - **Direct GitHub URL.** This works only when the repository root itself is the
