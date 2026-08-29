@@ -1,0 +1,16 @@
+# dsh-plugin-llm-adapter bundle patch.
+#
+# DSH validates a targeted row's package name, so the stock row is disabled and
+# the fork is inserted under a new row id. The fork still exports the same
+# Cordis plugin name (llm-pi-ai) and owns the original provider routes/settings.
+
+- id: llm-pi-ai
+  disabled: true
+
+- insert:
+    - id: llm-pi-ai-adapter
+      name: '@yiln-dsh/dsh-plugin-llm-adapter'
+      inject:
+        - llm
+        - webServer
+        - clientModules
