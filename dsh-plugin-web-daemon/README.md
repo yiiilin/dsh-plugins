@@ -49,7 +49,7 @@ disposed session is removed.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.5.9`.
+The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.5.10`.
 
 ### npm package
 
@@ -103,9 +103,11 @@ Recorded state is the single source of truth:
   set that was live.
 - On startup the systemd worker (`DSH_WEB_DAEMON_WORKER=1` — the only process
   that owns the registry) loads the file and resumes each `running: true`
-  record: the Agent is rebuilt with the recorded `agentOptions` and
-  `agentPreset`, and one internal recovery notice is queued so the model
-  continues the interrupted task instead of sitting idle.
+  record: the Agent is rebuilt with the recorded `agentPreset` and the model
+  options the session was **actually using before the restart** — taken from
+  the session log's latest `request/header`, not the creation-time snapshot
+  stored in the registry — and one internal recovery notice is queued so the
+  model continues the interrupted task instead of sitting idle.
 - Legacy records without a `running` field are migrated once: they are resumed
   only when the persisted log ends in an interrupted/disposed turn.
 - A foreground owner sharing `DSH_HOME` never resumes; `active-sessions.lock`

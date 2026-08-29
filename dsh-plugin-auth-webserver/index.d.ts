@@ -13,10 +13,14 @@ export function apply(ctx: any, config?: Partial<{
   twoFactorEnabled: boolean;
   requireTwoFactor: boolean;
   twoFactorSecret: string;
+  mobileMode?: "auto" | "off";
+  mobileBreakpoint?: number;
   allowedHosts: string[];
   allowedOrigins: string[];
   trustedProxyAddresses: string[];
   requireHttps: boolean;
+  passkeyRpName: string;
+  passkeyRpId: string;
   sessionMaxAgeSeconds: number;
   sessionIdleTimeoutSeconds: number;
   loginMaxAttempts: number;

@@ -59,6 +59,34 @@ window.__ModuleLoader__.load({
 .daw-uri{width:100%;min-height:58px;resize:vertical}
 .daw-otp{max-width:180px}
 .daw-cardFooter{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:12px 0 4px;border-top:1px solid var(--dsw-alias-border-l2)}
+.daw-clients{display:flex;flex-direction:column;gap:10px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l2)}
+.daw-clientsHeader{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}
+.daw-clientsTitle{min-width:0;color:var(--dsw-alias-label-primary);font-size:13px;font-weight:600;line-height:18px}
+.daw-clientList{display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;overflow:hidden}
+.daw-client{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;min-width:0;padding:10px 12px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary)}
+.daw-client+.daw-client{border-top:1px solid var(--dsw-alias-border-l2)}
+.daw-clientIdentity{display:flex;align-items:center;flex-wrap:wrap;gap:7px;min-width:0}
+.daw-clientName{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600;line-height:18px}
+.daw-clientCurrent{flex:none;padding:1px 6px;border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:11px;line-height:16px}
+.daw-clientMeta{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 8px;margin:7px 0 0;font-size:11px;line-height:15px}
+.daw-clientMeta dt{color:var(--dsw-alias-label-tertiary);white-space:nowrap}
+.daw-clientMeta dd{min-width:0;margin:0;overflow-wrap:anywhere;color:var(--dsw-alias-label-secondary)}
+.daw-clientUserAgent{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10px}
+.daw-clientAction{align-self:center;min-width:52px;padding-inline:9px}
+.daw-clientState{padding:4px 8px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
+.daw-passkeys{display:flex;flex-direction:column;gap:10px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l2)}
+.daw-passkeysHeader{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}
+.daw-passkeysTitle{min-width:0;color:var(--dsw-alias-label-primary);font-size:13px;font-weight:600;line-height:18px}
+.daw-passkeyAdd{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}
+.daw-passkeyList{display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;overflow:hidden}
+.daw-passkey{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;min-width:0;padding:10px 12px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary)}
+.daw-passkey+.daw-passkey{border-top:1px solid var(--dsw-alias-border-l2)}
+.daw-passkeyName{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600;line-height:18px}
+.daw-passkeyMeta{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 8px;margin:7px 0 0;font-size:11px;line-height:15px}
+.daw-passkeyMeta dt{color:var(--dsw-alias-label-tertiary);white-space:nowrap}
+.daw-passkeyMeta dd{min-width:0;margin:0;overflow-wrap:anywhere;color:var(--dsw-alias-label-secondary)}
+.daw-passkeyAction{align-self:center;min-width:52px;padding-inline:9px}
+@media (max-width:560px){.daw-client{grid-template-columns:minmax(0,1fr);gap:8px}.daw-clientAction{justify-self:end}.daw-clientsHeader{align-items:flex-start}.daw-clientList{border-radius:6px}.daw-passkey{grid-template-columns:minmax(0,1fr);gap:8px}.daw-passkeyAction{justify-self:end}.daw-passkeyAdd{grid-template-columns:minmax(0,1fr)}}
 `;
 
 			document.head.append(style);
@@ -105,6 +133,47 @@ window.__ModuleLoader__.load({
 			"notice.2faStart": "请将密钥添加到验证器应用，然后输入当前动态码进行确认。",
 			"notice.2faEnabled": "2FA 已启用。请使用验证器动态码重新登录。",
 			"notice.2faDisabled": "2FA 已禁用。请重新登录以继续。",
+			"clients.title": "在线客户端",
+			"clients.refresh": "刷新",
+			"clients.loading": "正在加载在线客户端…",
+			"clients.empty": "当前没有在线客户端。",
+			"clients.error": "无法加载在线客户端。",
+			"clients.created": "创建时间",
+			"clients.lastSeen": "最后活动",
+			"clients.address": "地址",
+			"clients.userAgent": "客户端",
+			"clients.unknown": "未知",
+			"clients.current": "当前设备",
+			"clients.revoke": "踢出",
+			"clients.revoking": "踢出中…",
+			"clients.revokeAria": "踢出 {name}",
+			"notice.clientRevoked": "客户端已撤销。",
+			"clients.retry": "重试",
+			"passkeys.title": "通行密钥",
+			"passkeys.description": "使用设备生物识别或屏幕锁保护此网关。",
+			"passkeys.loading": "正在加载通行密钥…",
+			"passkeys.empty": "尚未注册通行密钥。",
+			"passkeys.unknown": "未命名通行密钥",
+			"passkeys.error": "通行密钥操作失败，请重试。",
+			"passkeys.cancelled": "通行密钥操作已取消。",
+			"passkeys.unsupported": "当前浏览器或连接不支持通行密钥。",
+			"passkeys.name": "名称",
+			"passkeys.namePlaceholder": "例如：我的 iPhone",
+			"passkeys.add": "添加通行密钥",
+			"passkeys.registering": "正在注册…",
+			"passkeys.created": "创建时间",
+			"passkeys.lastUsed": "最后使用",
+			"passkeys.never": "从未使用",
+			"passkeys.device": "设备类型",
+			"passkeys.singleDevice": "单设备",
+			"passkeys.multiDevice": "多设备",
+			"passkeys.backedUp": "已备份",
+			"passkeys.notBackedUp": "未备份",
+			"passkeys.revoke": "撤销",
+			"passkeys.revoking": "撤销中…",
+			"passkeys.revokeAria": "撤销 {name}",
+			"notice.passkeyRegistered": "通行密钥已注册。",
+			"notice.passkeyRevoked": "通行密钥已撤销。",
 		};
 		const EN_DICT = {
 			"card.title": "Auth webserver",
@@ -146,6 +215,47 @@ window.__ModuleLoader__.load({
 			"notice.2faStart": "Add the key to an authenticator app, then enter the current code to confirm.",
 			"notice.2faEnabled": "2FA is enabled. Sign in again with your authenticator code.",
 			"notice.2faDisabled": "2FA is disabled. Sign in again to continue.",
+			"clients.title": "Online clients",
+			"clients.refresh": "Refresh",
+			"clients.loading": "Loading online clients…",
+			"clients.empty": "No online clients.",
+			"clients.error": "Could not load online clients.",
+			"clients.created": "Created",
+			"clients.lastSeen": "Last seen",
+			"clients.address": "Address",
+			"clients.userAgent": "Client",
+			"clients.unknown": "Unknown",
+			"clients.current": "This device",
+			"clients.revoke": "Kick",
+			"clients.revoking": "Kicking…",
+			"clients.revokeAria": "Kick {name}",
+			"notice.clientRevoked": "Client revoked.",
+			"clients.retry": "Retry",
+			"passkeys.title": "Passkeys",
+			"passkeys.description": "Protect this gateway with your device biometrics or screen lock.",
+			"passkeys.loading": "Loading passkeys…",
+			"passkeys.empty": "No passkeys registered.",
+			"passkeys.unknown": "Unnamed passkey",
+			"passkeys.error": "Passkey operation failed. Please try again.",
+			"passkeys.cancelled": "Passkey operation was cancelled.",
+			"passkeys.unsupported": "This browser or connection does not support passkeys.",
+			"passkeys.name": "Name",
+			"passkeys.namePlaceholder": "For example: My iPhone",
+			"passkeys.add": "Add passkey",
+			"passkeys.registering": "Registering…",
+			"passkeys.created": "Created",
+			"passkeys.lastUsed": "Last used",
+			"passkeys.never": "Never",
+			"passkeys.device": "Device type",
+			"passkeys.singleDevice": "Single-device",
+			"passkeys.multiDevice": "Multi-device",
+			"passkeys.backedUp": "Backed up",
+			"passkeys.notBackedUp": "Not backed up",
+			"passkeys.revoke": "Revoke",
+			"passkeys.revoking": "Revoking…",
+			"passkeys.revokeAria": "Revoke {name}",
+			"notice.passkeyRegistered": "Passkey registered.",
+			"notice.passkeyRevoked": "Passkey revoked.",
 		};
 
 		function applyParams(template, params) {
@@ -183,6 +293,134 @@ window.__ModuleLoader__.load({
 			return data;
 		}
 
+		const ONLINE_CLIENTS_PATH = "/_dsh/auth-webserver/clients";
+		const REVOKE_CLIENT_PATH = "/_dsh/auth-webserver/clients/revoke";
+
+		function textValue(value) {
+			return typeof value === "string" && value.trim() !== "" ? value : "";
+		}
+
+		function onlineClientsFromResponse(data) {
+			const rows = Array.isArray(data)
+				? data
+				: Array.isArray(data?.clients)
+					? data.clients
+					: Array.isArray(data?.onlineClients)
+						? data.onlineClients
+						: [];
+			const currentId = textValue(data?.currentClientId || data?.currentId);
+			return rows.map((entry, index) => {
+				if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return null;
+				const id = textValue(entry.id || entry.clientId || entry.sessionId);
+				if (id === "") return null;
+				return {
+					id,
+					current: entry.current === true || entry.isCurrent === true || entry.currentSession === true || id === currentId,
+					label: textValue(entry.label || entry.name),
+					createdAt: entry.createdAt ?? entry.created ?? entry.created_at,
+					lastSeenAt: entry.lastSeenAt ?? entry.lastSeen ?? entry.last_seen ?? entry.updatedAt,
+					address: textValue(entry.address || entry.remoteAddress || entry.ip),
+					userAgent: textValue(entry.userAgent || entry.ua),
+					order: index,
+				};
+			}).filter((entry) => entry !== null);
+		}
+
+		function formatClientTimestamp(value) {
+			if (value === undefined || value === null || value === "") return "";
+			const numeric = typeof value === "number" ? value : Number(value);
+			const date = new Date(Number.isFinite(numeric) && numeric > 0 && numeric < 1e12 ? numeric * 1000 : value);
+			return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+		}
+
+		const PASSKEYS_PATH = "/_dsh/auth-webserver/passkeys";
+		const PASSKEY_REGISTER_OPTIONS_PATH = "/_dsh/auth-webserver/passkeys/register/options";
+		const PASSKEY_REGISTER_VERIFY_PATH = "/_dsh/auth-webserver/passkeys/register/verify";
+		const PASSKEY_REVOKE_PATH = "/_dsh/auth-webserver/passkeys/revoke";
+
+		function passkeysFromResponse(data) {
+			const rows = Array.isArray(data)
+				? data
+				: Array.isArray(data?.passkeys)
+					? data.passkeys
+					: Array.isArray(data?.state?.passkeys)
+						? data.state.passkeys
+						: [];
+			return rows.map((entry) => {
+				if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return null;
+				const id = textValue(entry.id || entry.credentialId);
+				if (id === "") return null;
+				return {
+					id,
+					name: textValue(entry.name),
+					createdAt: entry.createdAt,
+					lastUsedAt: entry.lastUsedAt,
+					deviceType: entry.deviceType === "multiDevice" ? "multiDevice" : "singleDevice",
+					backedUp: entry.backedUp === true,
+				};
+			}).filter((entry) => entry !== null);
+		}
+
+		function decodeBase64url(value) {
+			if (typeof value !== "string" || value === "") throw new Error("invalid base64url value");
+			const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+			const binary = atob(normalized + "=".repeat((4 - normalized.length % 4) % 4));
+			const bytes = new Uint8Array(binary.length);
+			for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+			return bytes.buffer;
+		}
+
+		function bytesOf(value) {
+			if (value instanceof ArrayBuffer) return new Uint8Array(value);
+			if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+			throw new TypeError("expected an ArrayBuffer");
+		}
+
+		function encodeBase64url(value) {
+			const bytes = bytesOf(value);
+			let binary = "";
+			for (const byte of bytes) binary += String.fromCharCode(byte);
+			return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+		}
+
+		function publicKeyCreationOptions(value) {
+			if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid passkey options");
+			return {
+				...value,
+				challenge: typeof value.challenge === "string" ? decodeBase64url(value.challenge) : value.challenge,
+				user: value.user === null || typeof value.user !== "object" ? value.user : {
+					...value.user,
+					id: typeof value.user.id === "string" ? decodeBase64url(value.user.id) : value.user.id,
+				},
+				excludeCredentials: Array.isArray(value.excludeCredentials)
+					? value.excludeCredentials.map((entry) => ({
+						...entry,
+						id: typeof entry.id === "string" ? decodeBase64url(entry.id) : entry.id,
+					}))
+					: value.excludeCredentials,
+			};
+		}
+
+		function serializeRegistrationCredential(credential) {
+			if (credential === null || typeof credential !== "object" || credential.response === null) throw new Error("invalid passkey credential");
+			const response = credential.response;
+			const transports = typeof response.getTransports === "function" ? response.getTransports() : undefined;
+			return {
+				id: credential.id,
+				rawId: encodeBase64url(credential.rawId),
+				type: credential.type,
+				response: {
+					clientDataJSON: encodeBase64url(response.clientDataJSON),
+					attestationObject: encodeBase64url(response.attestationObject),
+					...(Array.isArray(transports) ? { transports } : {}),
+				},
+				clientExtensionResults: typeof credential.getClientExtensionResults === "function"
+					? credential.getClientExtensionResults()
+					: {},
+				...(credential.authenticatorAttachment ? { authenticatorAttachment: credential.authenticatorAttachment } : {}),
+			};
+		}
+
 		function createAuthWebserverCard(t) {
 			return function AuthWebserverCard(props) {
 			const [open, setOpen] = React.useState(false);
@@ -198,6 +436,15 @@ window.__ModuleLoader__.load({
 			const [busy, setBusy] = React.useState(false);
 			const [error, setError] = React.useState(null);
 			const [notice, setNotice] = React.useState(null);
+			const [clients, setClients] = React.useState([]);
+			const [clientsLoading, setClientsLoading] = React.useState(false);
+			const [clientsError, setClientsError] = React.useState(false);
+			const [clientActionId, setClientActionId] = React.useState(null);
+			const [passkeys, setPasskeys] = React.useState([]);
+			const [passkeysLoading, setPasskeysLoading] = React.useState(false);
+			const [passkeysError, setPasskeysError] = React.useState(false);
+			const [passkeyName, setPasskeyName] = React.useState("");
+			const [passkeyBusy, setPasskeyBusy] = React.useState(false);
 
 			const refresh = React.useCallback(async () => {
 				try {
@@ -212,11 +459,124 @@ window.__ModuleLoader__.load({
 				}
 			}, []);
 
+			const refreshClients = React.useCallback(async () => {
+				setClientsLoading(true);
+				setClientsError(false);
+				try {
+					const data = await api(ONLINE_CLIENTS_PATH);
+					setClients(onlineClientsFromResponse(data));
+					return true;
+				} catch {
+					setClientsError(true);
+					return false;
+				} finally {
+					setClientsLoading(false);
+				}
+			}, []);
+
 			React.useEffect(() => {
 				void refresh();
 			}, [refresh]);
 
-			const changed = meta !== null && (username !== meta.username || realm !== meta.realm || password !== "");
+			React.useEffect(() => {
+				if (open) void refreshClients();
+			}, [open, refreshClients]);
+
+			const revokeClient = async (client) => {
+				if (clientActionId !== null || client.id === "") return;
+				setClientActionId(client.id);
+				setError(null);
+				setNotice(null);
+				try {
+					const data = await api(REVOKE_CLIENT_PATH, { clientId: client.id });
+					const current = client.current === true
+						|| data?.current === true
+						|| data?.revokedCurrent === true
+						|| data?.currentSessionRevoked === true;
+					if (current) {
+						window.location.reload();
+						return;
+					}
+					if (await refreshClients()) setNotice(t("notice.clientRevoked"));
+				} catch (err) {
+					setError(err instanceof Error ? err.message : String(err));
+				} finally {
+					setClientActionId(null);
+				}
+			};
+
+			const refreshPasskeys = React.useCallback(async () => {
+				setPasskeysLoading(true);
+				setPasskeysError(false);
+				try {
+					const data = await api(PASSKEYS_PATH);
+					setPasskeys(passkeysFromResponse(data));
+					return true;
+				} catch {
+					setPasskeysError(true);
+					return false;
+				} finally {
+					setPasskeysLoading(false);
+				}
+			}, []);
+
+			React.useEffect(() => {
+				if (open) void refreshPasskeys();
+			}, [open, refreshPasskeys]);
+
+			const revokePasskey = async (passkey) => {
+				if (passkeyBusy || passkey.id === "") return;
+				setPasskeyBusy(true);
+				setError(null);
+				setNotice(null);
+				try {
+					const data = await api(PASSKEY_REVOKE_PATH, {
+						credentialId: passkey.id,
+						currentPassword,
+						currentOtp,
+					});
+					setPasskeys(passkeysFromResponse(data));
+					setCurrentPassword("");
+					setCurrentOtp("");
+					setNotice(t("notice.passkeyRevoked"));
+				} catch {
+					setError(t("passkeys.error"));
+				} finally {
+					setPasskeyBusy(false);
+				}
+			};
+
+			const registerPasskey = async () => {
+				if (passkeyBusy || disabled || passkeyName.trim() === "") return;
+				if (typeof window.PublicKeyCredential !== "function" || !navigator.credentials?.create) {
+					setError(t("passkeys.unsupported"));
+					return;
+				}
+				setPasskeyBusy(true);
+				setError(null);
+				setNotice(null);
+				try {
+					const optionsData = await api(PASSKEY_REGISTER_OPTIONS_PATH, { currentPassword, currentOtp });
+					const credential = await navigator.credentials.create({ publicKey: publicKeyCreationOptions(optionsData.options) });
+					if (credential === null) throw new Error("cancelled");
+					const data = await api(PASSKEY_REGISTER_VERIFY_PATH, {
+						challenge: optionsData.challenge,
+						response: serializeRegistrationCredential(credential),
+						name: passkeyName.trim(),
+					});
+					setPasskeys(passkeysFromResponse(data));
+					setPasskeyName("");
+					setCurrentPassword("");
+					setCurrentOtp("");
+					setNotice(t("notice.passkeyRegistered"));
+				} catch (cause) {
+					setError(cause?.name === "NotAllowedError" || cause?.message === "cancelled"
+						? t("passkeys.cancelled")
+						: t("passkeys.error"));
+				} finally {
+					setPasskeyBusy(false);
+				}
+			};
 
 			const save = async () => {
 				setBusy(true);
@@ -313,6 +673,82 @@ window.__ModuleLoader__.load({
 			const twoFactorOverriddenByEnv = Boolean(meta?.twoFactorOverriddenByEnv);
 			const twoFactorRequiredByConfig = Boolean(meta?.twoFactorRequiredByConfig);
 			const twoFactorLocked = twoFactorOverriddenByEnv || twoFactorRequiredByConfig;
+
+			const renderPasskey = (passkey) => {
+				const name = passkey.name || t("passkeys.unknown");
+				return React.createElement(
+					"article",
+					{ className: "daw-passkey", key: passkey.id, "data-auth-passkey-id": passkey.id },
+					React.createElement(
+						"div",
+						{ className: "daw-passkeyMain" },
+						React.createElement("div", { className: "daw-passkeyName" }, name),
+						React.createElement(
+							"dl",
+							{ className: "daw-passkeyMeta" },
+							React.createElement("dt", null, t("passkeys.created")),
+							React.createElement("dd", null, formatClientTimestamp(passkey.createdAt) || t("passkeys.unknown")),
+							React.createElement("dt", null, t("passkeys.lastUsed")),
+							React.createElement("dd", null, formatClientTimestamp(passkey.lastUsedAt) || t("passkeys.never")),
+							React.createElement("dt", null, t("passkeys.device")),
+							React.createElement("dd", null, t(passkey.deviceType === "multiDevice" ? "passkeys.multiDevice" : "passkeys.singleDevice")),
+							React.createElement("dt", null, t("passkeys.backedUp")),
+							React.createElement("dd", null, t(passkey.backedUp ? "passkeys.backedUp" : "passkeys.notBackedUp")),
+						),
+					),
+					React.createElement("button", {
+						type: "button",
+						className: "daw-btn ghost daw-passkeyAction",
+						disabled: disabled || passkeyBusy,
+						"aria-label": t("passkeys.revokeAria", { name }),
+						onClick: () => void revokePasskey(passkey),
+					}, passkeyBusy ? t("passkeys.revoking") : t("passkeys.revoke")),
+				);
+			};
+
+			const renderClient = (client) => {
+				const name = client.label || (client.current ? t("clients.current") : t("clients.unknown"));
+				const unknown = t("clients.unknown");
+				return React.createElement(
+					"article",
+					{ className: "daw-client", key: client.id, "data-auth-client-id": client.id },
+					React.createElement(
+						"div",
+						{ className: "daw-clientMain" },
+						React.createElement(
+							"div",
+							{ className: "daw-clientIdentity" },
+							React.createElement("span", { className: "daw-clientName" }, name),
+							client.current
+								? React.createElement("span", { className: "daw-clientCurrent" }, t("clients.current"))
+								: null,
+						),
+						React.createElement(
+							"dl",
+							{ className: "daw-clientMeta" },
+							React.createElement("dt", null, t("clients.created")),
+							React.createElement("dd", null, formatClientTimestamp(client.createdAt) || unknown),
+							React.createElement("dt", null, t("clients.lastSeen")),
+							React.createElement("dd", null, formatClientTimestamp(client.lastSeenAt) || unknown),
+							React.createElement("dt", null, t("clients.address")),
+							React.createElement("dd", null, client.address || unknown),
+							React.createElement("dt", null, t("clients.userAgent")),
+							React.createElement("dd", { className: "daw-clientUserAgent" }, client.userAgent || unknown),
+						),
+					),
+					React.createElement(
+						"button",
+						{
+							type: "button",
+							className: "daw-btn ghost daw-clientAction",
+							disabled: disabled || clientActionId !== null,
+							"aria-label": t("clients.revokeAria", { name }),
+							onClick: () => void revokeClient(client),
+						},
+						clientActionId === client.id ? t("clients.revoking") : t("clients.revoke"),
+					),
+				);
+			};
 
 			return React.createElement(
 				"div",
@@ -415,6 +851,93 @@ window.__ModuleLoader__.load({
 									React.createElement("span", { className: "daw-hint" }, t("realm.hint")),
 								),
 							),
+							React.createElement(
+								"section",
+								{ className: "daw-clients", "aria-label": t("clients.title") },
+								React.createElement(
+									"div",
+									{ className: "daw-clientsHeader" },
+									React.createElement("div", { className: "daw-clientsTitle" }, t("clients.title")),
+									React.createElement("button", {
+										type: "button",
+										className: "daw-btn ghost",
+										disabled: disabled || clientsLoading || clientActionId !== null,
+										onClick: () => void refreshClients(),
+									}, t("clients.refresh")),
+								),
+								clientsLoading
+									? React.createElement("div", { className: "daw-clientState" }, t("clients.loading"))
+									: clientsError
+										? React.createElement(
+											"div",
+											{ className: "daw-actions" },
+											React.createElement("div", { className: "daw-clientState" }, t("clients.error")),
+											React.createElement("button", {
+												type: "button",
+												className: "daw-btn ghost",
+												disabled: disabled || clientActionId !== null,
+												onClick: () => void refreshClients(),
+											}, t("clients.retry")),
+										)
+										: clients.length === 0
+											? React.createElement("div", { className: "daw-clientState" }, t("clients.empty"))
+											: React.createElement("div", { className: "daw-clientList" }, clients.map(renderClient)),
+							),
+								React.createElement(
+									"section",
+									{ className: "daw-passkeys", "aria-label": t("passkeys.title") },
+									React.createElement(
+										"div",
+										{ className: "daw-passkeysHeader" },
+										React.createElement("div", { className: "daw-passkeysTitle" }, t("passkeys.title")),
+										React.createElement("button", {
+											type: "button",
+											className: "daw-btn ghost",
+											disabled: disabled || passkeysLoading || passkeyBusy,
+											onClick: () => void refreshPasskeys(),
+										}, t("clients.refresh")),
+									),
+									React.createElement("div", { className: "daw-hint" }, t("passkeys.description")),
+									React.createElement(
+										"div",
+										{ className: "daw-passkeyAdd" },
+										React.createElement(
+											"label",
+											{ className: "daw-field" },
+											React.createElement("span", { className: "daw-label" }, t("passkeys.name")),
+											React.createElement("input", {
+												className: "daw-input",
+												value: passkeyName,
+												placeholder: t("passkeys.namePlaceholder"),
+												disabled: disabled || passkeyBusy,
+												onChange: (event) => setPasskeyName(event.target.value),
+											}),
+										),
+										React.createElement("button", {
+											type: "button",
+											className: "daw-btn primary",
+											disabled: disabled || passkeyBusy || passkeyName.trim() === "" || currentPassword === "" || (twoFactorEnabled && currentOtp === ""),
+											onClick: () => void registerPasskey(),
+										}, passkeyBusy ? t("passkeys.registering") : t("passkeys.add")),
+									),
+									passkeysLoading
+										? React.createElement("div", { className: "daw-clientState" }, t("passkeys.loading"))
+										: passkeysError
+											? React.createElement(
+												"div",
+												{ className: "daw-actions" },
+												React.createElement("div", { className: "daw-clientState" }, t("passkeys.error")),
+												React.createElement("button", {
+													type: "button",
+													className: "daw-btn ghost",
+													disabled: disabled || passkeyBusy,
+													onClick: () => void refreshPasskeys(),
+												}, t("clients.retry")),
+											)
+											: passkeys.length === 0
+												? React.createElement("div", { className: "daw-clientState" }, t("passkeys.empty"))
+												: React.createElement("div", { className: "daw-passkeyList" }, passkeys.map(renderPasskey)),
+								),
 							React.createElement(
 								"div",
 								{ className: "daw-twoFactor" },

@@ -401,7 +401,7 @@ function activeSessionRecordOf(agent, agents, includePreset = false) {
     const preset = sessionPreset(session);
     if (preset !== undefined) record.agentPreset = preset;
   }
-  const options = registryAgentOptions(agent.options);
+  const options = liveAgentOptions(agent);
   if (options !== undefined) record.agentOptions = options;
   return record;
 }
@@ -428,6 +428,25 @@ function loggedAgentOptions(events) {
     if (next !== undefined) options = next;
   }
   return options;
+}
+
+/**
+ * The model a live agent is actually routed through, or undefined when the
+ * agent is not running. The web GUI's per-session model switch mutates only
+ * the api-proxy's in-memory selection, so `agent.options` keeps the model the
+ * session was created with. `agent.session.requestHeader()` is the durable
+ * log of the model each request was made with — fold its last entry so the
+ * recorded options always follow the model actually in use.
+ */
+function liveAgentOptions(agent) {
+  if (agent === undefined || agent === null) return undefined;
+  if (agent.status !== "running") return undefined;
+  const logged = agent.session?.requestHeader?.()?.config;
+  if (logged !== undefined) {
+    const options = registryAgentOptions(logged);
+    if (options !== undefined) return options;
+  }
+  return registryAgentOptions(agent.options);
 }
 
 async function readSessionRegistry(path) {
@@ -832,55 +851,48 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
             return;
           }
 
-          let inspected;
-          if (legacy || record.agentPreset === undefined || record.agentOptions === undefined) {
-            inspected = await persistence.inspect(sessionId);
-            if (inspected.meta.origin === "subagent") {
-              diag.entries.push({ sessionId, decision: "removed-subagent" });
-              records.delete(sessionId);
-              dirty = true;
-              return;
-            }
-            if (inspected.meta.cwd !== undefined && record.cwd !== inspected.meta.cwd) {
-              record.cwd = inspected.meta.cwd;
-              dirty = true;
-            }
-            const preset = resolveSessionPreset({
-              header: inspected.meta,
-              events: inspected.events,
-            });
-            if (preset === undefined) {
-              if (record.agentPreset !== undefined) {
-                delete record.agentPreset;
-                dirty = true;
-              }
-              presetCache.delete(sessionId);
-            } else {
-              if (record.agentPreset !== preset) {
-                record.agentPreset = preset;
-                dirty = true;
-              }
-              presetCache.set(sessionId, preset);
-            }
-            const loggedOptions = loggedAgentOptions(inspected.events);
-            if (loggedOptions !== undefined && JSON.stringify(record.agentOptions) !== JSON.stringify(loggedOptions)) {
-              record.agentOptions = loggedOptions;
+          // The recorded options are only the creation-time snapshot; the GUI's
+          // per-session model switch lives in the api-proxy's in-memory selection
+          // and never reaches agent.options, so the session log's LAST
+          // request/header is the single source of truth for the model the
+          // session was actually using before the restart. Inspect every
+          // resumable session and fold that header into the record.
+          const inspected = await persistence.inspect(sessionId);
+          if (inspected.meta.origin === "subagent") {
+            diag.entries.push({ sessionId, decision: "removed-subagent" });
+            records.delete(sessionId);
+            dirty = true;
+            return;
+          }
+          if (inspected.meta.cwd !== undefined && record.cwd !== inspected.meta.cwd) {
+            record.cwd = inspected.meta.cwd;
+            dirty = true;
+          }
+          const preset = resolveSessionPreset({
+            header: inspected.meta,
+            events: inspected.events,
+          });
+          if (preset === undefined) {
+            if (record.agentPreset !== undefined) {
+              delete record.agentPreset;
               dirty = true;
             }
+            presetCache.delete(sessionId);
           } else {
-            if (record.cwd === undefined && isRegistryString(header.cwd)) {
-              record.cwd = header.cwd;
+            if (record.agentPreset !== preset) {
+              record.agentPreset = preset;
               dirty = true;
             }
-            if (record.agentPreset === undefined && isRegistryString(header.agentPreset)) {
-              record.agentPreset = header.agentPreset;
-              presetCache.set(sessionId, header.agentPreset);
-              dirty = true;
-            }
+            presetCache.set(sessionId, preset);
+          }
+          const loggedOptions = loggedAgentOptions(inspected.events);
+          if (loggedOptions !== undefined && JSON.stringify(record.agentOptions) !== JSON.stringify(loggedOptions)) {
+            record.agentOptions = loggedOptions;
+            dirty = true;
           }
 
           const shouldResume = record.running === true
-            || (legacy && turnNeedsContinuation(inspected?.events));
+            || (legacy && turnNeedsContinuation(inspected.events));
           if (!shouldResume) {
             diag.entries.push({ sessionId, decision: "removed-no-continuation" });
             records.delete(sessionId);

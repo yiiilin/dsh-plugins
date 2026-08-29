@@ -1,6 +1,6 @@
 {
   "name": "@yiln-dsh/dsh-plugin-web-daemon",
-  "version": "0.5.9",
+  "version": "0.5.10",
   "publishConfig": {
     "access": "public"
   },

@@ -23,14 +23,21 @@ import { homedir, networkInterfaces } from "node:os";
 import { join, resolve } from "node:path";
 import { settingsNamespace } from "@deepseek-ai/dsh-settings";
 import z from "@deepseek-ai/schemastery";
+import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from "@simplewebauthn/server";
 import { generateTotpSecret, verifyTotp } from "./totp.js";
+import { loginErrorMessage, renderLoginPage, selectLoginLocale } from "./login-page.js";
+import { PasskeyStore, PASSKEY_ID_PATTERN } from "./passkey-store.js";
+import { SessionStore, SESSION_ID_PATTERN } from "./session-store.js";
+import { injectPwaSupport, PWA_PUBLIC_PATHS, sendPwaAsset } from "./pwa.js";
 import {
   hostMatches,
   originMatches,
   parseAllowedHost,
   parseAllowedOrigin,
   parseList,
+  parseRequestHost,
 } from "./policy.js";
+import { injectMobileLayout } from "./mobile.js";
 
 export const name = "auth-webserver";
 
@@ -47,6 +54,7 @@ const SECURE_COOKIE_NAME = "__Host-dsh_auth_token";
 const SECURE_CSRF_COOKIE_NAME = "__Host-dsh_auth_csrf";
 const DEFAULT_SESSION_MAX_AGE_SECONDS = 24 * 3600;
 const DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS = 12 * 3600;
+const DEFAULT_PASSKEY_RP_NAME = "DeepSeek Harness";
 const DEFAULT_LOGIN_WINDOW_SECONDS = 60;
 const DEFAULT_LOGIN_MAX_ATTEMPTS = 10;
 const DEFAULT_MAX_LOGIN_ATTEMPT_ENTRIES = 10_000;
@@ -59,10 +67,9 @@ const GATEWAY_REQUEST = Symbol("auth-webserver gateway request");
 const RATE_LIMITED_REQUEST = Symbol("auth-webserver rate limited request");
 const RATE_LIMIT_RETRY_AFTER = Symbol("auth-webserver rate limit retry after");
 
-// These files contain only install metadata and the public app icon. Keeping
-// them reachable before login lets the browser discover the PWA entry point;
-// all application HTML, APIs, assets, and WebSocket upgrades remain gated.
-const PUBLIC_PWA_PATHS = new Set(["/manifest.webmanifest", "/favicon.svg"]);
+// Immutable install metadata, icons, and the pass-through service worker stay
+// reachable before login; application HTML, APIs, and WebSocket upgrades remain gated.
+const PUBLIC_PWA_PATHS = new Set(["/favicon.svg", ...PWA_PUBLIC_PATHS]);
 
 function isPublicPwaRequest(req, rawPath) {
   return (req.method === "GET" || req.method === "HEAD") && PUBLIC_PWA_PATHS.has(rawPath);
@@ -242,6 +249,10 @@ export const Config = z.object({
   requireTwoFactor: z.boolean().default(false),
   /** Base32 TOTP secret. Keep this in a secret environment variable or settings secret. */
   twoFactorSecret: z.string().role("secret").default(""),
+  /** Automatic mobile drawer presentation for narrow browser viewports. */
+  mobileMode: z.union([z.const("auto"), z.const("off")]).default("auto"),
+  /** Maximum viewport width that receives the mobile drawer shell. */
+  mobileBreakpoint: z.natural().min(320).max(1600).default(760),
   /** Allowed public Host authorities; an empty list falls back to bound addresses. */
   allowedHosts: z.array(z.string()).default([]),
   /** Additional allowed browser Origins; requests must still match Host. */
@@ -250,6 +261,10 @@ export const Config = z.object({
   trustedProxyAddresses: z.array(z.string()).default([]),
   /** Refuse every gateway request that is not observed as HTTPS. */
   requireHttps: z.boolean().default(false),
+  /** User-visible WebAuthn relying-party name. */
+  passkeyRpName: z.string().min(1).max(64).default(DEFAULT_PASSKEY_RP_NAME),
+  /** Optional stable WebAuthn relying-party ID; empty uses the request hostname. */
+  passkeyRpId: z.string().default(""),
   /** Absolute lifetime of a browser session. */
   sessionMaxAgeSeconds: z.natural().min(300).max(30 * 24 * 3600).default(DEFAULT_SESSION_MAX_AGE_SECONDS),
   /** Idle lifetime of a browser session; zero disables the idle check. */
@@ -348,7 +363,8 @@ function loadOrCreateSecret() {
     mkdirSync(stateDir(), { recursive: true, mode: 0o700 });
   } catch {
     // An ephemeral secret keeps the server usable when the home is read-only;
-    // every restart then invalidates all sessions by design.
+    // sessions can only survive a restart when the persistent state directory
+    // is writable.
     return randomBytes(32).toString("hex");
   }
   try {
@@ -357,7 +373,8 @@ function loadOrCreateSecret() {
   } catch (error) {
     if (error?.code === "EEXIST") return readPrivateSecret(file);
     // An ephemeral secret keeps the server usable when persistent storage is
-    // unavailable; every restart then invalidates all sessions by design.
+    // unavailable; sessions can only survive a restart when the state directory
+    // is writable.
     return randomBytes(32).toString("hex");
   }
 }
@@ -376,90 +393,15 @@ function pickAddresses(config) {
   return out;
 }
 
-function renderLoginPage(realm, twoFactorEnabled = false) {
-  const safeRealm = String(realm ?? "DeepSeek Harness Authentication")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-  const otpField = twoFactorEnabled ? `
-    <label for="otp">Authenticator code</label>
-    <input id="otp" name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
-  ` : "";
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <title>DeepSeek Harness - Sign in</title>
-  <style>
-    :root { color-scheme: dark; --bg: #0a0d14; --panel: #121826; --line: #334155; --text: #e2e8f0; --muted: #94a3b8; --accent: #3b82f6; }
-    * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; padding: 20px; }
-    form { width: 100%; max-width: 360px; padding: 28px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
-    h1 { margin: 0 0 6px; font-size: 20px; }
-    p { margin: 0 0 22px; color: var(--muted); font-size: 13px; }
-    label { display: block; margin: 12px 0 6px; font-size: 13px; color: var(--muted); }
-    input { width: 100%; height: 40px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; background: #0b1120; color: var(--text); outline: none; }
-    input:focus { border-color: var(--accent); }
-    button { width: 100%; height: 42px; margin-top: 20px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
-    #error { display: none; margin-top: 14px; padding: 8px 10px; border-radius: 8px; background: rgba(239, 68, 68, 0.15); color: #f87171; font-size: 13px; }
-  </style>
-</head>
-<body>
-  <form id="login">
-    <h1>DeepSeek Harness</h1>
-    <p>${safeRealm}</p>
-    <label for="username">Username</label>
-    <input id="username" name="username" autocomplete="username" autofocus required>
-    <label for="password">Password</label>
-    <input id="password" name="password" type="password" autocomplete="current-password" required>
-         ${otpField}
-     <button type="submit">Sign in</button>
-    <div id="error">Invalid username, password, or authenticator code</div>
-  </form>
-  <script>
-    const form = document.getElementById("login");
-    const error = document.getElementById("error");
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      error.style.display = "none";
-      const button = form.querySelector("button");
-      button.disabled = true;
-      try {
-        const response = await fetch("/api/auth.login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            username: document.getElementById("username").value,
-            password: document.getElementById("password").value,
-             otp: document.getElementById("otp")?.value ?? ""
-          })
-        });
-        const data = await response.json();
-        if (data.ok) {
-          window.location.reload();
-        } else {
-          error.style.display = "block";
-          button.disabled = false;
-        }
-      } catch {
-        error.style.display = "block";
-        button.disabled = false;
-      }
-    });
-  </script>
-</body>
-</html>`;
-}
 
-function sendUnauthorized(req, res, realm, rawPath, twoFactorEnabled = false, secure = false) {
+
+function sendUnauthorized(req, res, realm, rawPath, twoFactorEnabled = false, secure = false, passkeyAvailable = false) {
+  const locale = selectLoginLocale(req);
   const limited = req[RATE_LIMITED_REQUEST] === true;
   if (limited) {
-    sendJson(res, 429, { ok: false, error: "Too many login attempts" }, {
+    sendJson(res, 429, { ok: false, error: loginErrorMessage(locale, "rateLimited") }, {
       "Retry-After": String(req[RATE_LIMIT_RETRY_AFTER] ?? 60),
+      "Content-Language": locale,
     });
     return;
   }
@@ -471,11 +413,14 @@ function sendUnauthorized(req, res, realm, rawPath, twoFactorEnabled = false, se
       ...securityHeaders({ secure }),
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
+      "Content-Language": locale,
       // The login page is intentionally self-contained; all other script and
       // frame sources remain disallowed by this policy.
-      "Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+      "Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; worker-src 'self'; base-uri 'none'; frame-ancestors 'none'",
     });
-    res.end(renderLoginPage(realm, twoFactorEnabled));
+    const requestHost = parseRequestHost(req.headers.host);
+    const passkeyForPage = passkeyAvailable && (secure || requestHost?.hostname === "localhost");
+    res.end(renderLoginPage(realm, twoFactorEnabled, locale, req.url, passkeyForPage));
     return;
   }
   const headers = {
@@ -504,10 +449,14 @@ export async function apply(ctx, config) {
     twoFactorEnabled: config?.twoFactorEnabled ?? false,
     requireTwoFactor: config?.requireTwoFactor ?? false,
     twoFactorSecret: config?.twoFactorSecret ?? "",
+    mobileMode: config?.mobileMode ?? "auto",
+    mobileBreakpoint: config?.mobileBreakpoint ?? 760,
     allowedHosts: config?.allowedHosts ?? [],
     allowedOrigins: config?.allowedOrigins ?? [],
     trustedProxyAddresses: config?.trustedProxyAddresses ?? [],
     requireHttps: config?.requireHttps ?? false,
+    passkeyRpName: config?.passkeyRpName ?? DEFAULT_PASSKEY_RP_NAME,
+    passkeyRpId: config?.passkeyRpId ?? "",
     sessionMaxAgeSeconds: config?.sessionMaxAgeSeconds ?? DEFAULT_SESSION_MAX_AGE_SECONDS,
     sessionIdleTimeoutSeconds: config?.sessionIdleTimeoutSeconds ?? DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS,
     loginMaxAttempts: config?.loginMaxAttempts ?? DEFAULT_LOGIN_MAX_ATTEMPTS,
@@ -519,9 +468,16 @@ export async function apply(ctx, config) {
     keepAliveTimeoutMs: config?.keepAliveTimeoutMs ?? DEFAULT_KEEP_ALIVE_TIMEOUT_MS,
   };
   const secret = loadOrCreateSecret();
-  let sessionGeneration = randomBytes(32).toString("hex");
   const activeSockets = new Map();
-  const sessionActivity = new Map();
+  const sessionStore = new SessionStore({
+    directory: stateDir(),
+    maxAgeSeconds: config.sessionMaxAgeSeconds,
+    idleTimeoutSeconds: config.sessionIdleTimeoutSeconds,
+    logger: ctx.logger,
+  });
+  const sessions = sessionStore.records;
+  const persistSessions = () => sessionStore.persist();
+  const passkeyStore = new PasskeyStore({ directory: stateDir(), logger: ctx.logger });
   const locallyWrittenAuthEpochs = new Set();
   let authEpochFloor = 0;
   let authMutationTail = Promise.resolve();
@@ -541,8 +497,24 @@ export async function apply(ctx, config) {
     }
   };
 
-  const revokeSessions = () => {
-    sessionGeneration = randomBytes(32).toString("hex");
+  const revokeSession = (sessionId) => {
+    const record = sessions.get(sessionId);
+    if (record === undefined) return { existed: false, persisted: true };
+    sessions.delete(sessionId);
+    for (const [clientSocket, pair] of activeSockets) {
+      if (pair.sessionId !== sessionId) continue;
+      if (typeof pair.close === "function") pair.close();
+      else {
+        pair.closed = true;
+        destroySocketPair(clientSocket, pair.upstream ?? pair.request);
+      }
+    }
+    const persisted = persistSessions();
+    if (!persisted) sessions.set(sessionId, record);
+    return { existed: true, persisted };
+  };
+
+  const closeActiveSockets = () => {
     for (const [clientSocket, pair] of activeSockets) {
       if (typeof pair.close === "function") pair.close();
       else {
@@ -551,7 +523,12 @@ export async function apply(ctx, config) {
       }
     }
     activeSockets.clear();
-    sessionActivity.clear();
+  };
+
+  const revokeSessions = () => {
+    sessions.clear();
+    closeActiveSockets();
+    persistSessions();
   };
 
   // In non-secure contexts (plain http on a LAN address) `crypto.randomUUID`
@@ -563,9 +540,12 @@ export async function apply(ctx, config) {
   if (webServer !== undefined && typeof webServer.tapIndex === "function") {
     const frame = `<script data-dsh-auth-polyfill="1">(function(){var c=window.crypto||(window.crypto={});if(typeof c.randomUUID!=="function"){if(typeof c.getRandomValues==="function"){c.randomUUID=function(){return([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g,function(x){return(x^c.getRandomValues(new Uint8Array(1))[0]&15>>x/4).toString(16)})}}else{c.randomUUID=function(){return"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,function(x){var r=Math.random()*16|0,v=x==="x"?r:(r&0x3|0x8);return v.toString(16)})}}}})();</script>`;
     ctx.effect(() => webServer.tapIndex((html) => {
-      if (typeof html !== "string" || html.includes("dsh-auth-polyfill")) return html;
-      if (html.includes("<head>")) return html.replace("<head>", `<head>${frame}`);
-      return `${frame}${html}`;
+      if (typeof html !== "string") return html;
+      let output = injectPwaSupport(html);
+      output = injectMobileLayout(output, config.mobileMode, config.mobileBreakpoint);
+      if (output.includes("dsh-auth-polyfill")) return output;
+      if (output.includes("<head>")) return output.replace("<head>", `<head>${frame}`);
+      return `${frame}${output}`;
     }));
   }
 
@@ -612,6 +592,8 @@ export async function apply(ctx, config) {
   const envAllowedOrigins = parseList(process.env.DSH_AUTH_ALLOWED_ORIGINS ?? process.env.AUTH_ALLOWED_ORIGINS);
   const envTrustedProxyAddresses = parseList(process.env.DSH_AUTH_TRUSTED_PROXY_ADDRESSES ?? process.env.AUTH_TRUSTED_PROXY_ADDRESSES);
   const envRequireHttps = parseBooleanEnv(process.env.DSH_AUTH_REQUIRE_HTTPS ?? process.env.AUTH_REQUIRE_HTTPS, "AUTH_REQUIRE_HTTPS");
+  const envPasskeyRpId = process.env.DSH_AUTH_PASSKEY_RP_ID || process.env.AUTH_PASSKEY_RP_ID;
+  const envPasskeyRpName = process.env.DSH_AUTH_PASSKEY_RP_NAME || process.env.AUTH_PASSKEY_RP_NAME;
   const allowedHostValues = envAllowedHosts ?? (config.allowedHosts.length > 0
     ? config.allowedHosts
     : pickAddresses(config));
@@ -658,6 +640,19 @@ export async function apply(ctx, config) {
     }
     return { ok: true };
   };
+  const passkeyContext = (req) => {
+    const host = parseRequestHost(req.headers.host);
+    if (host === undefined) throw new Error("A valid Host is required for Passkeys");
+    const localDevelopmentHost = host.hostname === "localhost";
+    const secure = isSecureRequest(req) || localDevelopmentHost;
+    if (!secure) throw new Error("Passkeys require HTTPS (except localhost)");
+    const origin = new URL(`${isSecureRequest(req) ? "https" : "http"}://${host.host}`).origin;
+    const rpId = String(envPasskeyRpId || config.passkeyRpId || host.hostname).trim();
+    const rpName = String(envPasskeyRpName || config.passkeyRpName || DEFAULT_PASSKEY_RP_NAME).trim().slice(0, 64);
+    if (rpId === "" || rpName === "") throw new Error("Passkey RP configuration is invalid");
+    return { origin, rpId, rpName };
+  };
+
   const resolved = () => {
     const value = settingsScope?.get() ?? {
       username: config.username,
@@ -682,7 +677,7 @@ export async function apply(ctx, config) {
     (descriptor?.secrets ?? []).some((entry) => entry.path?.[0] === field && entry.set);
   const userLayerHasCredential = (descriptor) =>
     userLayerHasField(descriptor, "username") || userLayerHasField(descriptor, "password");
-  const snapshot = () => {
+  const snapshot = (currentId) => {
     const value = resolved();
     const descriptor = description();
     return {
@@ -698,6 +693,8 @@ export async function apply(ctx, config) {
       twoFactorOverriddenByConfig: Boolean(config.twoFactorEnabled || config.requireTwoFactor || config.twoFactorSecret),
       twoFactorRequiredByConfig: Boolean(config.requireTwoFactor),
       twoFactorOverriddenBySettings: userLayerHasField(descriptor, "twoFactorEnabled") || userLayerHasField(descriptor, "twoFactorSecret"),
+      sessions: listSessions(currentId),
+      passkeys: passkeyStore.list(),
     };
   };
 
@@ -721,12 +718,74 @@ export async function apply(ctx, config) {
     revokeSessions();
   });
 
-  const handleState = (req, res) => {
+  const handleState = (req, res, auth) => {
     if (req.method !== "GET" && req.method !== "HEAD") {
       sendJson(res, 405, { ok: false, error: "Method not allowed" });
       return;
     }
-    sendJson(res, 200, { ok: true, state: snapshot() });
+    sendJson(res, 200, { ok: true, state: snapshot(auth?.kind === "cookie" ? auth.sessionId : undefined) });
+  };
+
+  const handleClients = (req, res, auth) => {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      sendJson(res, 405, { ok: false, error: "Method not allowed" });
+      return;
+    }
+    const currentId = auth?.kind === "cookie" ? auth.sessionId : undefined;
+    sendJson(res, 200, {
+      ok: true,
+      clients: listSessions(currentId),
+      currentClientId: currentId ?? null,
+    });
+  };
+
+  const handleSessionRevoke = async (req, res, providedAuth) => {
+    const auth = requireSession(req, res, providedAuth);
+    if (auth === null) return;
+    if (req.method !== "POST") {
+      sendJson(res, 405, { ok: false, error: "Method not allowed" });
+      return;
+    }
+    const mediaType = typeof req.headers["content-type"] === "string"
+      ? req.headers["content-type"].split(";", 1)[0].trim().toLowerCase()
+      : "";
+    if (mediaType !== "application/json") {
+      sendJson(res, 415, { ok: false, error: "Content-Type must be application/json" });
+      return;
+    }
+    let body;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body" });
+      return;
+    }
+    const sessionId = body !== null && typeof body === "object" && !Array.isArray(body)
+      && typeof (body.sessionId ?? body.clientId) === "string"
+      ? (body.sessionId ?? body.clientId)
+      : "";
+    if (!SESSION_ID_PATTERN.test(sessionId)) {
+      sendJson(res, 400, { ok: false, error: "Invalid session id" });
+      return;
+    }
+    return runAuthMutation(async () => {
+      if (!sessions.has(sessionId)) {
+        sendJson(res, 404, { ok: false, error: "Session not found" });
+        return;
+      }
+      const current = auth.kind === "cookie" && auth.sessionId === sessionId;
+            const result = revokeSession(sessionId);
+      if (!result.persisted) {
+        sendJson(res, 503, { ok: false, error: "Session revocation could not be persisted" });
+        return;
+      }
+      const secure = isSecureRequest(req);
+      sendJson(res, 200, {
+        ok: true,
+        current,
+        state: snapshot(current ? undefined : auth.sessionId),
+      }, current ? { "Set-Cookie": clearCookieHeaders(secure) } : {});
+    });
   };
 
   const handleSave = async (req, res) => {
@@ -915,10 +974,26 @@ export async function apply(ctx, config) {
     sendJson(res, 200, { ok: true, state: snapshot() });
   };
 
+  const handlePwaAsset = (req, res) => {
+    const path = requestPath(req);
+    if (path !== null && sendPwaAsset(req, res, path, securityHeaders, false)) return;
+    sendJson(res, 405, { ok: false, error: "Method not allowed" });
+  };
+
   if (webServer !== undefined && typeof webServer.register === "function") {
+    for (const path of PWA_PUBLIC_PATHS) {
+      ctx.effect(() => webServer.register({ kind: "exact", path, handler: handlePwaAsset }));
+    }
     ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/state", handler: handleState }));
+    ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/clients", handler: (req, res) => handleClients(req, res, authenticateRequest(req)) }));
+    ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/clients/revoke", handler: handleSessionRevoke }));
+    ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/sessions/revoke", handler: handleSessionRevoke }));
     ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/save", handler: handleSave }));
     ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/2fa", handler: handleTwoFactorSetup }));
+    ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/passkeys", handler: (req, res) => handlePasskeys(req, res) }));
+    ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/passkeys/register/options", handler: (req, res) => handlePasskeyRegistrationOptions(req, res) }));
+    ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/passkeys/register/verify", handler: (req, res) => handlePasskeyRegistrationVerify(req, res) }));
+    ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/passkeys/revoke", handler: (req, res) => handlePasskeyRevoke(req, res) }));
   }
 
 
@@ -939,14 +1014,33 @@ export async function apply(ctx, config) {
     };
   };
 
+  const currentAuthEpoch = credentials().authEpoch;
+  let staleSessionRecords = false;
+  for (const [sessionId, record] of sessions) {
+    if (record.authEpoch === currentAuthEpoch) continue;
+    sessions.delete(sessionId);
+    staleSessionRecords = true;
+  }
+  if (staleSessionRecords) persistSessions();
+
+  const listSessions = (currentId) => sessionStore.list(currentId);
+
   const tokenFactor = (twoFactorEnabled, twoFactorSecret) =>
     twoFactorEnabled ? `mfa\u0000${twoFactorSecret}` : "pwd";
-  const generateToken = (user, pass, authEpoch, twoFactorEnabled, twoFactorSecret) => {
-    const now = Date.now();
+  const generateToken = (req, user, pass, authEpoch, twoFactorEnabled, twoFactorSecret) => {
+    const record = sessionStore.create({
+      username: user,
+      address: clientAddress(req),
+      userAgent: req.headers["user-agent"],
+      secure: isSecureRequest(req),
+      authEpoch,
+    });
+    const sessionId = record.id;
+    const now = record.issuedAt;
     const signature = createHmac("sha256", secret)
-      .update(`${user}\u0000${pass}\u0000${authEpoch}\u0000${sessionGeneration}\u0000${tokenFactor(twoFactorEnabled, twoFactorSecret)}\u0000${now}`)
+      .update(`${sessionId}\u0000${user}\u0000${pass}\u0000${authEpoch}\u0000${tokenFactor(twoFactorEnabled, twoFactorSecret)}\u0000${now}`)
       .digest("hex");
-    return `${now}.${signature}`;
+    return `${sessionId}.${now}.${signature}`;
   };
 
   const csrfForToken = (token) => createHmac("sha256", secret)
@@ -956,54 +1050,23 @@ export async function apply(ctx, config) {
   const verifyToken = (token, user, pass, authEpoch, twoFactorEnabled, twoFactorSecret) => {
     if (typeof token !== "string") return false;
     const parts = token.split(".");
-    if (parts.length !== 2) return false;
-    const timestamp = Number(parts[0]);
-    if (!Number.isFinite(timestamp)) return false;
+    if (parts.length !== 3 || !SESSION_ID_PATTERN.test(parts[0]) || !/^[a-f0-9]{64}$/iu.test(parts[2])) return false;
+    const sessionId = parts[0];
+    const timestamp = Number(parts[1]);
+    if (!Number.isSafeInteger(timestamp)) return false;
     const age = Date.now() - timestamp;
     const maxAgeMs = config.sessionMaxAgeSeconds * 1000;
     if (age < -60000 || age > maxAgeMs) return false;
+    const record = sessions.get(sessionId);
+    if (record === undefined || record.issuedAt !== timestamp) return false;
     const expected = createHmac("sha256", secret)
-      .update(`${user}\u0000${pass}\u0000${authEpoch}\u0000${sessionGeneration}\u0000${tokenFactor(twoFactorEnabled, twoFactorSecret)}\u0000${timestamp}`)
+      .update(`${sessionId}\u0000${user}\u0000${pass}\u0000${authEpoch}\u0000${tokenFactor(twoFactorEnabled, twoFactorSecret)}\u0000${timestamp}`)
       .digest();
-    let actual;
-    try {
-      actual = Buffer.from(parts[1], "hex");
-    } catch {
-      return false;
-    }
-    if (actual.length !== expected.length) return false;
-    return timingSafeEqual(actual, expected);
+    const actual = Buffer.from(parts[2], "hex");
+    return actual.length === expected.length && timingSafeEqual(actual, expected);
   };
 
-  const pruneSessionActivity = (now) => {
-    const idleMs = config.sessionIdleTimeoutSeconds * 1000;
-    if (idleMs <= 0) {
-      sessionActivity.clear();
-      return;
-    }
-    for (const [token, lastSeen] of sessionActivity) {
-      if (lastSeen + idleMs <= now) sessionActivity.delete(token);
-    }
-    while (sessionActivity.size > config.maxLoginAttemptEntries) {
-      const oldest = sessionActivity.keys().next().value;
-      if (oldest === undefined) break;
-      sessionActivity.delete(oldest);
-    }
-  };
-  const sessionIsActive = (token, issuedAt) => {
-    const now = Date.now();
-    pruneSessionActivity(now);
-    const idleMs = config.sessionIdleTimeoutSeconds * 1000;
-    if (idleMs <= 0) return true;
-    const lastSeen = sessionActivity.get(token) ?? issuedAt;
-    if (now - lastSeen > idleMs) {
-      sessionActivity.delete(token);
-      return false;
-    }
-    sessionActivity.delete(token);
-    sessionActivity.set(token, now);
-    return true;
-  };
+  const sessionIsActive = (sessionId, issuedAt) => sessionStore.touch(sessionId, issuedAt) !== null;
 
   const usedTotpCodes = new Map();
   const normalizeOtp = (value) => typeof value === "string" ? value.replace(/[\s-]/g, "") : "";
@@ -1104,9 +1167,11 @@ export async function apply(ctx, config) {
     const names = cookieNames(isSecureRequest(req));
     const token = cookieValue(cookies, names, "token");
     if (token && verifyToken(token, user, pass, authEpoch, twoFactorEnabled, twoFactorSecret)) {
-      const issuedAt = Number(token.split(".", 1)[0]);
-      if (sessionIsActive(token, issuedAt)) {
-        return { kind: "cookie", token, issuedAt, csrf: csrfForToken(token) };
+      const parts = token.split(".");
+      const sessionId = parts[0];
+      const issuedAt = Number(parts[1]);
+      if (sessionIsActive(sessionId, issuedAt)) {
+        return { kind: "cookie", token, sessionId, issuedAt, csrf: csrfForToken(token) };
       }
     }
 
@@ -1126,8 +1191,8 @@ export async function apply(ctx, config) {
 
   const checkAuth = (req) => authenticateRequest(req);
 
-  const requireSession = (req, res) => {
-    const auth = authenticateRequest(req);
+  const requireSession = (req, res, providedAuth) => {
+    const auth = providedAuth ?? authenticateRequest(req);
     if (auth === null || auth.kind !== "cookie") {
       if (req[GATEWAY_REQUEST] !== true && isLoopbackAddress(req.socket?.remoteAddress)) {
         return { kind: "local", csrf: null };
@@ -1148,16 +1213,307 @@ export async function apply(ctx, config) {
     return auth;
   };
 
-  const handleLogin = async (req, res) => {
+  const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+  const sendPasskeyJson = (res, status, value, extra = {}) => sendJson(res, status, value, {
+    "Cache-Control": "no-store",
+    ...extra,
+  });
+  const readPasskeyBody = async (req, res) => {
+    const mediaType = typeof req.headers["content-type"] === "string"
+      ? req.headers["content-type"].split(";", 1)[0].trim().toLowerCase()
+      : "";
+    if (mediaType !== "application/json") {
+      sendPasskeyJson(res, 415, { ok: false, error: "Content-Type must be application/json" });
+      return undefined;
+    }
+    let body;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      sendPasskeyJson(res, 400, { ok: false, error: "Invalid request body" });
+      return undefined;
+    }
+    if (!isObject(body)) {
+      sendPasskeyJson(res, 400, { ok: false, error: "Invalid request body" });
+      return undefined;
+    }
+    return body;
+  };
+  const passkeyUserId = (username) => createHmac("sha256", secret)
+    .update(`passkey-user\u0000${username}`)
+    .digest();
+  const passkeyDescriptors = () => passkeyStore.list().map((entry) => ({
+    id: entry.id,
+    transports: entry.transports,
+  }));
+  const issueLoginSession = (req, res, current, locale) => {
+    const token = generateToken(req, current.user, current.pass, current.authEpoch, current.twoFactorEnabled, current.twoFactorSecret);
+    const csrf = csrfForToken(token);
+    const secure = isSecureRequest(req);
+    sendJson(res, 200, { ok: true, username: current.user }, {
+      "Content-Language": locale,
+      "Set-Cookie": loginCookieHeaders(token, csrf, secure),
+      ...securityHeaders({ secure }),
+    });
+  };
+
+  const handlePasskeyLoginOptions = async (req, res) => {
+    const locale = selectLoginLocale(req);
     if (req.method !== "POST") {
-      sendJson(res, 405, { ok: false, error: "Method not allowed" });
+      sendPasskeyJson(res, 405, { ok: false, error: loginErrorMessage(locale, "methodNotAllowed") }, { "Content-Language": locale });
+      return;
+    }
+    if (await readPasskeyBody(req, res) === undefined) return;
+    if (!passkeyStore.hasAny()) {
+      sendPasskeyJson(res, 404, { ok: false, error: "No passkeys are registered" }, { "Content-Language": locale });
+      return;
+    }
+    if (loginRateLimited(req, "passkey")) {
+      sendPasskeyJson(res, 429, { ok: false, error: loginErrorMessage(locale, "rateLimited") }, {
+        "Content-Language": locale,
+        "Retry-After": String(config.loginWindowSeconds),
+      });
+      return;
+    }
+    let webauthn;
+    try {
+      webauthn = passkeyContext(req);
+      const options = await generateAuthenticationOptions({
+        rpID: webauthn.rpId,
+        allowCredentials: passkeyDescriptors(),
+        userVerification: "required",
+        timeout: 60_000,
+      });
+      passkeyStore.createChallenge({
+        purpose: "login",
+        challenge: options.challenge,
+        rpId: webauthn.rpId,
+        origin: webauthn.origin,
+        address: clientAddress(req),
+      });
+      sendPasskeyJson(res, 200, { ok: true, challenge: options.challenge, options }, { "Content-Language": locale });
+    } catch {
+      sendPasskeyJson(res, 400, { ok: false, error: "Passkeys require HTTPS (except localhost)" }, { "Content-Language": locale });
+    }
+  };
+
+  const handlePasskeyLoginVerify = async (req, res) => {
+    const locale = selectLoginLocale(req);
+    if (req.method !== "POST") {
+      sendPasskeyJson(res, 405, { ok: false, error: loginErrorMessage(locale, "methodNotAllowed") }, { "Content-Language": locale });
+      return;
+    }
+    const body = await readPasskeyBody(req, res);
+    if (body === undefined) return;
+    const pending = passkeyStore.consumeChallenge(body.challenge, "login", { address: clientAddress(req) });
+    if (pending === null || !isObject(body.response)) {
+      sendPasskeyJson(res, 400, { ok: false, error: "Passkey challenge expired or invalid" }, { "Content-Language": locale });
+      return;
+    }
+    const credentialId = body.response.id;
+    const credential = typeof credentialId === "string" && PASSKEY_ID_PATTERN.test(credentialId)
+      ? passkeyStore.credential(credentialId)
+      : null;
+    if (credential === null) {
+      noteLoginFailure(req, "passkey");
+      sendPasskeyJson(res, 401, { ok: false, error: "Passkey verification failed" }, { "Content-Language": locale });
+      return;
+    }
+    let verification;
+    try {
+      verification = await verifyAuthenticationResponse({
+        response: body.response,
+        expectedChallenge: pending.challenge,
+        expectedOrigin: pending.origin,
+        expectedRPID: pending.rpId,
+        credential,
+        requireUserVerification: true,
+      });
+    } catch {
+      verification = { verified: false };
+    }
+    if (!verification.verified) {
+      noteLoginFailure(req, "passkey");
+      sendPasskeyJson(res, 401, { ok: false, error: "Passkey verification failed" }, { "Content-Language": locale });
+      return;
+    }
+    const authenticationInfo = verification.authenticationInfo;
+    if (!passkeyStore.updateAuthentication(
+      credentialId,
+      authenticationInfo.newCounter,
+      authenticationInfo.credentialDeviceType,
+      authenticationInfo.credentialBackedUp,
+    )) {
+      sendPasskeyJson(res, 503, { ok: false, error: "Passkey state could not be persisted" }, { "Content-Language": locale });
+      return;
+    }
+    clearLoginFailures(req, "passkey");
+    issueLoginSession(req, res, credentials(), locale);
+  };
+
+  const handlePasskeyRegistrationOptions = async (req, res, providedAuth) => {
+    const auth = requireSession(req, res, providedAuth);
+    if (auth === null) return;
+    if (req.method !== "POST") {
+      sendPasskeyJson(res, 405, { ok: false, error: "Method not allowed" });
+      return;
+    }
+    const body = await readPasskeyBody(req, res);
+    if (body === undefined) return;
+    const current = credentials();
+    const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
+    if (!current.pass || !safeEqual(currentPassword, current.pass)
+      || (current.twoFactorEnabled && !consumeTotp(current.twoFactorSecret, body.currentOtp))) {
+      sendPasskeyJson(res, 403, { ok: false, error: "Current password and authenticator code are required" });
+      return;
+    }
+    let webauthn;
+    try {
+      webauthn = passkeyContext(req);
+      const options = await generateRegistrationOptions({
+        rpName: webauthn.rpName,
+        rpID: webauthn.rpId,
+        userName: current.user,
+        userID: passkeyUserId(current.user),
+        userDisplayName: current.user,
+        timeout: 60_000,
+        attestationType: "none",
+        excludeCredentials: passkeyDescriptors(),
+        authenticatorSelection: {
+          residentKey: "required",
+          userVerification: "required",
+        },
+      });
+      passkeyStore.createChallenge({
+        purpose: "register",
+        challenge: options.challenge,
+        sessionId: auth.kind === "cookie" ? auth.sessionId : undefined,
+        rpId: webauthn.rpId,
+        origin: webauthn.origin,
+        address: clientAddress(req),
+      });
+      sendPasskeyJson(res, 200, { ok: true, challenge: options.challenge, options });
+    } catch {
+      sendPasskeyJson(res, 400, { ok: false, error: "Passkeys require HTTPS (except localhost)" });
+    }
+  };
+
+  const handlePasskeyRegistrationVerify = async (req, res, providedAuth) => {
+    const auth = requireSession(req, res, providedAuth);
+    if (auth === null) return;
+    if (req.method !== "POST") {
+      sendPasskeyJson(res, 405, { ok: false, error: "Method not allowed" });
+      return;
+    }
+    const body = await readPasskeyBody(req, res);
+    if (body === undefined) return;
+    const pending = passkeyStore.consumeChallenge(body.challenge, "register", {
+      sessionId: auth.kind === "cookie" ? auth.sessionId : undefined,
+      address: clientAddress(req),
+    });
+    if (pending === null || !isObject(body.response)) {
+      sendPasskeyJson(res, 400, { ok: false, error: "Passkey challenge expired or invalid" });
+      return;
+    }
+    let verification;
+    try {
+      verification = await verifyRegistrationResponse({
+        response: body.response,
+        expectedChallenge: pending.challenge,
+        expectedOrigin: pending.origin,
+        expectedRPID: pending.rpId,
+        requireUserVerification: true,
+      });
+    } catch {
+      verification = { verified: false };
+    }
+    if (!verification.verified || verification.registrationInfo === undefined) {
+      sendPasskeyJson(res, 400, { ok: false, error: "Passkey registration failed" });
+      return;
+    }
+    let added;
+    try {
+      added = passkeyStore.add({
+        credential: verification.registrationInfo.credential,
+        name: body.name,
+        deviceType: verification.registrationInfo.credentialDeviceType,
+        backedUp: verification.registrationInfo.credentialBackedUp,
+      });
+    } catch (error) {
+      sendPasskeyJson(res, 409, { ok: false, error: error instanceof Error ? error.message : "Passkey is already registered" });
+      return;
+    }
+    if (!added.persisted) {
+      sendPasskeyJson(res, 503, { ok: false, error: "Passkey could not be persisted" });
+      return;
+    }
+    sendPasskeyJson(res, 200, {
+      ok: true,
+      passkeys: passkeyStore.list(),
+      state: snapshot(auth.kind === "cookie" ? auth.sessionId : undefined),
+    });
+  };
+
+  const handlePasskeys = (req, res) => {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      sendPasskeyJson(res, 405, { ok: false, error: "Method not allowed" });
+      return;
+    }
+    sendPasskeyJson(res, 200, { ok: true, passkeys: passkeyStore.list() });
+  };
+
+  const handlePasskeyRevoke = async (req, res, providedAuth) => {
+    const auth = requireSession(req, res, providedAuth);
+    if (auth === null) return;
+    if (req.method !== "POST") {
+      sendPasskeyJson(res, 405, { ok: false, error: "Method not allowed" });
+      return;
+    }
+    const body = await readPasskeyBody(req, res);
+    if (body === undefined) return;
+    const credentialId = typeof body.credentialId === "string" ? body.credentialId : "";
+    if (!PASSKEY_ID_PATTERN.test(credentialId)) {
+      sendPasskeyJson(res, 400, { ok: false, error: "Invalid passkey id" });
+      return;
+    }
+    const current = credentials();
+    const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
+    if (!current.pass || !safeEqual(currentPassword, current.pass)
+      || (current.twoFactorEnabled && !consumeTotp(current.twoFactorSecret, body.currentOtp))) {
+      sendPasskeyJson(res, 403, { ok: false, error: "Current password and authenticator code are required" });
+      return;
+    }
+    const result = passkeyStore.remove(credentialId);
+    if (!result.existed) {
+      sendPasskeyJson(res, 404, { ok: false, error: "Passkey not found" });
+      return;
+    }
+    if (!result.persisted) {
+      sendPasskeyJson(res, 503, { ok: false, error: "Passkey revocation could not be persisted" });
+      return;
+    }
+    sendPasskeyJson(res, 200, {
+      ok: true,
+      passkeys: passkeyStore.list(),
+      state: snapshot(auth.kind === "cookie" ? auth.sessionId : undefined),
+    });
+  };
+
+  const handleLogin = async (req, res) => {
+    const locale = selectLoginLocale(req);
+    const sendLoginJson = (status, value, extra = {}) => sendJson(res, status, value, {
+      "Content-Language": locale,
+      ...extra,
+    });
+    if (req.method !== "POST") {
+      sendLoginJson(405, { ok: false, error: loginErrorMessage(locale, "methodNotAllowed") });
       return;
     }
     const mediaType = typeof req.headers["content-type"] === "string"
       ? req.headers["content-type"].split(";", 1)[0].trim().toLowerCase()
       : "";
     if (mediaType !== "application/json") {
-      sendJson(res, 415, { ok: false, error: "Content-Type must be application/json" });
+      sendLoginJson(415, { ok: false, error: loginErrorMessage(locale, "contentType") });
       return;
     }
 
@@ -1165,11 +1521,11 @@ export async function apply(ctx, config) {
     try {
       body = JSON.parse(await readBody(req));
     } catch {
-      sendJson(res, 400, { ok: false, error: "Invalid request body" });
+      sendLoginJson(400, { ok: false, error: loginErrorMessage(locale, "invalidBody") });
       return;
     }
     if (body === null || typeof body !== "object" || Array.isArray(body)) {
-      sendJson(res, 400, { ok: false, error: "Invalid request body" });
+      sendLoginJson(400, { ok: false, error: loginErrorMessage(locale, "invalidBody") });
       return;
     }
 
@@ -1178,50 +1534,20 @@ export async function apply(ctx, config) {
       const submittedUser = typeof body.username === "string" ? body.username.slice(0, 256) : "";
       const submittedPass = typeof body.password === "string" ? body.password : "";
       if (loginRateLimited(req, submittedUser)) {
-        sendJson(res, 429, { ok: false, error: "Too many login attempts" }, { "Retry-After": String(config.loginWindowSeconds) });
+        sendLoginJson(429, { ok: false, error: loginErrorMessage(locale, "rateLimited") }, { "Retry-After": String(config.loginWindowSeconds) });
         return;
       }
       const passwordValid = Boolean(pass) && safeEqual(submittedUser, user) && safeEqual(submittedPass, pass);
       const otpValid = !twoFactorEnabled || (passwordValid && consumeTotp(twoFactorSecret, body.otp));
       if (!passwordValid || !otpValid) {
         noteLoginFailure(req, submittedUser);
-        sendJson(res, 401, { ok: false, error: "Invalid username, password, or authenticator code" });
+        sendLoginJson(401, { ok: false, error: loginErrorMessage(locale, "invalid") });
         return;
       }
       clearLoginFailures(req, submittedUser);
 
-      const token = generateToken(user, pass, authEpoch, twoFactorEnabled, twoFactorSecret);
-      const csrf = csrfForToken(token);
-      const secure = isSecureRequest(req);
-      sendJson(res, 200, { ok: true, username: user }, {
-        "Set-Cookie": loginCookieHeaders(token, csrf, secure),
-        ...securityHeaders({ secure }),
-      });
+      issueLoginSession(req, res, { user, pass, authEpoch, twoFactorEnabled, twoFactorSecret }, locale);
     });
-  };
-
-  let epochWriteTail = Promise.resolve();
-  const persistAuthEpoch = () => {
-    if (settings === undefined || settings.writable !== true) return Promise.resolve();
-    const task = epochWriteTail.then(async () => {
-      const currentEpoch = Math.max(
-        Number.isSafeInteger(resolved().authEpoch) ? resolved().authEpoch : 0,
-        authEpochFloor,
-      );
-      const nextEpoch = currentEpoch + 1;
-      authEpochFloor = nextEpoch;
-      locallyWrittenAuthEpochs.add(nextEpoch);
-      try {
-        await settings.update(NS, { authEpoch: nextEpoch });
-      } catch (error) {
-        locallyWrittenAuthEpochs.delete(nextEpoch);
-        throw error;
-      }
-    });
-    epochWriteTail = task.catch((error) => {
-      ctx.logger?.warn?.("auth-webserver: persistent session revocation failed: %s", error);
-    });
-    return task;
   };
 
   const handleLogout = async (req, res) => {
@@ -1242,18 +1568,8 @@ export async function apply(ctx, config) {
           sendJson(res, 403, { ok: false, error: "CSRF validation failed" });
           return;
         }
-        revokeSessions();
-        try {
-          await persistAuthEpoch();
-        } catch {
-          sendJson(res, 503, { ok: false, error: "Session revocation could not be persisted" });
-          return;
-        }
-      } else if (auth?.kind === "basic") {
-        revokeSessions();
-        try {
-          await persistAuthEpoch();
-        } catch {
+                const result = revokeSession(auth.sessionId);
+        if (!result.persisted) {
           sendJson(res, 503, { ok: false, error: "Session revocation could not be persisted" });
           return;
         }
@@ -1422,7 +1738,7 @@ export async function apply(ctx, config) {
       method: "GET",
       headers,
     });
-    const pair = { request: proxyReq, upstream: null, closed: false, close: null };
+    const pair = { request: proxyReq, upstream: null, closed: false, close: null, sessionId: auth?.sessionId };
     const removePair = () => {
       if (activeSockets.get(socket) === pair) activeSockets.delete(socket);
     };
@@ -1474,7 +1790,12 @@ export async function apply(ctx, config) {
       if (writeSocket(socket, lines.join("\r\n")) === false) return;
       const idleMs = config.sessionIdleTimeoutSeconds * 1000;
       activityListener = () => {
-        if (idleMs <= 0 || pair.closed) return;
+        if (pair.closed) return;
+        if (pair.sessionId !== undefined && sessionStore.touch(pair.sessionId, auth.issuedAt) === null) {
+          closePair();
+          return;
+        }
+        if (idleMs <= 0) return;
         if (idleTimer !== undefined) clearTimeout(idleTimer);
         idleTimer = setTimeout(closePair, idleMs);
       };
@@ -1615,26 +1936,47 @@ export async function apply(ctx, config) {
           return;
         }
         req[GATEWAY_REQUEST] = true;
+        if (sendPwaAsset(req, res, rawPath, securityHeaders, isSecureRequest(req))) return;
         if (rawPath === "/api/auth.login") {
           return handleLogin(req, res);
+        }
+        if (rawPath === "/api/auth.passkey.login.options") {
+          return handlePasskeyLoginOptions(req, res);
+        }
+        if (rawPath === "/api/auth.passkey.login.verify") {
+          return handlePasskeyLoginVerify(req, res);
         }
         if (rawPath === "/api/auth.logout") {
           return handleLogout(req, res);
         }
         if (rawPath === "/_dsh/auth-webserver/state" ||
+          rawPath === "/_dsh/auth-webserver/clients" ||
+          rawPath === "/_dsh/auth-webserver/passkeys" ||
+          rawPath === "/_dsh/auth-webserver/passkeys/register/options" ||
+          rawPath === "/_dsh/auth-webserver/passkeys/register/verify" ||
+          rawPath === "/_dsh/auth-webserver/passkeys/revoke" ||
           rawPath === "/_dsh/auth-webserver/save" ||
-          rawPath === "/_dsh/auth-webserver/2fa") {
-          if (!checkAuth(req)) {
-            sendUnauthorized(req, res, credentials().realm, rawPath, credentials().twoFactorEnabled, isSecureRequest(req));
+          rawPath === "/_dsh/auth-webserver/2fa" ||
+          rawPath === "/_dsh/auth-webserver/clients/revoke" ||
+          rawPath === "/_dsh/auth-webserver/sessions/revoke") {
+          const auth = checkAuth(req);
+          if (!auth) {
+            sendUnauthorized(req, res, credentials().realm, rawPath, credentials().twoFactorEnabled, isSecureRequest(req), passkeyStore.hasAny());
             return;
           }
-          if (rawPath === "/_dsh/auth-webserver/state") return handleState(req, res);
+          if (rawPath === "/_dsh/auth-webserver/state") return handleState(req, res, auth);
+          if (rawPath === "/_dsh/auth-webserver/clients") return handleClients(req, res, auth);
+          if (rawPath === "/_dsh/auth-webserver/passkeys") return handlePasskeys(req, res);
+          if (rawPath === "/_dsh/auth-webserver/passkeys/register/options") return handlePasskeyRegistrationOptions(req, res, auth);
+          if (rawPath === "/_dsh/auth-webserver/passkeys/register/verify") return handlePasskeyRegistrationVerify(req, res, auth);
+          if (rawPath === "/_dsh/auth-webserver/passkeys/revoke") return handlePasskeyRevoke(req, res, auth);
+          if (rawPath === "/_dsh/auth-webserver/clients/revoke" || rawPath === "/_dsh/auth-webserver/sessions/revoke") return handleSessionRevoke(req, res, auth);
           if (rawPath === "/_dsh/auth-webserver/save") return handleSave(req, res);
           return handleTwoFactorSetup(req, res);
         }
         const publicPwaRequest = isPublicPwaRequest(req, rawPath);
         if (!publicPwaRequest && !checkAuth(req)) {
-          sendUnauthorized(req, res, credentials().realm, rawPath, credentials().twoFactorEnabled, isSecureRequest(req));
+          sendUnauthorized(req, res, credentials().realm, rawPath, credentials().twoFactorEnabled, isSecureRequest(req), passkeyStore.hasAny());
           return;
         }
         return proxyRequest(req, res, rawPath);
@@ -1685,7 +2027,8 @@ export async function apply(ctx, config) {
   const closeAll = () => {
     if (closeAllPromise !== undefined) return closeAllPromise;
     disposed = true;
-    revokeSessions();
+    persistSessions();
+    closeActiveSockets();
     closeAllPromise = Promise.all(servers.map(closeServer)).then(() => undefined);
     return closeAllPromise;
   };
