@@ -65,6 +65,15 @@ window.__ModuleLoader__.load({
 			"files.imageTooLarge": "图片过大，无法在此预览",
 			"files.noPreview": "（无预览）",
 			"files.binaryNoPreview": "二进制文件无法预览",
+			"files.edit": "编辑",
+			"files.editFile": "编辑 {name}",
+			"files.save": "保存",
+			"files.saving": "保存中…",
+			"files.saved": "已保存",
+			"files.saveFailed": "保存失败",
+			"files.dirty": "有未保存的更改",
+			"files.discardConfirm": "有未保存的更改，确定放弃并关闭吗？",
+			"files.editorLoadFailed": "编辑器加载失败",
 			"git.logFailed": "Git 提交记录加载失败",
 			"git.commitFailed": "提交详情加载失败",
 			"git.diffFailed": "差异加载失败",
@@ -142,6 +151,15 @@ window.__ModuleLoader__.load({
 			"files.imageTooLarge": "Image is too large to preview here",
 			"files.noPreview": "(No preview)",
 			"files.binaryNoPreview": "Binary file cannot be previewed",
+			"files.edit": "Edit",
+			"files.editFile": "Edit {name}",
+			"files.save": "Save",
+			"files.saving": "Saving…",
+			"files.saved": "Saved",
+			"files.saveFailed": "Save failed",
+			"files.dirty": "Unsaved changes",
+			"files.discardConfirm": "You have unsaved changes. Discard them and close?",
+			"files.editorLoadFailed": "Editor failed to load",
 			"git.logFailed": "Failed to load git log",
 			"git.commitFailed": "Failed to load commit",
 			"git.diffFailed": "Failed to load diff",
@@ -437,6 +455,11 @@ window.__ModuleLoader__.load({
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.22);
   overflow: hidden;
 }
+.dsh-fe-modal-editor {
+  width: min(920px, calc(100vw - 32px));
+  height: min(80vh, 720px);
+  max-height: min(80vh, 720px);
+}
 .dsh-fe-modal-fullscreen {
   width: 100vw;
   height: 100vh;
@@ -460,6 +483,13 @@ window.__ModuleLoader__.load({
   white-space: nowrap;
   font-size: 13px;
   font-weight: 600;
+}
+.dsh-fe-editor-title-dot {
+  display: inline-block;
+  margin-left: 6px;
+  color: var(--dsw-alias-state-warning-primary, #d97706);
+  font-size: 10px;
+  vertical-align: 1px;
 }
 .dsh-fe-modal-meta {
   flex: 0 0 auto;
@@ -510,6 +540,60 @@ window.__ModuleLoader__.load({
   overflow: hidden;
   background: var(--dsw-alias-bg-base, #f5f5f4);
   white-space: normal;
+}
+.dsh-fe-modal-body-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-layer-1, #ffffff);
+}
+.dsh-fe-editor-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+.dsh-fe-editor-host .monaco-editor,
+.dsh-fe-editor-host .monaco-editor-background,
+.dsh-fe-editor-host .monaco-editor .margin {
+  background-color: transparent;
+}
+.dsh-fe-editor-status {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 2px 14px;
+  border-top: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.1));
+  color: var(--dsw-alias-label-secondary, #78716c);
+  font-size: 11px;
+}
+.dsh-fe-editor-status-dirty {
+  color: var(--dsw-alias-state-warning-primary, #d97706);
+}
+.dsh-fe-editor-status-error {
+  color: var(--dsw-alias-state-error-primary, #b91c1c);
+}
+.dsh-fe-editor-save {
+  margin-left: auto;
+  height: 24px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--dsw-alias-brand-primary, #4f46e5);
+  color: #ffffff;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.dsh-fe-editor-save:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.dsh-fe-editor-save:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 .dsh-fe-image-stage {
   flex: 1 1 auto;
@@ -756,6 +840,156 @@ window.__ModuleLoader__.load({
 				return data;
 			}
 
+			// --- monaco editor loading --------------------------------------------
+			// monaco-editor ships as AMD chunks served verbatim from the host at
+			// /_dsh/file-explorer/monaco/vs. We load the AMD loader as a classic
+			// script (it installs global require/define — the DSH client module
+			// system does not install either), configure its baseUrl to the served
+			// tree, and resolve 'vs/editor/editor.main' once. Language features for
+			// css/html/json/typescript register on demand when a model with that
+			// language id is created.
+			const MONACO_BASE = '/_dsh/file-explorer/monaco/vs'
+			let monacoPromise = null
+			function loadMonaco() {
+				if (monacoPromise) return monacoPromise
+				monacoPromise = new Promise((resolve, reject) => {
+					if (window.monaco && window.monaco.editor) {
+						resolve(window.monaco)
+						return
+					}
+					const script = document.createElement('script')
+					script.src = `${MONACO_BASE}/loader.js`
+					script.async = true
+					script.onload = () => {
+						const loader = window.require
+						if (typeof loader !== 'function') {
+							reject(new Error('monaco AMD loader did not install require'))
+							return
+						}
+						loader.config({ baseUrl: MONACO_BASE, paths: { vs: MONACO_BASE } })
+						loader(['vs/editor/editor.main'], () => {
+							resolve(window.monaco)
+						}, (error) => {
+							reject(error instanceof Error ? error : new Error(String(error)))
+						})
+					}
+					script.onerror = () => reject(new Error('could not load monaco loader'))
+					document.head.append(script)
+				})
+				return monacoPromise
+			}
+
+			// Map a file name to a monaco language id. Mirrors the host's mime map
+			// so text files open with the right syntax highlighting.
+			const EXT_TO_LANG = {
+				js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
+				ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
+				json: 'json', jsonc: 'json',
+				html: 'html', htm: 'html', svg: 'html',
+				css: 'css', scss: 'scss', less: 'less',
+				md: 'markdown', markdown: 'markdown', mdx: 'markdown',
+				py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java',
+				c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', hpp: 'cpp',
+				cs: 'csharp', php: 'php', sh: 'shell', bash: 'shell', zsh: 'shell',
+				yml: 'yaml', yaml: 'yaml', xml: 'xml', sql: 'sql',
+				txt: 'plaintext', text: 'plaintext', log: 'plaintext',
+			}
+			function languageForName(name) {
+				if (typeof name !== 'string') return 'plaintext'
+				const dot = name.lastIndexOf('.')
+				if (dot === -1) return 'plaintext'
+				const ext = name.slice(dot + 1).toLowerCase()
+				return EXT_TO_LANG[ext] || 'plaintext'
+			}
+
+			// Monaco container component: owns the editor lifecycle (create on
+			// mount, dispose on unmount, update model/content when props change).
+			// The text lives in props.value, so the parent's React state is the
+			// single source of truth and the save flow just reads it.
+			function MonacoEditor(props) {
+				const hostRef = React.useRef(null)
+				const editorRef = React.useRef(null)
+				const modelRef = React.useRef(null)
+				const valueRef = React.useRef(props.value || '')
+				const onChangeRef = React.useRef(props.onChange)
+				onChangeRef.current = props.onChange
+
+				React.useEffect(() => {
+					let disposed = false
+					loadMonaco()
+						.then((monaco) => {
+							if (disposed || !hostRef.current) return
+							const editor = monaco.editor.create(hostRef.current, {
+								value: valueRef.current,
+								language: languageForName(props.name || ''),
+								automaticLayout: true,
+								minimap: { enabled: false },
+								scrollBeyondLastLine: false,
+								renderWhitespace: 'selection',
+								fontSize: 12,
+								lineHeight: 18,
+								tabSize: 2,
+								wordWrap: 'off',
+								padding: { top: 10, bottom: 10 },
+								theme: document.body.hasAttribute('data-ds-dark-theme') ? 'vs-dark' : 'vs',
+							})
+							editorRef.current = editor
+							modelRef.current = editor.getModel()
+							const sub = editor.onDidChangeModelContent(() => {
+								const value = editor.getValue()
+								valueRef.current = value
+								if (onChangeRef.current) onChangeRef.current(value)
+							})
+							editor.__dshDispose = () => {
+								sub.dispose()
+								editor.dispose()
+							}
+							// The editor measures its container on mount; the modal
+							// may still be sizing, so re-layout once after a frame.
+							window.requestAnimationFrame(() => {
+								if (!disposed && editorRef.current) editorRef.current.layout()
+							})
+						})
+						.catch((error) => {
+							if (!disposed) {
+								const el = hostRef.current
+								if (el) {
+									el.textContent = t('files.editorLoadFailed') + ': ' + (error && typeof error.message === 'string' ? error.message : String(error))
+									el.style.display = 'flex'
+									el.style.alignItems = 'center'
+									el.style.justifyContent = 'center'
+									el.style.color = 'var(--dsw-alias-label-secondary, #78716c)'
+									el.style.font = '13px/1.5 sans-serif'
+								}
+							}
+						})
+					return () => {
+						disposed = true
+						if (editorRef.current) {
+							if (editorRef.current.__dshDispose) editorRef.current.__dshDispose()
+							editorRef.current = null
+							modelRef.current = null
+						}
+					}
+				}, [])
+
+				// Sync external value changes (reload/undo after save) without
+				// clobbering the user's typing: only replace when the model still
+				// holds the previous external value.
+				React.useEffect(() => {
+					const editor = editorRef.current
+					const next = props.value || ''
+					if (!editor || valueRef.current === next) return
+					valueRef.current = next
+					editor.setValue(next)
+				}, [props.value])
+
+				return React.createElement('div', {
+					ref: hostRef,
+					className: 'dsh-fe-editor-host',
+				})
+			}
+
 			function svgIcon(icon, size) {
 				return React.createElement('svg', {
 					viewBox: '0 0 24 24',
@@ -782,9 +1016,9 @@ window.__ModuleLoader__.load({
 				React.createElement('path', { d: 'M3 12a9 9 0 1 0 2.64-6.36' }),
 				React.createElement('polyline', { points: '21 3 21 9 15 9' }),
 			)
-			const eyeIcon = React.createElement(React.Fragment, null,
-				React.createElement('path', { d: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z' }),
-				React.createElement('circle', { cx: '12', cy: '12', r: '3' }),
+			const editIcon = React.createElement(React.Fragment, null,
+				React.createElement('path', { d: 'M12 20h9' }),
+				React.createElement('path', { d: 'M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z' }),
 			)
 			const downloadIcon = React.createElement(React.Fragment, null,
 				React.createElement('path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }),
@@ -1365,6 +1599,9 @@ window.__ModuleLoader__.load({
 				const [draftPath, setDraftPath] = React.useState('')
 				const [preview, setPreview] = React.useState(null)
 				const [previewLoading, setPreviewLoading] = React.useState(false)
+				const [dirty, setDirty] = React.useState(false)
+				const [saveState, setSaveState] = React.useState(null) // 'saving' | 'saved' | { error }
+				const dirtyRef = React.useRef(false)
 				const [imageScale, setImageScale] = React.useState(1)
 				const [imageOffset, setImageOffset] = React.useState({ x: 0, y: 0 })
 				const [imageFullscreen, setImageFullscreen] = React.useState(false)
@@ -1451,7 +1688,12 @@ window.__ModuleLoader__.load({
 					setImageFullscreen(false)
 				}
 				const closePreview = () => {
+					if (preview && preview.text !== undefined && preview.text !== null && dirtyRef.current) {
+						if (!window.confirm(t('files.discardConfirm'))) return
+					}
 					resetImageView()
+					dirtyRef.current = false
+					setDirty(false)
 					setPreview(null)
 				}
 				const setImageZoom = (value) => {
@@ -1498,10 +1740,32 @@ window.__ModuleLoader__.load({
 					else closePreview()
 				}
 
+				const saveFile = () => {
+					if (!preview || preview.kind === 'image' || preview.text === undefined || preview.text === null) return
+					if (saveState === 'saving') return
+					setSaveState('saving')
+					api('write', { path: preview.path, content: preview.text })
+						.then((raw) => {
+							if (raw && raw.ok === true) {
+								dirtyRef.current = false
+								setDirty(false)
+								setSaveState('saved')
+							} else {
+								setSaveState({ error: raw && typeof raw.error === 'string' ? raw.error : t('files.saveFailed') })
+							}
+						})
+						.catch((err) => {
+							setSaveState({ error: err && typeof err.message === 'string' ? err.message : String(err) })
+						})
+				}
+
 				const openPreview = (entry) => {
 					setPendingDelete(null)
 					resetImageView()
 					setPreviewLoading(true)
+					dirtyRef.current = false
+					setDirty(false)
+					setSaveState(null)
 					setPreview(null)
 					api('read', { path: entry.path })
 						.then((raw) => {
@@ -1617,9 +1881,9 @@ window.__ModuleLoader__.load({
 														type: 'button',
 														className: 'dsh-fe-action',
 														onClick: (event) => { event.stopPropagation(); openPreview(entry) },
-														'aria-label': t('files.viewFile', { name: entry.name }),
-														title: t('files.view'),
-													}, svgIcon(eyeIcon, 14)),
+														'aria-label': t('files.editFile', { name: entry.name }),
+														title: t('files.edit'),
+													}, svgIcon(editIcon, 14)),
 													!isDir && React.createElement('button', {
 														type: 'button',
 														className: 'dsh-fe-action',
@@ -1655,7 +1919,11 @@ window.__ModuleLoader__.load({
 							onClick: closePreview,
 						},
 							React.createElement('div', {
-								className: preview.kind === 'image' && imageFullscreen ? 'dsh-fe-modal dsh-fe-modal-fullscreen' : 'dsh-fe-modal',
+								className: preview.kind === 'image' && imageFullscreen
+									? 'dsh-fe-modal dsh-fe-modal-fullscreen'
+									: preview.text !== undefined && preview.text !== null && !preview.tooLarge
+										? 'dsh-fe-modal dsh-fe-modal-editor'
+										: 'dsh-fe-modal',
 								role: 'dialog',
 								'aria-label': t('files.previewDialog'),
 								'aria-modal': true,
@@ -1664,7 +1932,11 @@ window.__ModuleLoader__.load({
 								onClick: (event) => event.stopPropagation(),
 							},
 								React.createElement('div', { className: 'dsh-fe-modal-head' },
-									React.createElement('div', { className: 'dsh-fe-modal-title' }, preview.name || t('files.preview')),
+									React.createElement('div', { className: 'dsh-fe-modal-title' },
+										preview.name || t('files.preview'),
+										dirty
+											? React.createElement('span', { className: 'dsh-fe-editor-title-dot', title: t('files.dirty') }, '●')
+											: null),
 									React.createElement('div', { className: 'dsh-fe-modal-meta' }, preview.kind === 'image' ? t('files.imageMeta', { size: formatSize(preview.size) }) : preview.binary ? t('files.binary') : formatSize(preview.size)),
 									preview.kind === 'image' && preview.dataUrl
 										? React.createElement('div', {
@@ -1711,20 +1983,20 @@ window.__ModuleLoader__.load({
 										'aria-label': t('files.closePreview'),
 									}, svgIcon(closeIcon, 14)),
 								),
-								React.createElement('div', {
-									className: preview.kind === 'image' ? 'dsh-fe-modal-body dsh-fe-modal-body-image' : 'dsh-fe-modal-body',
-									onWheel: preview.kind === 'image' && preview.dataUrl ? handleImageWheel : undefined,
-									onPointerDown: preview.kind === 'image' && preview.dataUrl ? startImageDrag : undefined,
-									onPointerMove: preview.kind === 'image' && preview.dataUrl ? moveImageDrag : undefined,
-									onPointerUp: preview.kind === 'image' && preview.dataUrl ? endImageDrag : undefined,
-									onPointerCancel: preview.kind === 'image' && preview.dataUrl ? endImageDrag : undefined,
-								},
-									previewLoading
-										? t('files.loading')
-										: preview.error
-											? preview.error
-											: preview.kind === 'image'
-												? preview.dataUrl
+								preview.kind === 'image'
+									? React.createElement('div', {
+										className: 'dsh-fe-modal-body dsh-fe-modal-body-image',
+										onWheel: preview.dataUrl ? handleImageWheel : undefined,
+										onPointerDown: preview.dataUrl ? startImageDrag : undefined,
+										onPointerMove: preview.dataUrl ? moveImageDrag : undefined,
+										onPointerUp: preview.dataUrl ? endImageDrag : undefined,
+										onPointerCancel: preview.dataUrl ? endImageDrag : undefined,
+									},
+										previewLoading
+											? t('files.loading')
+											: preview.error
+												? preview.error
+												: preview.dataUrl
 													? React.createElement('div', { className: 'dsh-fe-image-stage' },
 														React.createElement('img', {
 															className: 'dsh-fe-preview-image' + (imageScale > 1 ? ' dsh-fe-preview-image-pannable' : '') + (imageDragging ? ' dsh-fe-preview-image-dragging' : ''),
@@ -1734,13 +2006,50 @@ window.__ModuleLoader__.load({
 															draggable: false,
 														})
 													)
-													: preview.tooLarge ? t('files.imageTooLarge') : t('files.noPreview')
-											: preview.text !== undefined && preview.text !== null
-												? preview.text
-												: preview.tooLarge
-													? t('files.fileTooLarge')
-													: preview.binary ? t('files.binaryNoPreview') : t('files.noPreview'),
-								),
+													: preview.tooLarge ? t('files.imageTooLarge') : t('files.noPreview'),
+									)
+									: preview.text !== undefined && preview.text !== null && !preview.tooLarge
+										? React.createElement('div', { className: 'dsh-fe-modal-body dsh-fe-modal-body-editor' },
+											React.createElement(MonacoEditor, {
+												name: preview.name || '',
+												value: preview.text,
+												onChange: (value) => {
+													dirtyRef.current = true
+													setDirty(true)
+													setSaveState(null)
+													setPreview((prev) => (prev ? { ...prev, text: value } : prev))
+												},
+											}),
+											React.createElement('div', { className: 'dsh-fe-editor-status' },
+												dirty
+													? React.createElement('span', { className: 'dsh-fe-editor-status-dirty' }, t('files.dirty'))
+													: saveState === 'saving'
+														? React.createElement('span', null, t('files.saving'))
+														: saveState === 'saved'
+															? React.createElement('span', null, t('files.saved'))
+															: saveState && saveState.error
+																? React.createElement('span', { className: 'dsh-fe-editor-status-error' }, saveState.error)
+																: React.createElement('span', null, preview.size != null ? formatSize(preview.size) : ''),
+												React.createElement('button', {
+													type: 'button',
+													className: 'dsh-fe-editor-save',
+													disabled: !dirty || saveState === 'saving',
+													onClick: saveFile,
+													'aria-label': t('files.save'),
+												}, t('files.save')),
+											),
+										)
+										: React.createElement('div', {
+											className: 'dsh-fe-modal-body',
+										},
+											previewLoading
+												? t('files.loading')
+												: preview.error
+													? preview.error
+													: preview.tooLarge
+														? t('files.fileTooLarge')
+														: preview.binary ? t('files.binaryNoPreview') : t('files.noPreview'),
+										),
 							),
 						),
 				)

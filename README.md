@@ -62,7 +62,7 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 | Package | Version |
 | --- | --- |
 | `@yiln-dsh/dsh-plugin-auth-webserver` | `0.5.0` |
-| `@yiln-dsh/dsh-plugin-file-explorer` | `0.6.0` |
+| `@yiln-dsh/dsh-plugin-file-explorer` | `0.7.0` |
 | `@yiln-dsh/dsh-plugin-right-panel` | `0.1.1` |
 | `@yiln-dsh/dsh-plugin-delete-session` | `0.1.2` |
 | `@yiln-dsh/dsh-plugin-file-message` | `0.2.0` |

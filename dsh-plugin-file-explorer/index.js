@@ -1,12 +1,36 @@
-import { createReadStream } from 'node:fs'
+import { createReadStream, readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname, join, relative, sep } from 'node:path'
 
 /**
  * dsh-plugin-file-explorer — Host half (static DSH bundle).
  *
  * Registers exact HTTP routes under /_dsh/file-explorer for the browser
- * bundle: list (with parent path), read (text/image preview), download
- * (native streaming), and delete.
+ * bundle: list (with parent path), read (text/image preview), write
+ * (edit save), download (native streaming), and delete. Also serves the
+ * monaco-editor AMD assets under /_dsh/file-explorer/monaco so the browser
+ * bundle can load a full editing experience without a bundler step.
  */
+
+// --- monaco-editor static assets ------------------------------------------
+// The npm package ships pre-built AMD chunks under min/vs: the loader plus
+// hashed editor/language/worker files that reference each other with module
+// ids rooted at "vs/". Serving the whole tree verbatim under a stable URL
+// prefix lets the browser-side AMD loader (baseUrl = that prefix) resolve
+// every chunk and worker with zero rewriting.
+
+const require = createRequire(import.meta.url)
+// monaco-editor >= 0.56 maps every subpath export to esm/vs/*, which makes
+// require.resolve('monaco-editor/package.json') resolve to a non-existent
+// esm/vs/package.json.js. Resolve the package root via the main entry instead.
+const MONACO_DIR = join(dirname(dirname(dirname(require.resolve('monaco-editor')))), 'min', 'vs')
+const MONACO_URL = '/_dsh/file-explorer/monaco/vs'
+const MONACO_MIME = {
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+}
+const MONACO_CACHE = new Map()
 
 function parentOf(path) {
   if (!path) return null
@@ -154,6 +178,7 @@ export function apply(ctx) {
       if (size !== null && size > limit) {
         sendJson(res, 200, {
           ok: true,
+          path: target.displayPath,
           name,
           size,
           tooLarge: true,
@@ -165,6 +190,7 @@ export function apply(ctx) {
       if (isImage) {
         sendJson(res, 200, {
           ok: true,
+          path: target.displayPath,
           name,
           size,
           kind: 'image',
@@ -181,6 +207,7 @@ export function apply(ctx) {
       if (!binary && text.replace(/\uFFFD/g, '').length * 10 < text.length * 9) binary = true
       sendJson(res, 200, {
         ok: true,
+        path: target.displayPath,
         name,
         size,
         text: binary ? null : text,
@@ -287,6 +314,102 @@ export function apply(ctx) {
       sendJson(res, 200, { ok: false, error: error && typeof error.message === 'string' ? error.message : String(error) })
     }
   })
+
+  addRoute('/_dsh/file-explorer/write', async (req, res) => {
+    if (req.method === 'POST') req = await readJson(req)
+    const fs = ctx.get('fs')
+    if (fs === undefined) {
+      sendJson(res, 200, { ok: false, error: 'filesystem service unavailable' })
+      return
+    }
+    if (typeof req.path !== 'string' || typeof req.content !== 'string') {
+      sendJson(res, 200, { ok: false, error: 'missing file path or content' })
+      return
+    }
+    // Mirror the read route's 1 MiB ceiling so the editor never writes a file
+    // it could not have previewed.
+    if (req.content.length > 1024 * 1024) {
+      sendJson(res, 200, { ok: false, error: 'file too large to save' })
+      return
+    }
+    try {
+      const target = await fs.resolve(req.path)
+      const outcome = await fs.writeText(target, req.content)
+      sendJson(res, 200, {
+        ok: true,
+        version: outcome && typeof outcome.version === 'string' ? outcome.version : null,
+      })
+    } catch (error) {
+      sendJson(res, 200, { ok: false, error: error && typeof error.message === 'string' ? error.message : String(error) })
+    }
+  })
+
+  // --- monaco-editor static tree -------------------------------------------
+  // Longest-prefix route: the browser's AMD loader fetches any file under
+  // /_dsh/file-explorer/monaco/vs/<module path>. Only ever serves files from
+  // inside the installed monaco-editor package.
+  // Must register as a prefix route (kind: "prefix"), not "exact": the exact
+  // table only matches the bare path, so every asset request would 404.
+  const loadMonacoAsset = (file) => {
+    let record = MONACO_CACHE.get(file)
+    if (record === undefined) {
+      const path = join(MONACO_DIR, file)
+      const rel = relative(MONACO_DIR, path)
+      if (rel.startsWith('..') || rel.startsWith(sep) || path.split(sep).includes('..')) {
+        record = { error: 'invalid monaco asset path' }
+      } else {
+        try {
+          const body = readFileSync(path)
+          const ext = file.slice(file.lastIndexOf('.'))
+          record = {
+            body,
+            type: MONACO_MIME[ext] || 'application/octet-stream',
+          }
+        } catch (error) {
+          record = { error: error && typeof error.message === 'string' ? error.message : String(error) }
+        }
+      }
+      MONACO_CACHE.set(file, record)
+    }
+    return record
+  }
+
+  disposers.push(webServer.register({
+    kind: 'prefix',
+    path: '/_dsh/file-explorer/monaco',
+    handler: async (req, res) => {
+      const url = new URL(req.url || '/', 'http://dsh.local')
+      const pathname = url.pathname
+      const file = pathname.startsWith(`${MONACO_URL}/`)
+        ? pathname.slice(MONACO_URL.length + 1)
+        : null
+      if (file === null || file === '') {
+        res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+        res.end('not found')
+        return
+      }
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405)
+        res.end()
+        return
+      }
+      const asset = loadMonacoAsset(file)
+      if (asset.error) {
+        res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+        res.end(asset.error)
+        return
+      }
+      res.writeHead(200, {
+        'content-type': asset.type,
+        'content-length': asset.body.length,
+        // Hashed chunk names are immutable per release; the loader.js and
+        // nls/lang files are release-stable too, so a long cache is safe.
+        'cache-control': 'public, max-age=31536000, immutable',
+      })
+      if (req.method === 'HEAD') res.end()
+      else res.end(asset.body)
+    },
+  }))
 
   // --- git graph API -------------------------------------------------------
   // Read-only git plumbing behind the browser's graph view. Every route
