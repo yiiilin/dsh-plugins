@@ -15,6 +15,7 @@ own directory.
 | [`@yiln-dsh/dsh-plugin-delete-session`](./dsh-plugin-delete-session) | Add a confirmed permanent-delete action for the current session. |
 | [`@yiln-dsh/dsh-plugin-web-daemon`](./dsh-plugin-web-daemon) | Manages `dsh web` as a real systemd unit, auto-resumes sessions that were running across restarts, shows server CPU/memory/network/filesystem status above New Session, and edits its configuration from the GUI Settings section. |
 | [`@yiln-dsh/dsh-plugin-terminal-tab`](./dsh-plugin-terminal-tab) | Adds per-session persistent terminal tabs and a **新建终端** action to the Web GUI. |
+| [`@yiln-dsh/dsh-plugin-web-browser`](./dsh-plugin-web-browser) | Server-side browser view next to the terminal: Chromium runs on the DSH host (playwright-core + CDP screencast), frames stream to the GUI, input is injected back, and a Chrome-style blank tab opens automatically. |
 
 ## Install
 
@@ -69,6 +70,7 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 | `@yiln-dsh/dsh-plugin-llm-adapter` | `0.1.0` |
 | `@yiln-dsh/dsh-plugin-web-daemon` | `0.6.0` |
 | `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.6` |
+| `@yiln-dsh/dsh-plugin-web-browser` | `0.1.0` |
 
 Each plugin's version is the `version` field in its own `package.json`.
 Semantic versioning is recommended: patch for fixes, minor for additive

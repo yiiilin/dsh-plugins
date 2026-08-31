@@ -1,0 +1,13 @@
+# dsh-plugin-web-browser bundle patch.
+#
+# The Host half drives a server-side Chromium (playwright-core + CDP
+# Page.startScreencast) and serves the /_dsh/web-browser API + WebSocket.
+# The Client half registers the browser page in the right-panel host.
+
+- insert:
+    - id: dsh-web-browser
+      name: '@yiln-dsh/dsh-plugin-web-browser'
+      inject:
+        - webServer
+        - agents
+      config: {}
