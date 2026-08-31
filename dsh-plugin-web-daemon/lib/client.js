@@ -29,6 +29,13 @@ window.__ModuleLoader__.load({
 			"net.up": "上行 ",
 			"net.down": "下行 ",
 			network: "网络：",
+			disk: "硬盘",
+			"disk.count": "{count} 个挂载点",
+			"disk.none": "未发现已挂载的物理硬盘",
+			"disk.unavailable": "硬盘占用不可用",
+			"disk.partial": "部分挂载点暂时不可用",
+			"disk.usage": "已用 {used} / {total}",
+			"disk.item": "{device}，挂载点 {mountpoint}，已用 {percent}",
 			"daemon.title": "Web 守护进程",
 			"daemon.desc": "以 systemd 单元形式管理 dsh Web 工作进程。",
 			"status.running": "运行中",
@@ -82,6 +89,13 @@ window.__ModuleLoader__.load({
 			"net.up": "Up ",
 			"net.down": "Down ",
 			network: "Network: ",
+			disk: "Disk",
+			"disk.count": "{count} mounted filesystem(s)",
+			"disk.none": "No mounted physical disks found",
+			"disk.unavailable": "Disk usage unavailable",
+			"disk.partial": "Some mounted filesystems are temporarily unavailable",
+			"disk.usage": "Used {used} / {total}",
+			"disk.item": "{device}, mounted at {mountpoint}, {percent} used",
 			"daemon.title": "Web daemon",
 			"daemon.desc": "Manages the dsh web worker as a systemd unit.",
 			"status.running": "Running",
@@ -183,7 +197,7 @@ window.__ModuleLoader__.load({
 .dwd-notice{padding:6px 10px;border:1px solid rgba(34,197,94,.28);border-radius:6px;background:rgba(34,197,94,.08);color:#15803d;font-size:13px;line-height:18px}
 .dwd-empty{color:var(--dsw-alias-label-secondary, #57534e);font-size:13px}
 .dwd-cardFooter{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:12px 0 4px;border-top:1px solid var(--dsw-alias-border-l2)}
-.dwd-serverStatus{box-sizing:border-box;width:100%;min-height:84px;margin:0 0 8px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.14));border-radius:8px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1,#fff));color:var(--dsw-alias-label-primary,#111827)}
+.dwd-serverStatus{box-sizing:border-box;width:100%;margin:0 0 8px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.14));border-radius:8px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1,#fff));color:var(--dsw-alias-label-primary,#111827)}
 .dwd-serverStatusHeader{display:flex;align-items:center;gap:6px;min-height:18px;color:var(--dsw-alias-label-secondary,#57534e);font-size:11px;font-weight:600;line-height:16px}
 .dwd-serverDot{width:7px;height:7px;flex:none;border-radius:50%;background:var(--dsw-alias-label-tertiary,#a8a29e)}
 .dwd-serverStatus[data-state="ok"] .dwd-serverDot{background:#16a34a}
@@ -196,6 +210,19 @@ window.__ModuleLoader__.load({
 .dwd-serverMetricValueNetwork{font-size:11px;font-weight:500}
 .dwd-serverMetricValue[data-tone="warn"]{color:#b45309}
 .dwd-serverMetricValue[data-tone="critical"]{color:#b91c1c}
+.dwd-serverDiskSection{display:flex;flex-direction:column;gap:3px;margin-top:1px;min-width:0}
+.dwd-serverDiskHeading{display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-width:0;line-height:14px}
+.dwd-serverDiskCount{flex:none;color:var(--dsw-alias-label-tertiary,#78716c);font-size:9px;line-height:14px}
+.dwd-serverDiskList{display:flex;flex-direction:column;gap:2px;min-width:0;margin:0;padding:0;list-style:none}
+.dwd-serverDiskRow{display:flex;align-items:baseline;gap:6px;min-width:0;padding:2px 0;border-top:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.1))}
+.dwd-serverDiskIdentity{display:flex;align-items:baseline;gap:4px;min-width:0;flex:1 1 auto;overflow:hidden}
+.dwd-serverDiskDevice{flex:none;max-width:40%;color:var(--dsw-alias-label-primary,#111827);font-size:10px;font-weight:600;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dwd-serverDiskMount{min-width:0;color:var(--dsw-alias-label-secondary,#57534e);font-size:9px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dwd-serverDiskPercent{order:3;flex:none;color:var(--dsw-alias-label-primary,#111827);font-size:11px;font-weight:700;line-height:14px;white-space:nowrap}
+.dwd-serverDiskPercent[data-tone="warn"]{color:#b45309}
+.dwd-serverDiskPercent[data-tone="critical"]{color:#b91c1c}
+.dwd-serverDiskDetail{order:2;min-width:0;flex:0 1 auto;max-width:44%;color:var(--dsw-alias-label-tertiary,#78716c);font-size:9px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dwd-serverDiskEmpty{color:var(--dsw-alias-label-tertiary,#78716c);font-size:10px;line-height:14px;overflow-wrap:anywhere}
 .dwd-serverError{margin-top:7px;color:var(--dsw-alias-state-error-primary,#b91c1c);font-size:10px;line-height:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dwd-serverStatusRail{box-sizing:border-box;width:28px;height:28px;margin:0 auto 8px;display:flex;align-items:center;justify-content:center;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.14));border-radius:8px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1,#fff));color:var(--dsw-alias-label-secondary,#57534e)}
 .dwd-serverStatusRail .dwd-serverDot{width:8px;height:8px}
@@ -239,6 +266,27 @@ window.__ModuleLoader__.load({
 				unit += 1;
 			}
 			const amount = scaled >= 10 ? scaled.toFixed(0) : scaled.toFixed(1);
+			return `${amount} ${units[unit]}`;
+		}
+
+		function formatBytes(value) {
+			let bytes;
+			try {
+				bytes = typeof value === "bigint" ? value : BigInt(String(value));
+			} catch {
+				return "--";
+			}
+			if (bytes < 0n) return "--";
+			const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+			let divisor = 1n;
+			let unit = 0;
+			while (bytes >= divisor * 1024n && unit < units.length - 1) {
+				divisor *= 1024n;
+				unit += 1;
+			}
+			const whole = bytes / divisor;
+			const tenths = divisor === 1n ? 0n : (bytes % divisor) * 10n / divisor;
+			const amount = whole >= 10n || divisor === 1n ? whole.toString() : `${whole}.${tenths}`;
 			return `${amount} ${units[unit]}`;
 		}
 
@@ -290,9 +338,18 @@ window.__ModuleLoader__.load({
 				const cpu = snapshot?.cpu;
 				const memory = snapshot?.memory;
 				const network = snapshot?.network;
+				const disks = snapshot?.disks;
+				const filesystems = Array.isArray(disks?.filesystems) ? disks.filesystems : [];
+				const diskNotice = disks?.available === false
+					? t("disk.unavailable")
+					: disks?.partial === true
+						? t("disk.partial")
+						: filesystems.length === 0
+							? t("disk.none")
+							: null;
 				return React.createElement(
 					"section",
-					{ className: "dwd-serverStatus", "data-state": state, role: "status", "aria-label": t("server.status") },
+					{ className: "dwd-serverStatus", "data-state": state, role: "region", "aria-label": t("server.status") },
 					React.createElement(
 						"div",
 						{ className: "dwd-serverStatusHeader" },
@@ -317,8 +374,46 @@ window.__ModuleLoader__.load({
 							React.createElement("span", { className: "dwd-serverMetricValue dwd-serverMetricValueNetwork" }, t("net.up"), formatRate(network?.txBytesPerSecond)),
 							React.createElement("span", { className: "dwd-serverMetricValue dwd-serverMetricValueNetwork" }, t("net.down"), formatRate(network?.rxBytesPerSecond)),
 						),
+						snapshot === null
+							? null
+							: React.createElement(
+									"div",
+									{ className: "dwd-serverDiskSection" },
+									React.createElement(
+										"div",
+										{ className: "dwd-serverDiskHeading" },
+										React.createElement("span", { className: "dwd-serverMetricLabel" }, t("disk")),
+										React.createElement("span", { className: "dwd-serverDiskCount" }, t("disk.count", { count: filesystems.length })),
+									),
+									diskNotice === null
+										? null
+										: React.createElement("div", { className: "dwd-serverDiskEmpty", role: disks?.partial === true ? "status" : undefined }, diskNotice),
+								filesystems.length === 0
+										? null
+										: React.createElement(
+												"ul",
+												{ className: "dwd-serverDiskList", "aria-label": t("disk") },
+												filesystems.map((filesystem, index) => {
+													const device = typeof filesystem?.source === "string" && filesystem.source !== "" ? filesystem.source : "--";
+													const mountpoint = typeof filesystem?.mountpoint === "string" && filesystem.mountpoint !== "" ? filesystem.mountpoint : "--";
+													const percent = formatPercent(filesystem?.percent);
+													return React.createElement(
+														"li",
+														{ className: "dwd-serverDiskRow", key: `${device}:${mountpoint}:${index}`, "aria-label": t("disk.item", { device, mountpoint, percent }) },
+														React.createElement(
+															"div",
+															{ className: "dwd-serverDiskIdentity" },
+															React.createElement("b", { className: "dwd-serverDiskDevice", title: device }, device),
+															React.createElement("span", { className: "dwd-serverDiskMount", title: mountpoint }, mountpoint),
+														),
+														React.createElement("b", { className: "dwd-serverDiskPercent", "data-tone": metricTone(filesystem?.percent) }, percent),
+														React.createElement("span", { className: "dwd-serverDiskDetail" }, t("disk.usage", { used: formatBytes(filesystem?.usedBytes), total: formatBytes(filesystem?.totalBytes) })),
+													);
+												}),
+											),
+								),
 					),
-					error === null ? null : React.createElement("div", { className: "dwd-serverError" }, error),
+					error === null ? null : React.createElement("div", { className: "dwd-serverError", role: "alert" }, error),
 				);
 			};
 		}

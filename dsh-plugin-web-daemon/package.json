@@ -1,10 +1,10 @@
 {
   "name": "@yiln-dsh/dsh-plugin-web-daemon",
-  "version": "0.5.10",
+  "version": "0.6.0",
   "publishConfig": {
     "access": "public"
   },
-  "description": "DSH plugin that manages `dsh web` as a real systemd unit, exposes its settings in the Web GUI, and resumes attached sessions after restart.",
+  "description": "DSH plugin that manages `dsh web` as a real systemd unit, exposes live server CPU, memory, network, and filesystem metrics in the Web GUI, and resumes attached sessions after restart.",
   "type": "module",
   "main": "index.js",
   "exports": {

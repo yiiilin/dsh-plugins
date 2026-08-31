@@ -18,6 +18,7 @@ import {
   readFile,
   rename as renameAsync,
   stat as statAsync,
+  statfs as statfsAsync,
   unlink as unlinkAsync,
   link as linkAsync,
 } from "node:fs/promises";
@@ -1138,9 +1139,167 @@ function networkTotals(body) {
   return { rxBytes, txBytes, interfaces };
 }
 
+const NON_PHYSICAL_FILESYSTEM_TYPES = new Set([
+  "autofs",
+  "binfmt_misc",
+  "bpf",
+  "cgroup",
+  "cgroup2",
+  "configfs",
+  "debugfs",
+  "devpts",
+  "devtmpfs",
+  "efivarfs",
+  "fuse",
+  "fuseblk",
+  "fusectl",
+  "hugetlbfs",
+  "mqueue",
+  "nfs",
+  "nfs4",
+  "overlay",
+  "proc",
+  "pstore",
+  "ramfs",
+  "rpc_pipefs",
+  "securityfs",
+  "smb3",
+  "squashfs",
+  "sysfs",
+  "tmpfs",
+  "tracefs",
+  "virtiofs",
+  "9p",
+]);
+const MAX_PHYSICAL_MOUNTS = 128;
+
+function decodeMountInfoField(value) {
+  return value.replace(/\\([0-7]{3})/g, (_match, digits) => String.fromCharCode(Number.parseInt(digits, 8)));
+}
+
+function physicalMountsFromMountInfo(body) {
+  const mounts = [];
+  const seen = new Set();
+  for (const line of body.split("\n")) {
+    const separator = line.indexOf(" - ");
+    if (separator < 0) continue;
+    const left = line.slice(0, separator).split(" ");
+    const right = line.slice(separator + 3).split(" ");
+    if (left.length < 6 || right.length < 2) continue;
+
+    const device = left[2];
+    const root = decodeMountInfoField(left[3]);
+    const mountpoint = decodeMountInfoField(left[4]);
+    const type = right[0].toLowerCase();
+    const source = decodeMountInfoField(right[1]);
+    if (!/^\d+:\d+$/u.test(device) || !source.startsWith("/dev/")) continue;
+    if (NON_PHYSICAL_FILESYSTEM_TYPES.has(type) || type.startsWith("fuse.")) continue;
+
+    const deviceName = source.slice(source.lastIndexOf("/") + 1).toLowerCase();
+    if (/^(?:loop|zram|ram|nbd|fd|sr)\d*$/u.test(deviceName)) continue;
+
+    const key = `${device}\u0000${type}\u0000${root}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    mounts.push({ device, root, mountpoint, type, source });
+  }
+  return mounts;
+}
+
+function diskUsageFromStatfs(mount, stats) {
+  const fields = [stats.bsize, stats.blocks, stats.bfree, stats.bavail];
+  if (fields.some((value) => typeof value !== "bigint")) return null;
+  const [blockSize, blocks, bfree, bavail] = fields;
+  if (blockSize <= 0n || blocks <= 0n) return null;
+
+  const freeBlocks = bfree < 0n ? 0n : bfree > blocks ? blocks : bfree;
+  const availableBlocks = bavail < 0n ? 0n : bavail > blocks ? blocks : bavail;
+  const totalBytes = blocks * blockSize;
+  const freeBytes = freeBlocks * blockSize;
+  const usedBytes = (blocks - freeBlocks) * blockSize;
+  const availableBytes = availableBlocks * blockSize;
+  const percentTenths = (usedBytes * 1000n) / totalBytes;
+
+  return {
+    mountpoint: mount.mountpoint,
+    source: mount.source,
+    type: mount.type,
+    totalBytes: totalBytes.toString(),
+    usedBytes: usedBytes.toString(),
+    freeBytes: freeBytes.toString(),
+    availableBytes: availableBytes.toString(),
+    percent: Math.max(0, Math.min(100, Number(percentTenths) / 10)),
+  };
+}
+
+async function mapWithConcurrency(items, limit, mapper) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await mapper(items[index]);
+    }
+  };
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+async function readPhysicalDiskUsage() {
+  if (process.platform !== "linux") {
+    return { available: false, partial: false, failed: 0, filesystems: [], reason: "unsupported-platform" };
+  }
+
+  let body;
+  try {
+    body = await readFile("/proc/self/mountinfo", "utf8");
+  } catch {
+    return { available: false, partial: false, failed: 0, filesystems: [], reason: "mount-info-unavailable" };
+  }
+  try {
+    await statAsync("/sys/dev/block");
+  } catch {
+    return { available: false, partial: false, failed: 0, filesystems: [], reason: "block-device-index-unavailable" };
+  }
+
+  const mounts = physicalMountsFromMountInfo(body);
+  if (mounts.length === 0) {
+    return { available: true, partial: false, failed: 0, filesystems: [], reason: "none-visible" };
+  }
+
+  const selected = mounts.slice(0, MAX_PHYSICAL_MOUNTS);
+  const results = await mapWithConcurrency(selected, 8, async (mount) => {
+    try {
+      await statAsync(join("/sys/dev/block", mount.device));
+      const stats = await statfsAsync(mount.mountpoint, { bigint: true });
+      return diskUsageFromStatfs(mount, stats);
+    } catch {
+      return null;
+    }
+  });
+  const filesystems = results.filter((value) => value !== null);
+  const failed = selected.length - filesystems.length;
+  const truncated = mounts.length > selected.length;
+  const partial = failed > 0 || truncated;
+  return {
+    available: true,
+    partial,
+    failed,
+    filesystems: filesystems.sort((left, right) => {
+      const leftRoot = left.mountpoint === "/" ? 0 : 1;
+      const rightRoot = right.mountpoint === "/" ? 0 : 1;
+      return leftRoot - rightRoot || left.mountpoint.localeCompare(right.mountpoint) || left.source.localeCompare(right.source);
+    }),
+    reason: partial ? (filesystems.length === 0 ? "statfs-failed" : "partial") : null,
+  };
+}
+
 /**
  * Server-wide metrics sampled on demand by the sidebar. CPU and network are
- * deltas between requests, while memory is an instantaneous OS snapshot.
+ * deltas between requests, while memory and disk usage are instantaneous OS
+ * snapshots.
  */
 function createServerMetrics() {
   let previousCpu = null;
@@ -1161,6 +1320,7 @@ function createServerMetrics() {
     const totalMemory = totalmem();
     const freeMemory = freemem();
     const usedMemory = Math.max(0, totalMemory - freeMemory);
+    const disks = await readPhysicalDiskUsage();
 
     let currentNetwork = null;
     try {
@@ -1202,6 +1362,7 @@ function createServerMetrics() {
         rxBytes: currentNetwork?.rxBytes ?? null,
         txBytes: currentNetwork?.txBytes ?? null,
       },
+      disks,
     };
   };
 

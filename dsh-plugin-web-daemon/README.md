@@ -29,8 +29,9 @@ disposed session is removed.
   Start/Stop/Restart/Reset buttons plus the editable fields.
 - Generates `/etc/systemd/system/<unit>` (system scope, needs root) or
   `~/.config/systemd/user/<unit>` (`user` scope) on save/start.
-- Adds a compact **Server status** panel above New Session with live CPU percentage, memory percentage, and network download/upload rates. The panel collapses to a status dot with the sidebar rail.
+- Adds a compact **Server status** panel above New Session with live CPU percentage, memory percentage, network download/upload rates, and mounted physical block-backed filesystem usage (device, mount point, used/total bytes, and percentage). The panel grows with the number of disk rows and collapses to a status dot with the sidebar rail.
 - Exposes daemon state through `/_dsh/web-daemon/*` JSON routes and server metrics through `/_dsh/web-daemon/metrics`.
+- Disk metrics list local block-backed filesystems visible to the worker and mounted in its namespace; virtual, network, overlay, loop, and zram filesystems are omitted. Unmounted disks cannot report filesystem occupancy. Byte counters are returned as decimal strings for large-volume precision.
 - Records top-level sessions and their live status in `$DSH_HOME/plugins/dsh-plugin-web-daemon/active-sessions.json`. Only sessions recorded with `running: true` are resumed; idle sessions are not started just because they have a transcript. Persisted sessions that were deleted are pruned; subagent sessions are intentionally excluded.
 - A resumed session restores its transcript and Agent. If the previous process stopped while the session was marked running, the plugin queues one internal recovery notice to continue it. Tool calls marked as unknown are explicitly left for the model to verify before retrying.
 - Registers the `web-daemon` settings namespace in the Host settings service
@@ -49,7 +50,7 @@ disposed session is removed.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.5.10`.
+The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.6.0`.
 
 ### npm package
 
@@ -129,6 +130,6 @@ journalctl -u dsh-web.service -f   # look for "resumed session …"
 
 | File | Content |
 | --- | --- |
-| `index.js` | Host half: systemd unit generation, session registry and resume lifecycle, system metrics sampling, settings namespace, JSON API, and the sidebar client-bundle patch. |
+| `index.js` | Host half: systemd unit generation, session registry and resume lifecycle, CPU/memory/network/filesystem metrics sampling, settings namespace, JSON API, and the sidebar client-bundle patch. |
 | `lib/client.js` | Browser half: server status panel above New Session plus the Settings plugin-configuration card. |
 | `cordis.patch.yml` | Adds the host row and default configuration to the composed profile. |

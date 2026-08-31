@@ -13,7 +13,7 @@ own directory.
 | [`@yiln-dsh/dsh-plugin-file-message`](./dsh-plugin-file-message) | Let the model send workspace-backed files and images into the conversation. |
 | [`@yiln-dsh/dsh-plugin-llm-adapter`](./dsh-plugin-llm-adapter) | Fork the DSH pi-ai adapter and expose per-model reasoning/tier controls while keeping the original provider routes. |
 | [`@yiln-dsh/dsh-plugin-delete-session`](./dsh-plugin-delete-session) | Add a confirmed permanent-delete action for the current session. |
-| [`@yiln-dsh/dsh-plugin-web-daemon`](./dsh-plugin-web-daemon) | Manages `dsh web` as a real systemd unit, auto-resumes sessions that were running across restarts, shows server CPU/memory/network status above New Session, and edits its configuration from the GUI Settings section. |
+| [`@yiln-dsh/dsh-plugin-web-daemon`](./dsh-plugin-web-daemon) | Manages `dsh web` as a real systemd unit, auto-resumes sessions that were running across restarts, shows server CPU/memory/network/filesystem status above New Session, and edits its configuration from the GUI Settings section. |
 | [`@yiln-dsh/dsh-plugin-terminal-tab`](./dsh-plugin-terminal-tab) | Adds per-session persistent terminal tabs and a **新建终端** action to the Web GUI. |
 
 ## Install
@@ -67,7 +67,7 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 | `@yiln-dsh/dsh-plugin-delete-session` | `0.1.2` |
 | `@yiln-dsh/dsh-plugin-file-message` | `0.2.0` |
 | `@yiln-dsh/dsh-plugin-llm-adapter` | `0.1.0` |
-| `@yiln-dsh/dsh-plugin-web-daemon` | `0.5.10` |
+| `@yiln-dsh/dsh-plugin-web-daemon` | `0.6.0` |
 | `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.6` |
 
 Each plugin's version is the `version` field in its own `package.json`.
