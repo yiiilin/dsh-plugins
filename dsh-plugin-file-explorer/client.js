@@ -72,6 +72,9 @@ window.__ModuleLoader__.load({
 			"files.saved": "已保存",
 			"files.saveFailed": "保存失败",
 			"files.dirty": "有未保存的更改",
+			"files.markdownRender": "渲染预览",
+			"files.markdownSource": "源代码",
+			"files.markdownRenderFailed": "Markdown 渲染失败",
 			"files.discardConfirm": "有未保存的更改，确定放弃并关闭吗？",
 			"files.editorLoadFailed": "编辑器加载失败",
 			"git.logFailed": "Git 提交记录加载失败",
@@ -158,6 +161,9 @@ window.__ModuleLoader__.load({
 			"files.saved": "Saved",
 			"files.saveFailed": "Save failed",
 			"files.dirty": "Unsaved changes",
+			"files.markdownRender": "Rendered preview",
+			"files.markdownSource": "Source",
+			"files.markdownRenderFailed": "Failed to render markdown",
 			"files.discardConfirm": "You have unsaved changes. Discard them and close?",
 			"files.editorLoadFailed": "Editor failed to load",
 			"git.logFailed": "Failed to load git log",
@@ -595,6 +601,131 @@ window.__ModuleLoader__.load({
   opacity: 0.55;
   cursor: default;
 }
+.dsh-fe-md-toggle {
+  flex: 0 0 auto;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.2));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #57534e);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dsh-fe-md-toggle:hover {
+  background: var(--dsw-alias-bg-layer-2, #e7e5e4);
+  color: var(--dsw-alias-label-primary, #111827);
+}
+.dsh-fe-md-toggle[aria-pressed='true'] {
+  background: var(--dsw-alias-brand-primary, #4f46e5);
+  border-color: transparent;
+  color: #fff;
+}
+.dsh-fe-markdown {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 18px;
+  box-sizing: border-box;
+  color: var(--dsw-alias-label-primary, #111827);
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.dsh-fe-markdown > :first-child {
+  margin-top: 0;
+}
+.dsh-fe-markdown > :last-child {
+  margin-bottom: 0;
+}
+.dsh-fe-markdown h1,
+.dsh-fe-markdown h2,
+.dsh-fe-markdown h3,
+.dsh-fe-markdown h4 {
+  margin: 14px 0 8px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.dsh-fe-markdown h1 {
+  font-size: 17px;
+}
+.dsh-fe-markdown h2 {
+  font-size: 15px;
+}
+.dsh-fe-markdown h3,
+.dsh-fe-markdown h4 {
+  font-size: 13px;
+}
+.dsh-fe-markdown p {
+  margin: 0 0 10px;
+}
+.dsh-fe-markdown a {
+  color: var(--dsw-alias-brand-primary, #2563eb);
+  text-decoration: underline;
+}
+.dsh-fe-markdown ul,
+.dsh-fe-markdown ol {
+  margin: 0 0 10px;
+  padding-left: 22px;
+}
+.dsh-fe-markdown li {
+  margin: 2px 0;
+}
+.dsh-fe-markdown blockquote {
+  margin: 0 0 10px;
+  padding: 2px 12px;
+  border-left: 3px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.2));
+  color: var(--dsw-alias-label-secondary, #57534e);
+}
+.dsh-fe-markdown code {
+  box-sizing: border-box;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-layer-1, #ffffff);
+  font-family: var(--ds-font-family-code, ui-monospace, monospace);
+  font-size: 12px;
+}
+.dsh-fe-markdown pre {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1, #ffffff);
+  overflow: auto;
+}
+.dsh-fe-markdown pre code {
+  padding: 0;
+  background: none;
+  white-space: pre;
+}
+.dsh-fe-markdown table {
+  border-collapse: collapse;
+  margin: 0 0 10px;
+  max-width: 100%;
+  display: block;
+  overflow: auto;
+}
+.dsh-fe-markdown th,
+.dsh-fe-markdown td {
+  padding: 5px 10px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.16));
+  font-size: 12px;
+}
+.dsh-fe-markdown th {
+  background: var(--dsw-alias-bg-layer-1, #ffffff);
+  font-weight: 700;
+}
+.dsh-fe-markdown hr {
+  margin: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.16));
+}
+.dsh-fe-markdown img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
 .dsh-fe-image-stage {
   flex: 1 1 auto;
   min-width: 0;
@@ -878,6 +1009,47 @@ window.__ModuleLoader__.load({
 				})
 				return monacoPromise
 			}
+
+			// --- markdown rendering ------------------------------------------------
+			// markdown-it UMD is served verbatim by the Host (no CDN) and loaded
+			// as a classic script, exactly like the monaco AMD loader above.
+			// `html: false` escapes any embedded HTML in the workspace file, and
+			// markdown-it's built-in validateLink rejects javascript:/vbscript:/
+			// file:/data: hrefs, so the rendered HTML can be injected as-is.
+			const MARKDOWN_IT_URL = '/_dsh/file-explorer/vendor/markdown-it.min.js'
+			let markdownItPromise = null
+			function loadMarkdownIt() {
+				if (markdownItPromise) return markdownItPromise
+				markdownItPromise = new Promise((resolve, reject) => {
+					if (typeof window.markdownit === 'function') {
+						resolve(window.markdownit)
+						return
+					}
+					const script = document.createElement('script')
+					script.src = MARKDOWN_IT_URL
+					script.async = true
+					script.onload = () => {
+						if (typeof window.markdownit !== 'function') {
+							reject(new Error('markdown-it did not install window.markdownit'))
+							return
+						}
+						resolve(window.markdownit)
+					}
+					script.onerror = () => reject(new Error('could not load markdown renderer'))
+					document.head.append(script)
+				})
+				return markdownItPromise
+			}
+
+			let markdownRenderer = null
+			function renderMarkdown(text) {
+				return loadMarkdownIt().then((markdownit) => {
+					if (markdownRenderer === null) markdownRenderer = markdownit({ html: false, linkify: true })
+					return markdownRenderer.render(text)
+				})
+			}
+
+			const MARKDOWN_NAME_RE = /\.(md|markdown|mdx)$/i
 
 			// Map a file name to a monaco language id. Mirrors the host's mime map
 			// so text files open with the right syntax highlighting.
@@ -1608,6 +1780,8 @@ window.__ModuleLoader__.load({
 				const [imageDragging, setImageDragging] = React.useState(false)
 				const imageDrag = React.useRef(null)
 				const [pendingDelete, setPendingDelete] = React.useState(null)
+				const [mdView, setMdView] = React.useState('editor') // 'editor' | 'render' for markdown files
+				const [mdHtml, setMdHtml] = React.useState(null) // {html} | {error} while render view is active
 
 				React.useEffect(() => {
 					if (sessionId === undefined) {
@@ -1767,6 +1941,8 @@ window.__ModuleLoader__.load({
 					setDirty(false)
 					setSaveState(null)
 					setPreview(null)
+					setMdView('editor')
+					setMdHtml(null)
 					api('read', { path: entry.path })
 						.then((raw) => {
 							setPreview(raw && raw.ok === true ? raw : { ok: false, error: raw && typeof raw.error === 'string' ? raw.error : t('files.readFailed') })
@@ -1776,6 +1952,21 @@ window.__ModuleLoader__.load({
 						})
 						.finally(() => setPreviewLoading(false))
 				}
+
+				// Render the markdown source to HTML only while the render view is
+				// active; re-renders when the (edited) text changes so the two
+				// views never drift apart.
+				React.useEffect(() => {
+					if (mdView !== 'render' || !preview || preview.text === undefined || preview.text === null) return undefined
+					let cancelled = false
+					setMdHtml(null)
+					renderMarkdown(preview.text)
+						.then((html) => { if (!cancelled) setMdHtml({ html }) })
+						.catch((error) => {
+							if (!cancelled) setMdHtml({ error: error && typeof error.message === 'string' ? error.message : String(error) })
+						})
+					return () => { cancelled = true }
+				}, [mdView, preview])
 
 				const downloadFile = (entry) => {
 					setPendingDelete(null)
@@ -1813,6 +2004,7 @@ window.__ModuleLoader__.load({
 						.catch((err) => setError(err && typeof err.message === 'string' ? err.message : String(err)))
 				}
 
+				const isMarkdownFile = preview !== null && MARKDOWN_NAME_RE.test(String(preview.name || ''))
 				const pathControl = editingPath
 					? React.createElement('input', {
 						key: 'path-input',
@@ -1976,6 +2168,15 @@ window.__ModuleLoader__.load({
 											}, svgIcon(imageFullscreen ? fullscreenExitIcon : fullscreenIcon, 14)),
 										)
 										: null,
+									isMarkdownFile && preview.text !== undefined && preview.text !== null && !preview.tooLarge && !preview.binary
+										? React.createElement('button', {
+											type: 'button',
+											className: 'dsh-fe-md-toggle',
+											onClick: () => setMdView((value) => (value === 'render' ? 'editor' : 'render')),
+											'aria-pressed': mdView === 'render',
+											title: mdView === 'render' ? t('files.markdownSource') : t('files.markdownRender'),
+										}, mdView === 'render' ? t('files.markdownSource') : t('files.markdownRender'))
+										: null,
 									React.createElement('button', {
 										type: 'button',
 										className: 'dsh-fe-icon',
@@ -2008,8 +2209,20 @@ window.__ModuleLoader__.load({
 													)
 													: preview.tooLarge ? t('files.imageTooLarge') : t('files.noPreview'),
 									)
-									: preview.text !== undefined && preview.text !== null && !preview.tooLarge
-										? React.createElement('div', { className: 'dsh-fe-modal-body dsh-fe-modal-body-editor' },
+									: mdView === 'render' && preview.text !== undefined && preview.text !== null && !preview.tooLarge
+										? React.createElement('div', { className: 'dsh-fe-markdown' },
+											mdHtml === null
+												? t('files.loading')
+												: mdHtml.error
+													? React.createElement('div', { className: 'dsh-fe-status dsh-fe-status-error' }, mdHtml.error)
+													: React.createElement('div', {
+														role: 'region',
+														'aria-label': t('files.markdownRender'),
+														dangerouslySetInnerHTML: { __html: mdHtml.html },
+													}),
+										)
+										: preview.text !== undefined && preview.text !== null && !preview.tooLarge && mdView !== 'render'
+											? React.createElement('div', { className: 'dsh-fe-modal-body dsh-fe-modal-body-editor' },
 											React.createElement(MonacoEditor, {
 												name: preview.name || '',
 												value: preview.text,

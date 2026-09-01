@@ -12,9 +12,11 @@ The plugin deliberately uses **live file references**, not copied attachment obj
 
 ## UI
 
-Images render as a constrained preview with a **View original** lightbox and **Download original** action. Files render as a filename, media type, size, and **Download** action. The card is replayable because its path metadata is persisted with the `tool/result` event.
+Images render as a constrained preview with a **View original** lightbox and **Download original** action. Files render as a filename, media type, size, and **Download** action. Markdown files (`.md`, `.markdown`, `.mdx`) additionally render an inline rendered preview below the file row, with the download action preserved. The card is replayable because its path metadata is persisted with the `tool/result` event.
 
-The image preview uses the current file bytes and CSS constraints rather than creating a second thumbnail object. Preview reads are capped at 16 MiB.
+The image preview uses the current file bytes and CSS constraints rather than creating a second thumbnail object. Preview reads are capped at 16 MiB; markdown text previews are capped at 1 MiB.
+
+The markdown renderer is markdown-it's UMD build served verbatim by the Host under `/_dsh/file-message/vendor/markdown-it.min.js` — no CDN, no bundler step. Rendering happens in the browser with `html: false` (raw HTML inside the file is escaped) and markdown-it's built-in `validateLink` rejects `javascript:`/`vbscript:`/`file:`/`data:` hrefs, so workspace files never inject markup or scripts into the page.
 
 Downloads are **native streaming**: the Download action is a plain link to the Host content route, which pipes the resolved workspace file straight into the HTTP response (`Content-Disposition: attachment`). The browser downloads natively — no fetch + blob buffering in page memory, no base64, and **no 64 MiB transfer ceiling** for downloads. Sending a file into the conversation still requires the file to fit in a 64 MiB read (the model-facing `send_file` bound), but downloading a sent file is unbounded.
 
@@ -58,6 +60,7 @@ Writes are serialized per session and published through a temporary file plus re
 - Symlink escapes are rejected by canonical containment.
 - Only regular files are accepted.
 - The Host re-resolves and re-stats the recorded path for every preview or download, and streams it through `ctx.fs.processPath` after the workspace-containment check.
+- The `content` route serves three modes: `preview` (images, ≤ 16 MiB), `text` (text/* files, ≤ 1 MiB, used by the markdown card), and `download` (native streaming, unbounded).
 - The browser never receives a `file://` URL or reads a local path directly.
 
 ## Install

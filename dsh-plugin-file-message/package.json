@@ -1,6 +1,6 @@
 {
   "name": "@yiln-dsh/dsh-plugin-file-message",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publishConfig": {
     "access": "public"
   },
@@ -42,5 +42,8 @@
   "engines": {
     "node": ">=22"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "markdown-it": "^15.0.1"
+  }
 }

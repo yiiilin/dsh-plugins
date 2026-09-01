@@ -1,5 +1,6 @@
-import { createReadStream } from 'node:fs'
+import { createReadStream, readFileSync } from 'node:fs'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { basename, dirname, extname, join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
@@ -27,7 +28,17 @@ const META_FILE = 'send-attachments-metas.json'
 const API_PATH = '/_dsh/file-message/content'
 const MAX_TRANSFER_BYTES = 64 * 1024 * 1024
 const MAX_PREVIEW_BYTES = 16 * 1024 * 1024
+const MAX_TEXT_PREVIEW_BYTES = 1 * 1024 * 1024
 const META_VERSION = 1
+
+// markdown-it UMD build (the package's "./browser" export) served verbatim
+// under a plugin-local route — same pattern as the file-explorer monaco tree:
+// the browser card loads it as a classic script, no CDN, no bundler step. The
+// file is read once at first request and cached for the process lifetime.
+const require = createRequire(import.meta.url)
+const MARKDOWN_IT_URL = '/_dsh/file-message/vendor/markdown-it.min.js'
+const MARKDOWN_IT_PATH = require.resolve('markdown-it/browser')
+let markdownItBody = null
 
 const IMAGE_MIME_BY_EXTENSION = Object.freeze({
   '.png': 'image/png',
@@ -197,7 +208,12 @@ function createMetaWriter(ctx) {
 
 function outputText(value) {
   const kind = value.kind === 'image' ? 'image' : 'file'
-  const action = kind === 'image' ? 'The user can preview and download it in the conversation.' : 'The user can download it in the conversation.'
+  const textLike = kind === 'file' && String(value.mediaType || '').startsWith('text/')
+  const action = kind === 'image'
+    ? 'The user can preview and download it in the conversation.'
+    : textLike
+      ? 'The user can preview and download it in the conversation.'
+      : 'The user can download it in the conversation.'
   return `Sent ${kind} "${value.path}" (${value.size} bytes). ${action}`
 }
 
@@ -351,8 +367,8 @@ async function handleContent(ctx, req, res) {
   const sessionId = url.searchParams.get('sessionId')
   const callId = url.searchParams.get('callId')
   const mode = url.searchParams.get('mode') || 'preview'
-  if (mode !== 'preview' && mode !== 'download') {
-    sendJson(res, 400, { ok: false, error: 'mode must be preview or download' })
+  if (mode !== 'preview' && mode !== 'download' && mode !== 'text') {
+    sendJson(res, 400, { ok: false, error: 'mode must be preview, text, or download' })
     return
   }
 
@@ -366,6 +382,25 @@ async function handleContent(ctx, req, res) {
     const size = asPositiveSize(info)
     if (mode === 'preview' && (!String(record.mediaType).startsWith('image/') || size > MAX_PREVIEW_BYTES)) {
       throw new Error('image preview is unavailable for this file')
+    }
+
+    if (mode === 'text') {
+      // Text preview for the markdown card: only text/* records, capped like
+      // the explorer's read route. The markdown-to-HTML step happens in the
+      // browser with the plugin-served markdown-it build.
+      const textMediaType = String(record.mediaType || '')
+      if (!textMediaType.startsWith('text/')) throw new Error('text preview is unavailable for this file')
+      if (size > MAX_TEXT_PREVIEW_BYTES) {
+        throw new Error(`text preview is unavailable for files larger than ${MAX_TEXT_PREVIEW_BYTES} bytes`)
+      }
+      const bytes = await ctx.fs.readBytes(target, undefined, MAX_TEXT_PREVIEW_BYTES)
+      res.writeHead(200, {
+        'content-type': textMediaType,
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      })
+      res.end(bytes)
+      return
     }
 
     const mediaType = mode === 'preview' ? String(record.mediaType) : (String(record.mediaType) || 'application/octet-stream')
@@ -423,8 +458,40 @@ export function apply(ctx) {
     },
   })
 
+  // Serves the vendored markdown-it UMD for the browser card renderer. Loaded
+  // once, cached for the process lifetime; the bundled file name is stable per
+  // plugin version, so a long cache is safe (same policy as the explorer's
+  // monaco tree).
+  const markdownDisposer = ctx.webServer.register({
+    kind: 'exact',
+    path: MARKDOWN_IT_URL,
+    handler: (req, res) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405)
+        res.end()
+        return
+      }
+      if (markdownItBody === null) {
+        try {
+          markdownItBody = readFileSync(MARKDOWN_IT_PATH)
+        } catch (error) {
+          sendJson(res, 500, { ok: false, error: `failed to read markdown renderer: ${errorMessage(error)}` })
+          return
+        }
+      }
+      res.writeHead(200, {
+        'content-type': 'text/javascript; charset=utf-8',
+        'content-length': markdownItBody.length,
+        'cache-control': 'public, max-age=31536000, immutable',
+      })
+      if (req.method === 'HEAD') res.end()
+      else res.end(markdownItBody)
+    },
+  })
+
   ctx.effect(() => () => {
     routeDisposer()
+    markdownDisposer()
   }, 'file-message: content route')
 }
 

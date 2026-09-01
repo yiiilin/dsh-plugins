@@ -18,6 +18,7 @@ window.__ModuleLoader__.load({
     const inject = ["slots"];
     const API_PATH = "/_dsh/file-message/content";
     const STYLE_ID = "dsh-plugin-file-message-style";
+    const MARKDOWN_URL = "/_dsh/file-message/vendor/markdown-it.min.js";
 
     const LOCALE_NS = "file-message";
     const ZH_DICT = {
@@ -26,6 +27,9 @@ window.__ModuleLoader__.load({
       close: "关闭",
       preparing: "准备中…",
       "loading.preview": "加载图片预览…",
+      "loading.markdown": "正在加载 Markdown 预览…",
+      "markdown.previewFailed": "Markdown 预览不可用",
+      "markdown.preview": "Markdown 预览",
       "send.failed": "发送失败",
       "meta.unavailable": "文件消息元数据不可用",
       "view.original": "查看原图",
@@ -39,6 +43,9 @@ window.__ModuleLoader__.load({
       close: "Close",
       preparing: "Preparing…",
       "loading.preview": "Loading image preview…",
+      "loading.markdown": "Loading markdown preview…",
+      "markdown.previewFailed": "Markdown preview unavailable",
+      "markdown.preview": "Markdown preview",
       "send.failed": "Failed to send",
       "meta.unavailable": "File message metadata unavailable",
       "view.original": "View original",
@@ -69,6 +76,24 @@ window.__ModuleLoader__.load({
 .dfm-button:focus-visible,.dfm-link:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#2563eb);outline-offset:2px}
 .dfm-button:disabled{opacity:.55;cursor:default}
 .dfm-error{padding:8px 10px;border:1px solid rgba(239,68,68,.35);border-radius:6px;background:rgba(239,68,68,.08);color:var(--dsw-alias-state-error-primary,#b91c1c);font-size:12px;line-height:18px;overflow-wrap:anywhere}
+.dfm-markdown{box-sizing:border-box;max-height:42vh;overflow:auto;padding:12px 14px;border:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.12));border-radius:8px;background:var(--dsw-alias-bg-layer-2,#f5f5f4);color:var(--dsw-alias-label-primary,#111827);font-size:13px;line-height:20px;overflow-wrap:anywhere}
+.dfm-markdown>:first-child{margin-top:0}.dfm-markdown>:last-child{margin-bottom:0}
+.dfm-markdown h1,.dfm-markdown h2,.dfm-markdown h3,.dfm-markdown h4{margin:14px 0 8px;font-weight:700;line-height:1.35}
+.dfm-markdown h1{font-size:17px}.dfm-markdown h2{font-size:15px}.dfm-markdown h3,.dfm-markdown h4{font-size:13px}
+.dfm-markdown p{margin:0 0 10px}
+.dfm-markdown a{color:var(--dsw-alias-brand-primary,#2563eb);text-decoration:underline}
+.dfm-markdown ul,.dfm-markdown ol{margin:0 0 10px;padding-left:22px}
+.dfm-markdown li{margin:2px 0}
+.dfm-markdown blockquote{margin:0 0 10px;padding:2px 12px;border-left:3px solid var(--dsw-alias-border-l2,rgba(0,0,0,.2));color:var(--dsw-alias-label-secondary,#4b5563)}
+.dfm-markdown code{box-sizing:border-box;padding:1px 5px;border-radius:4px;background:var(--dsw-alias-bg-base,#fff);font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:12px}
+.dfm-markdown pre{margin:0 0 10px;padding:10px 12px;border-radius:6px;background:var(--dsw-alias-bg-base,#fff);overflow:auto}
+.dfm-markdown pre code{padding:0;background:none;white-space:pre}
+.dfm-markdown table{border-collapse:collapse;margin:0 0 10px;max-width:100%;display:block;overflow:auto}
+.dfm-markdown th,.dfm-markdown td{padding:5px 10px;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.16));font-size:12px}
+.dfm-markdown th{background:var(--dsw-alias-bg-base,#fff);font-weight:700}
+.dfm-markdown hr{margin:12px 0;border:0;border-top:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.16))}
+.dfm-markdown img{max-width:100%;height:auto;border-radius:4px}
+.dfm-markdown-loading{padding:10px 12px;border:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.12));border-radius:8px;color:var(--dsw-alias-label-tertiary,#6b7280);font-size:12px;line-height:18px;text-align:center;overflow-wrap:anywhere}
 .dfm-lightbox{position:fixed;inset:0;z-index:1500;display:flex;align-items:center;justify-content:center;gap:12px;padding:24px;box-sizing:border-box;background:rgba(15,23,42,.78)}
 .dfm-lightbox-inner{position:relative;display:flex;flex-direction:column;align-items:center;gap:12px;max-width:100%;max-height:100%}
 .dfm-lightbox img{display:block;max-width:min(92vw,1400px);max-height:82vh;width:auto;height:auto;object-fit:contain;background:#111;box-shadow:0 16px 48px rgba(0,0,0,.38)}
@@ -118,7 +143,7 @@ window.__ModuleLoader__.load({
       return fallback;
     }
 
-    async function fetchResource(sessionId, callId, mode) {
+    async function fetchResourceRaw(sessionId, callId, mode) {
       const query = new URLSearchParams({ sessionId: String(sessionId), callId: String(callId), mode });
       const response = await fetch(`${API_PATH}?${query.toString()}`, { cache: "no-store" });
       if (!response.ok) {
@@ -131,8 +156,55 @@ window.__ModuleLoader__.load({
         }
         throw new Error(detail);
       }
+      return response;
+    }
+
+    async function fetchResource(sessionId, callId, mode) {
+      const response = await fetchResourceRaw(sessionId, callId, mode);
       const blob = await response.blob();
       return URL.createObjectURL(blob);
+    }
+
+    async function fetchTextResource(sessionId, callId) {
+      const response = await fetchResourceRaw(sessionId, callId, "text");
+      return response.text();
+    }
+
+    // --- markdown rendering --------------------------------------------------
+    // markdown-it UMD is served verbatim by the Host (no CDN), loaded as a
+    // classic script like the explorer's monaco tree. `html: false` escapes
+    // any embedded HTML in the workspace file, and markdown-it's built-in
+    // validateLink rejects javascript:/vbscript:/file:/data: hrefs, so the
+    // rendered HTML can be injected as-is.
+    let markdownItPromise = null;
+    function loadMarkdownIt() {
+      if (markdownItPromise) return markdownItPromise;
+      markdownItPromise = new Promise((resolve, reject) => {
+        if (typeof window.markdownit === "function") {
+          resolve(window.markdownit);
+          return;
+        }
+        const script = document.createElement("script");
+        script.src = MARKDOWN_URL;
+        script.async = true;
+        script.onload = () => {
+          if (typeof window.markdownit !== "function") {
+            reject(new Error("markdown-it did not install window.markdownit"));
+            return;
+          }
+          resolve(window.markdownit);
+        };
+        script.onerror = () => reject(new Error("could not load markdown renderer"));
+        document.head.append(script);
+      });
+      return markdownItPromise;
+    }
+
+    let markdownRenderer = null;
+    async function renderMarkdown(text) {
+      const markdownit = await loadMarkdownIt();
+      if (markdownRenderer === null) markdownRenderer = markdownit({ html: false, linkify: true });
+      return markdownRenderer.render(text);
     }
 
     function downloadUrl(sessionId, callId) {
@@ -225,10 +297,49 @@ window.__ModuleLoader__.load({
       };
     }
 
-    function createFileMessage(t, DownloadLink) {
+    function createMarkdownPreview(t) {
+      return function MarkdownPreview({ sessionId, callId, record }) {
+        const [state, setState] = React.useState({ status: "loading", html: null, error: null });
+
+        React.useEffect(() => {
+          let active = true;
+          setState({ status: "loading", html: null, error: null });
+          fetchTextResource(sessionId, callId)
+            .then((text) => renderMarkdown(text))
+            .then((html) => {
+              if (active) setState({ status: "ready", html, error: null });
+            })
+            .catch((error) => {
+              if (active) setState({ status: "error", html: null, error: messageOf(error) });
+            });
+          return () => {
+            active = false;
+          };
+        }, [sessionId, callId, record.path, record.version]);
+
+        if (state.status === "loading") {
+          return React.createElement("div", { className: "dfm-markdown-loading" }, t("loading.markdown"));
+        }
+        if (state.status === "error") {
+          return React.createElement("div", { className: "dfm-error", role: "alert" }, state.error);
+        }
+        // The HTML comes from markdown-it with `html: false` (raw HTML in the
+        // file is escaped) and its built-in validateLink blocks dangerous
+        // href protocols, so injecting it is safe.
+        return React.createElement("div", {
+          className: "dfm-markdown",
+          role: "region",
+          "aria-label": t("markdown.preview"),
+          dangerouslySetInnerHTML: { __html: state.html },
+        });
+      };
+    }
+
+    function createFileMessage(t, DownloadLink, MarkdownPreview) {
       return function FileMessage({ sessionId, callId, record }) {
         const extension = record.displayName.includes(".") ? record.displayName.split(".").pop().slice(0, 5) : "file";
         const size = `${Math.max(0, Math.round(record.size / 1024))} KB`;
+        const isMarkdown = /\.(md|markdown|mdx)$/i.test(record.displayName);
         return React.createElement("div", { className: "dfm-card" },
           record.caption ? React.createElement("div", { className: "dfm-caption" }, record.caption) : null,
           React.createElement("div", { className: "dfm-file" },
@@ -239,6 +350,7 @@ window.__ModuleLoader__.load({
             ),
             React.createElement(DownloadLink, { sessionId, callId, name: record.displayName }),
           ),
+          isMarkdown ? React.createElement(MarkdownPreview, { sessionId, callId, record }) : null,
         );
       };
     }
@@ -280,7 +392,8 @@ window.__ModuleLoader__.load({
         : (key, params) => applyParams(ZH_DICT[key] ?? EN_DICT[key] ?? key, params);
       const DownloadLink = createDownloadLink(t);
       const ImageMessage = createImageMessage(t, DownloadLink);
-      const FileMessage = createFileMessage(t, DownloadLink);
+      const MarkdownPreview = createMarkdownPreview(t);
+      const FileMessage = createFileMessage(t, DownloadLink, MarkdownPreview);
       const FileMessageToolView = createFileMessageToolView(t, ImageMessage, FileMessage);
       ctx.effect(() => installStyle(), "file-message: stylesheet");
       ctx.slots.inject("tool.call.toolview", function* () {

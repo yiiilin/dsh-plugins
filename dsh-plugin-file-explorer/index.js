@@ -32,6 +32,13 @@ const MONACO_MIME = {
 }
 const MONACO_CACHE = new Map()
 
+// markdown-it UMD build (the package's "./browser" export) served verbatim
+// under a plugin-local route — same self-contained pattern as the monaco tree:
+// no CDN, no bundler step. The file is read once at first request.
+const MARKDOWN_IT_URL = '/_dsh/file-explorer/vendor/markdown-it.min.js'
+const MARKDOWN_IT_PATH = require.resolve('markdown-it/browser')
+let markdownItBody = null
+
 function parentOf(path) {
   if (!path) return null
   const cleaned = path.replace(/[/\\]+$/, '')
@@ -408,6 +415,36 @@ export function apply(ctx) {
       })
       if (req.method === 'HEAD') res.end()
       else res.end(asset.body)
+    },
+  }))
+
+  disposers.push(webServer.register({
+    kind: 'exact',
+    path: MARKDOWN_IT_URL,
+    handler: (req, res) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405)
+        res.end()
+        return
+      }
+      if (markdownItBody === null) {
+        try {
+          markdownItBody = readFileSync(MARKDOWN_IT_PATH)
+        } catch (error) {
+          res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end(error && typeof error.message === 'string' ? error.message : String(error))
+          return
+        }
+      }
+      res.writeHead(200, {
+        'content-type': 'text/javascript; charset=utf-8',
+        'content-length': markdownItBody.length,
+        // Bundled file name is stable per plugin version; same long-cache
+        // policy as the monaco tree.
+        'cache-control': 'public, max-age=31536000, immutable',
+      })
+      if (req.method === 'HEAD') res.end()
+      else res.end(markdownItBody)
     },
   }))
 
