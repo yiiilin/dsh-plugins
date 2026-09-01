@@ -16,7 +16,16 @@ Images render as a constrained preview with a **View original** lightbox and **D
 
 The image preview uses the current file bytes and CSS constraints rather than creating a second thumbnail object. Preview reads are capped at 16 MiB; markdown text previews are capped at 1 MiB.
 
-The markdown renderer is markdown-it's UMD build served verbatim by the Host under `/_dsh/file-message/vendor/markdown-it.min.js` — no CDN, no bundler step. Rendering happens in the browser with `html: false` (raw HTML inside the file is escaped) and markdown-it's built-in `validateLink` rejects `javascript:`/`vbscript:`/`file:`/`data:` hrefs, so workspace files never inject markup or scripts into the page.
+The markdown renderer is markdown-it's standalone ESM build (the `./browser`
+export) served verbatim by the Host under
+`/_dsh/file-message/vendor/markdown-it.mjs` — no CDN, no bundler step. The
+browser loads it with dynamic `import()`. The ESM build is deliberate: the
+UMD build's AMD branch would be taken whenever a global `define` exists (the
+monaco loader in the same page), registering the module anonymously instead
+of exposing the constructor. Rendering happens in the browser with
+`html: false` (raw HTML inside the file is escaped) and markdown-it's
+built-in `validateLink` rejects `javascript:`/`vbscript:`/`file:`/`data:`
+hrefs, so workspace files never inject markup or scripts into the page.
 
 Downloads are **native streaming**: the Download action is a plain link to the Host content route, which pipes the resolved workspace file straight into the HTTP response (`Content-Disposition: attachment`). The browser downloads natively — no fetch + blob buffering in page memory, no base64, and **no 64 MiB transfer ceiling** for downloads. Sending a file into the conversation still requires the file to fit in a 64 MiB read (the model-facing `send_file` bound), but downloading a sent file is unbounded.
 

@@ -1011,32 +1011,23 @@ window.__ModuleLoader__.load({
 			}
 
 			// --- markdown rendering ------------------------------------------------
-			// markdown-it UMD is served verbatim by the Host (no CDN) and loaded
-			// as a classic script, exactly like the monaco AMD loader above.
+			// markdown-it's standalone ESM build is served verbatim by the Host
+			// (no CDN) and loaded with dynamic `import()`. The ESM build is used
+			// deliberately: the UMD build picks the AMD branch whenever a global
+			// `define` exists (the monaco AMD loader above installs one), which
+			// registers the module anonymously instead of exposing a constructor.
 			// `html: false` escapes any embedded HTML in the workspace file, and
 			// markdown-it's built-in validateLink rejects javascript:/vbscript:/
 			// file:/data: hrefs, so the rendered HTML can be injected as-is.
-			const MARKDOWN_IT_URL = '/_dsh/file-explorer/vendor/markdown-it.min.js'
+			const MARKDOWN_IT_URL = '/_dsh/file-explorer/vendor/markdown-it.mjs'
 			let markdownItPromise = null
 			function loadMarkdownIt() {
 				if (markdownItPromise) return markdownItPromise
-				markdownItPromise = new Promise((resolve, reject) => {
-					if (typeof window.markdownit === 'function') {
-						resolve(window.markdownit)
-						return
+				markdownItPromise = import(MARKDOWN_IT_URL).then((mod) => {
+					if (mod === null || typeof mod.default !== 'function') {
+						throw new Error('markdown-it module did not export a constructor')
 					}
-					const script = document.createElement('script')
-					script.src = MARKDOWN_IT_URL
-					script.async = true
-					script.onload = () => {
-						if (typeof window.markdownit !== 'function') {
-							reject(new Error('markdown-it did not install window.markdownit'))
-							return
-						}
-						resolve(window.markdownit)
-					}
-					script.onerror = () => reject(new Error('could not load markdown renderer'))
-					document.head.append(script)
+					return mod.default
 				})
 				return markdownItPromise
 			}

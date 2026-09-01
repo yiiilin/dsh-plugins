@@ -36,7 +36,7 @@ A DSH `dsh.bundle` that contributes a workspace file explorer page to the
 
 | File | Content |
 | --- | --- |
-| `index.js` | Host half: registers exact `/ _dsh/file-explorer/*` routes backed by the Host `fs`/`subprocess` services (`list`, `read`, `write`, `download`, `delete`), plus read-only git routes (`/ _dsh/file-explorer/git-log`, `git-commit`, `git-diff`, `git-status`) that run `git` with machine-readable separators and return JSON only. Also serves the monaco-editor AMD tree under `/ _dsh/file-explorer/monaco/vs` and the markdown-it UMD build under `/ _dsh/file-explorer/vendor/markdown-it.min.js`. |
+| `index.js` | Host half: registers exact `/ _dsh/file-explorer/*` routes backed by the Host `fs`/`subprocess` services (`list`, `read`, `write`, `download`, `delete`), plus read-only git routes (`/ _dsh/file-explorer/git-log`, `git-commit`, `git-diff`, `git-status`) that run `git` with machine-readable separators and return JSON only. Also serves the monaco-editor AMD tree under `/ _dsh/file-explorer/monaco/vs` and the markdown-it ESM build under `/ _dsh/file-explorer/vendor/markdown-it.mjs`. |
 | `client.js` | Client half: registers independent keyed `right-panel.page` entries for Files and Git Graph, and loads monaco-editor from the host-served AMD tree. |
 | `cordis.patch.yml` | Composition patch that mounts the host row — declared with `inject: [webServer]`, so it activates only after the stock webserver service (`127.0.0.1`) is up. |
 
@@ -91,12 +91,17 @@ apply the new profile composition.
   package under `/ _dsh/file-explorer/monaco/vs`). The editor lazily loads the
   language features for css/html/json/typescript, tracks dirty state, saves via
   the `write` route, and confirms before discarding unsaved changes.
-- Markdown files render with markdown-it's UMD build served verbatim by the
-  Host under `/ _dsh/file-explorer/vendor/markdown-it.min.js` — no CDN, no
-  bundler step. Rendering happens in the browser with `html: false` (raw HTML
-  inside the file is escaped) and markdown-it's built-in `validateLink`
-  rejects `javascript:`/`vbscript:`/`file:`/`data:` hrefs, so workspace files
-  never inject markup or scripts into the page.
+- Markdown files render with markdown-it's standalone ESM build (the
+  `./browser` export) served verbatim by the Host under
+  `/ _dsh/file-explorer/vendor/markdown-it.mjs` — no CDN, no bundler step.
+  The browser loads it with dynamic `import()`. The ESM build is deliberate:
+  the UMD build's AMD branch would be taken whenever a global `define`
+  exists (the monaco loader in the same page), registering the module
+  anonymously instead of exposing the constructor. Rendering happens in the
+  browser with `html: false` (raw HTML inside the file is escaped) and
+  markdown-it's built-in `validateLink` rejects
+  `javascript:`/`vbscript:`/`file:`/`data:` hrefs, so workspace files never
+  inject markup or scripts into the page.
 - `delete` removes regular files (`rm -f`) and directories recursively
   (`rm -rf`); both are called only after a second-click confirm in the UI.
 - Git routes are read-only. They resolve the repository root with

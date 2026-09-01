@@ -18,7 +18,7 @@ window.__ModuleLoader__.load({
     const inject = ["slots"];
     const API_PATH = "/_dsh/file-message/content";
     const STYLE_ID = "dsh-plugin-file-message-style";
-    const MARKDOWN_URL = "/_dsh/file-message/vendor/markdown-it.min.js";
+    const MARKDOWN_URL = "/_dsh/file-message/vendor/markdown-it.mjs";
 
     const LOCALE_NS = "file-message";
     const ZH_DICT = {
@@ -171,31 +171,22 @@ window.__ModuleLoader__.load({
     }
 
     // --- markdown rendering --------------------------------------------------
-    // markdown-it UMD is served verbatim by the Host (no CDN), loaded as a
-    // classic script like the explorer's monaco tree. `html: false` escapes
-    // any embedded HTML in the workspace file, and markdown-it's built-in
-    // validateLink rejects javascript:/vbscript:/file:/data: hrefs, so the
-    // rendered HTML can be injected as-is.
+    // markdown-it's standalone ESM build is served verbatim by the Host (no
+    // CDN) and loaded with dynamic `import()`. The ESM build is used
+    // deliberately: the UMD build picks the AMD branch whenever a global
+    // `define` exists (the monaco loader installs one in this page), which
+    // registers the module anonymously instead of exposing a constructor.
+    // `html: false` escapes any embedded HTML in the workspace file, and
+    // markdown-it's built-in validateLink rejects javascript:/vbscript:/file:/
+    // data: hrefs, so the rendered HTML can be injected as-is.
     let markdownItPromise = null;
     function loadMarkdownIt() {
       if (markdownItPromise) return markdownItPromise;
-      markdownItPromise = new Promise((resolve, reject) => {
-        if (typeof window.markdownit === "function") {
-          resolve(window.markdownit);
-          return;
+      markdownItPromise = import(MARKDOWN_URL).then((mod) => {
+        if (mod === null || typeof mod.default !== "function") {
+          throw new Error("markdown-it module did not export a constructor");
         }
-        const script = document.createElement("script");
-        script.src = MARKDOWN_URL;
-        script.async = true;
-        script.onload = () => {
-          if (typeof window.markdownit !== "function") {
-            reject(new Error("markdown-it did not install window.markdownit"));
-            return;
-          }
-          resolve(window.markdownit);
-        };
-        script.onerror = () => reject(new Error("could not load markdown renderer"));
-        document.head.append(script);
+        return mod.default;
       });
       return markdownItPromise;
     }

@@ -31,13 +31,15 @@ const MAX_PREVIEW_BYTES = 16 * 1024 * 1024
 const MAX_TEXT_PREVIEW_BYTES = 1 * 1024 * 1024
 const META_VERSION = 1
 
-// markdown-it UMD build (the package's "./browser" export) served verbatim
-// under a plugin-local route — same pattern as the file-explorer monaco tree:
-// the browser card loads it as a classic script, no CDN, no bundler step. The
-// file is read once at first request and cached for the process lifetime.
+// markdown-it standalone ESM build (the package's "./browser" import export)
+// served verbatim under a plugin-local route — same pattern as the
+// file-explorer monaco tree: the browser card imports it, no CDN, no bundler
+// step. The ESM build is used deliberately: unlike the UMD build it has no
+// AMD wrapper, so the monaco loader's global `define` can never hijack it.
+// The file is read once at first request and cached for the process lifetime.
 const require = createRequire(import.meta.url)
-const MARKDOWN_IT_URL = '/_dsh/file-message/vendor/markdown-it.min.js'
-const MARKDOWN_IT_PATH = require.resolve('markdown-it/browser')
+const MARKDOWN_IT_URL = '/_dsh/file-message/vendor/markdown-it.mjs'
+const MARKDOWN_IT_PATH = join(dirname(require.resolve('markdown-it/package.json')), 'dist', 'browser', 'markdown-it.esm.min.mjs')
 let markdownItBody = null
 
 const IMAGE_MIME_BY_EXTENSION = Object.freeze({

@@ -32,11 +32,14 @@ const MONACO_MIME = {
 }
 const MONACO_CACHE = new Map()
 
-// markdown-it UMD build (the package's "./browser" export) served verbatim
-// under a plugin-local route — same self-contained pattern as the monaco tree:
-// no CDN, no bundler step. The file is read once at first request.
-const MARKDOWN_IT_URL = '/_dsh/file-explorer/vendor/markdown-it.min.js'
-const MARKDOWN_IT_PATH = require.resolve('markdown-it/browser')
+// markdown-it standalone ESM build (the package's "./browser" import export)
+// served verbatim under a plugin-local route — same self-contained pattern as
+// the monaco tree: no CDN, no bundler step. The ESM build is used
+// deliberately: unlike the UMD build it has no AMD wrapper, so the monaco
+// loader's global `define` can never hijack it. The file is read once at
+// first request.
+const MARKDOWN_IT_URL = '/_dsh/file-explorer/vendor/markdown-it.mjs'
+const MARKDOWN_IT_PATH = join(dirname(require.resolve('markdown-it/package.json')), 'dist', 'browser', 'markdown-it.esm.min.mjs')
 let markdownItBody = null
 
 function parentOf(path) {
