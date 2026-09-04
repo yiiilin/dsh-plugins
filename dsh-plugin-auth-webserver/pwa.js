@@ -37,7 +37,13 @@ self.addEventListener("activate", function (event) {
   event.waitUntil(self.clients.claim());
 });
 self.addEventListener("fetch", function (event) {
-  if (event.request.method === "GET") event.respondWith(fetch(event.request));
+  if (event.request.method !== "GET") return;
+  const url = new URL(event.request.url);
+  // Dynamic plugin APIs are no-store, time-sensitive responses. Let the
+  // browser dispatch them directly instead of creating a second request leg
+  // through this pass-through worker.
+  if (url.origin === self.location.origin && url.pathname.startsWith("/_dsh/")) return;
+  event.respondWith(fetch(event.request));
 });
 `;
 

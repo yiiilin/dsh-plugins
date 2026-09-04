@@ -21,7 +21,11 @@ A DSH `dsh.bundle` that keeps the stock webserver untouched and adds an
 - the gateway supplies a complete PWA manifest, 180/192/512px PNG icons,
   iOS home-screen metadata, and a pass-through service worker;
 - optional WebAuthn Passkeys can replace password entry for enrolled devices,
-  while password/TOTP recovery remains available.
+  while password/TOTP recovery remains available;
+- an auth-owned in-app configuration editor replaces the server-native **Open
+  configuration file** action for remote Settings pages; it does not depend on
+  File Explorer, and a deliberately unsafe HTTP opt-in exists only for trusted
+  LAN deployments.
 
 So the default web module is a *new* module instead of a replacement: local
 access behaves exactly like stock DSH, and LAN clients get the full GUI behind
@@ -29,7 +33,7 @@ authentication.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.5.0`.
+The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.6.0`.
 
 The plugin is plain JavaScript source; there is no build step.
 
@@ -51,7 +55,7 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.5.0.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.6.0.tgz
 ```
 
 The tarball already contains the runnable source. A user can also unpack it,
@@ -73,7 +77,7 @@ dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@latest
 Pin a version if you want reproducible installs:
 
 ```bash
-dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.5.0
+dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.6.0
 ```
 
 ### Direct GitHub
@@ -98,7 +102,7 @@ The plugin version is defined by the `version` field in `package.json`:
 ```json
 {
   "name": "@yiln-dsh/dsh-plugin-auth-webserver",
-  "version": "0.5.0"
+  "version": "0.6.0"
 }
 ```
 
@@ -110,8 +114,8 @@ Semantic versioning is recommended:
 
 The selected version is used for:
 
-- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.5.0`
-- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.5.0.tgz`
+- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.6.0`
+- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.6.0.tgz`
 - the metadata inside the tarball/npm package
 
 A `file:` source install uses the version that is currently in the source tree;
@@ -241,6 +245,34 @@ also lists registered Passkeys and can add or revoke them. Adding or revoking a
 Passkey requires the current gateway password and, when enabled, the current TOTP
 code.
 
+### Edit the full settings document remotely
+
+When Settings is served through this gateway, **Open configuration file** becomes
+**Edit configuration file**. The auth-webserver client owns the in-app editor
+above the DSH Settings sheet; File Explorer is neither required nor involved.
+
+This is a full-document action: `$DSH_HOME/settings.yaml` can contain API keys,
+the gateway password, and the TOTP secret. Opening requires the existing
+logged-in cookie session; saving requires that session plus the gateway CSRF
+value. It intentionally does not request the password or TOTP a second time.
+Reads and saves are `no-store`; saves validate that the document is a YAML
+mapping, use a content revision to reject conflicts, and coordinate with the
+settings provider through its file lock and atomic replacement.
+
+The editor owns no caller-selected path. Its only backend route is:
+
+```text
+GET/POST  /_dsh/auth-webserver/settings-editor/document
+```
+
+For a deliberately trusted LAN, deployment configuration may set
+`allowInsecureSettingsEditor: true`. This opt-in keeps the logged-in session
+and CSRF protection, but **does not encrypt the complete configuration**; the
+in-app modal displays a transport warning. Never enable it for a public or
+untrusted network. Saving a change to gateway credentials or 2FA can revoke
+the editor's session shortly afterwards. Prefer an HTTPS reverse proxy or
+SSH/desktop editing.
+
 The card uses these authenticated routes:
 
 ```text
@@ -295,9 +327,12 @@ Edit `$DSH_HOME/profiles/web/cordis.patch.yml` after installing:
     allowedOrigins: ['https://dsh.yiln.de']
     trustedProxyAddresses: ['192.0.2.10']
     requireHttps: true
+    # Default false. Set true only for a physically trusted LAN; it exposes
+    # the full settings document and step-up credentials over plain HTTP.
+    allowInsecureSettingsEditor: false
     passkeyRpName: 'DeepSeek Harness'
-     passkeyRpId: 'dsh.yiln.de'
-     sessionMaxAgeSeconds: 86400
+    passkeyRpId: 'dsh.yiln.de'
+    sessionMaxAgeSeconds: 86400
     sessionIdleTimeoutSeconds: 43200
     loginMaxAttempts: 10
     loginWindowSeconds: 60

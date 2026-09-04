@@ -86,7 +86,24 @@ window.__ModuleLoader__.load({
 .daw-passkeyMeta dt{color:var(--dsw-alias-label-tertiary);white-space:nowrap}
 .daw-passkeyMeta dd{min-width:0;margin:0;overflow-wrap:anywhere;color:var(--dsw-alias-label-secondary)}
 .daw-passkeyAction{align-self:center;min-width:52px;padding-inline:9px}
-@media (max-width:560px){.daw-client{grid-template-columns:minmax(0,1fr);gap:8px}.daw-clientAction{justify-self:end}.daw-clientsHeader{align-items:flex-start}.daw-clientList{border-radius:6px}.daw-passkey{grid-template-columns:minmax(0,1fr);gap:8px}.daw-passkeyAction{justify-self:end}.daw-passkeyAdd{grid-template-columns:minmax(0,1fr)}}
+.daw-settingsEditorOverlay{position:fixed;inset:0;z-index:1400;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;background:rgba(15,23,42,.42);pointer-events:auto}
+.daw-settingsEditorDialog{box-sizing:border-box;width:min(920px,100%);height:min(80vh,720px);display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.18));border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#111827);box-shadow:0 18px 50px rgba(0,0,0,.22)}
+.daw-settingsEditorHead{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 12px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12))}
+.daw-settingsEditorTitle{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:600}
+.daw-settingsEditorMeta{flex:none;color:var(--dsw-alias-label-tertiary,#78716c);font-size:12px}
+.daw-settingsEditorIcon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary,#57534e);cursor:pointer}
+.daw-settingsEditorIcon:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#e7e5e4);color:var(--dsw-alias-label-primary,#111827)}
+.daw-settingsEditorIcon:disabled{opacity:.55;cursor:default}
+.daw-settingsEditorWarning{margin:0;padding:7px 14px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.1));background:color-mix(in srgb,var(--dsw-alias-state-warning-primary,#d97706) 12%,var(--dsw-alias-bg-layer-1,#fff));color:var(--dsw-alias-state-warning-primary,#b45309);font-size:12px;line-height:18px}
+.daw-settingsEditorBody{display:flex;flex:1 1 auto;min-height:0;padding:0;overflow:hidden}
+.daw-settingsEditorInput{width:100%;height:100%;resize:none;box-sizing:border-box;padding:14px;border:0;outline:0;background:transparent;color:inherit;font:12px/18px ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2}
+.daw-settingsEditorFallback{padding:14px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--dsw-alias-state-error-primary,#b91c1c);font:13px/1.5 sans-serif}
+.daw-settingsEditorFooter{display:flex;align-items:center;gap:8px;min-height:36px;padding:4px 12px;border-top:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));color:var(--dsw-alias-label-secondary,#78716c);font-size:12px}
+.daw-settingsEditorStatus{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.daw-settingsEditorStatus[data-kind="dirty"]{color:var(--dsw-alias-state-warning-primary,#d97706)}
+.daw-settingsEditorStatus[data-kind="error"]{color:var(--dsw-alias-state-error-primary,#b91c1c)}
+.daw-settingsEditorSave{margin-left:auto}
+@media (max-width:560px){.daw-client{grid-template-columns:minmax(0,1fr);gap:8px}.daw-clientAction{justify-self:end}.daw-clientsHeader{align-items:flex-start}.daw-clientList{border-radius:6px}.daw-passkey{grid-template-columns:minmax(0,1fr);gap:8px}.daw-passkeyAction{justify-self:end}.daw-passkeyAdd{grid-template-columns:minmax(0,1fr)}.daw-settingsEditorOverlay{padding:0}.daw-settingsEditorDialog{width:100vw;height:100vh;max-height:none;border:0;border-radius:0}}
 `;
 
 			document.head.append(style);
@@ -174,6 +191,19 @@ window.__ModuleLoader__.load({
 			"passkeys.revokeAria": "撤销 {name}",
 			"notice.passkeyRegistered": "通行密钥已注册。",
 			"notice.passkeyRevoked": "通行密钥已撤销。",
+			"settingsEditor.title": "模型配置文件",
+			"settingsEditor.filename": "settings.yaml",
+			"settingsEditor.loading": "正在加载配置文件…",
+			"settingsEditor.reload": "重新加载配置文件",
+			"settingsEditor.close": "关闭配置编辑器",
+			"settingsEditor.save": "保存配置",
+			"settingsEditor.saving": "保存中…",
+			"settingsEditor.saved": "已保存",
+			"settingsEditor.dirty": "有未保存的更改",
+			"settingsEditor.discardConfirm": "有未保存的配置更改，确定放弃并关闭吗？",
+			"settingsEditor.loadFailed": "无法加载配置文件",
+			"settingsEditor.saveFailed": "无法保存配置文件",
+			"settingsEditor.insecure": "当前连接未加密，配置内容会以明文传输。",
 		};
 		const EN_DICT = {
 			"card.title": "Auth webserver",
@@ -256,6 +286,19 @@ window.__ModuleLoader__.load({
 			"passkeys.revokeAria": "Revoke {name}",
 			"notice.passkeyRegistered": "Passkey registered.",
 			"notice.passkeyRevoked": "Passkey revoked.",
+			"settingsEditor.title": "Model configuration file",
+			"settingsEditor.filename": "settings.yaml",
+			"settingsEditor.loading": "Loading configuration file…",
+			"settingsEditor.reload": "Reload configuration file",
+			"settingsEditor.close": "Close configuration editor",
+			"settingsEditor.save": "Save configuration",
+			"settingsEditor.saving": "Saving…",
+			"settingsEditor.saved": "Saved",
+			"settingsEditor.dirty": "Unsaved changes",
+			"settingsEditor.discardConfirm": "You have unsaved configuration changes. Discard them and close?",
+			"settingsEditor.loadFailed": "Could not load configuration file",
+			"settingsEditor.saveFailed": "Could not save configuration file",
+			"settingsEditor.insecure": "This connection is unencrypted; configuration content travels as plain text.",
 		};
 
 		function applyParams(template, params) {
@@ -337,6 +380,8 @@ window.__ModuleLoader__.load({
 		const PASSKEY_REGISTER_OPTIONS_PATH = "/_dsh/auth-webserver/passkeys/register/options";
 		const PASSKEY_REGISTER_VERIFY_PATH = "/_dsh/auth-webserver/passkeys/register/verify";
 		const PASSKEY_REVOKE_PATH = "/_dsh/auth-webserver/passkeys/revoke";
+		const SETTINGS_EDITOR_EVENT = "dsh-auth-open-settings-editor";
+		const SETTINGS_EDITOR_DOCUMENT_PATH = "/_dsh/auth-webserver/settings-editor/document";
 
 		function passkeysFromResponse(data) {
 			const rows = Array.isArray(data)
@@ -418,6 +463,185 @@ window.__ModuleLoader__.load({
 					? credential.getClientExtensionResults()
 					: {},
 				...(credential.authenticatorAttachment ? { authenticatorAttachment: credential.authenticatorAttachment } : {}),
+			};
+		}
+
+		function createSettingsEditorOverlay(t) {
+			return function SettingsEditorOverlay() {
+				const [open, setOpen] = React.useState(false);
+				const [generation, setGeneration] = React.useState(0);
+				const [content, setContent] = React.useState(null);
+				const [revision, setRevision] = React.useState(null);
+				const [loading, setLoading] = React.useState(false);
+				const [saving, setSaving] = React.useState(false);
+				const [dirty, setDirty] = React.useState(false);
+				const [saved, setSaved] = React.useState(false);
+				const [error, setError] = React.useState(null);
+				const dirtyRef = React.useRef(false);
+
+				React.useEffect(() => {
+					const openEditor = (event) => {
+						event.preventDefault();
+						dirtyRef.current = false;
+						setDirty(false);
+						setSaved(false);
+						setError(null);
+						setContent(null);
+						setRevision(null);
+						setOpen(true);
+						setGeneration((value) => value + 1);
+					};
+					window.addEventListener(SETTINGS_EDITOR_EVENT, openEditor);
+					return () => window.removeEventListener(SETTINGS_EDITOR_EVENT, openEditor);
+				}, []);
+
+				React.useEffect(() => {
+					if (!open) return undefined;
+					let cancelled = false;
+					setLoading(true);
+					setSaved(false);
+					setError(null);
+					api(SETTINGS_EDITOR_DOCUMENT_PATH)
+						.then((data) => {
+							if (cancelled) return;
+							if (typeof data.content !== "string" || typeof data.revision !== "string") {
+								throw new Error(t("settingsEditor.loadFailed"));
+							}
+							dirtyRef.current = false;
+							setDirty(false);
+							setContent(data.content);
+							setRevision(data.revision);
+						})
+						.catch((cause) => {
+							if (!cancelled) setError(cause instanceof Error ? cause.message : t("settingsEditor.loadFailed"));
+						})
+						.finally(() => {
+							if (!cancelled) setLoading(false);
+						});
+					return () => { cancelled = true; };
+				}, [open, generation]);
+
+				const close = () => {
+					if (saving) return;
+					if (dirtyRef.current && !window.confirm(t("settingsEditor.discardConfirm"))) return;
+					dirtyRef.current = false;
+					setDirty(false);
+					setOpen(false);
+					setContent(null);
+					setRevision(null);
+					setError(null);
+				};
+				const reload = () => {
+					if (loading || saving) return;
+					if (dirtyRef.current && !window.confirm(t("settingsEditor.discardConfirm"))) return;
+					dirtyRef.current = false;
+					setDirty(false);
+					setSaved(false);
+					setGeneration((value) => value + 1);
+				};
+				const saveDocument = () => {
+					if (saving || content === null || revision === null) return;
+					setSaving(true);
+					setSaved(false);
+					setError(null);
+					api(SETTINGS_EDITOR_DOCUMENT_PATH, { content, revision })
+						.then((data) => {
+							if (typeof data.revision !== "string") throw new Error(t("settingsEditor.saveFailed"));
+							dirtyRef.current = false;
+							setDirty(false);
+							setRevision(data.revision);
+							setSaved(true);
+						})
+						.catch((cause) => setError(cause instanceof Error ? cause.message : t("settingsEditor.saveFailed")))
+						.finally(() => setSaving(false));
+				};
+				const onKeyDown = (event) => {
+					if (event.key !== "Escape") return;
+					event.stopPropagation();
+					close();
+				};
+				if (!open) return null;
+
+				const insecure = typeof location !== "undefined" && location.protocol !== "https:";
+				const status = loading
+					? { text: t("settingsEditor.loading"), kind: "" }
+					: saving
+						? { text: t("settingsEditor.saving"), kind: "" }
+						: error !== null
+							? { text: error, kind: "error" }
+							: dirty
+								? { text: t("settingsEditor.dirty"), kind: "dirty" }
+								: saved ? { text: t("settingsEditor.saved"), kind: "" } : null;
+
+				return React.createElement(
+					"div",
+					{ className: "daw-settingsEditorOverlay", role: "presentation", onClick: close },
+					React.createElement(
+						"div",
+						{
+							className: "daw-settingsEditorDialog",
+							role: "dialog",
+							"aria-modal": "true",
+							"aria-label": t("settingsEditor.title"),
+							tabIndex: -1,
+							onKeyDown,
+							onClick: (event) => event.stopPropagation(),
+						},
+						React.createElement(
+							"div",
+							{ className: "daw-settingsEditorHead" },
+							React.createElement("div", { className: "daw-settingsEditorTitle" }, t("settingsEditor.title")),
+							React.createElement("div", { className: "daw-settingsEditorMeta" }, t("settingsEditor.filename")),
+							React.createElement("button", {
+								type: "button",
+								className: "daw-settingsEditorIcon",
+								disabled: loading || saving,
+								onClick: reload,
+								"aria-label": t("settingsEditor.reload"),
+								title: t("settingsEditor.reload"),
+							}, "↻"),
+							React.createElement("button", {
+								type: "button",
+								className: "daw-settingsEditorIcon",
+								disabled: saving,
+								onClick: close,
+								"aria-label": t("settingsEditor.close"),
+								title: t("settingsEditor.close"),
+							}, "×"),
+						),
+						insecure ? React.createElement("p", { className: "daw-settingsEditorWarning", role: "alert" }, t("settingsEditor.insecure")) : null,
+						React.createElement(
+							"div",
+							{ className: "daw-settingsEditorBody" },
+							content === null
+								? React.createElement("div", { className: "daw-settingsEditorFallback" }, loading ? t("settingsEditor.loading") : error || t("settingsEditor.loadFailed"))
+								: React.createElement("textarea", {
+									className: "daw-settingsEditorInput",
+									value: content,
+									autoFocus: true,
+									spellCheck: false,
+									disabled: loading || saving,
+									onChange: (event) => {
+										dirtyRef.current = true;
+										setDirty(true);
+										setSaved(false);
+										setContent(event.target.value);
+									},
+								}),
+						),
+						React.createElement(
+							"div",
+							{ className: "daw-settingsEditorFooter" },
+							status === null ? null : React.createElement("span", { className: "daw-settingsEditorStatus", "data-kind": status.kind }, status.text),
+							React.createElement("button", {
+								type: "button",
+								className: "daw-btn primary daw-settingsEditorSave",
+								disabled: !dirty || loading || saving || content === null || revision === null,
+								onClick: saveDocument,
+							}, t("settingsEditor.save")),
+						),
+					),
+				);
 			};
 		}
 
@@ -1004,6 +1228,12 @@ window.__ModuleLoader__.load({
 				? locale.bind(LOCALE_NS)
 				: (key, params) => applyParams(ZH_DICT[key] ?? EN_DICT[key] ?? key, params);
 			const AuthWebserverCard = createAuthWebserverCard(t);
+			const SettingsEditorOverlay = createSettingsEditorOverlay(t);
+			ctx.effect(() => slots.inject("settings.action", () => slots.register({
+				name: "settings.action",
+				id: "auth-webserver.settings-editor",
+				order: 100,
+			}, SettingsEditorOverlay)), "auth-webserver: settings editor overlay");
 			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
 				name: "settings.plugin.item",
 				key: "auth-webserver",

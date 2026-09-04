@@ -19,6 +19,7 @@ export function apply(ctx: any, config?: Partial<{
   allowedOrigins: string[];
   trustedProxyAddresses: string[];
   requireHttps: boolean;
+  allowInsecureSettingsEditor: boolean;
   passkeyRpName: string;
   passkeyRpId: string;
   sessionMaxAgeSeconds: number;

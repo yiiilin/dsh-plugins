@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import vm from "node:vm";
 import {
   PWA_MANIFEST_PATH,
   PWA_PUBLIC_PATHS,
@@ -14,6 +15,36 @@ const INDEX = `<!doctype html>
 <head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body><div id="root"></div></body>
 </html>`;
+
+function dispatchServiceWorkerFetch(request) {
+  const listeners = new Map();
+  const forwarded = [];
+  let responsePromise;
+  const worker = pwaAsset(PWA_SERVICE_WORKER_PATH);
+  assert.ok(worker);
+  vm.runInNewContext(worker.body.toString("utf8"), {
+    URL,
+    fetch(value) {
+      forwarded.push(value);
+      return Promise.resolve({});
+    },
+    self: {
+      addEventListener(type, listener) {
+        listeners.set(type, listener);
+      },
+      location: { origin: "https://dsh.example.test" },
+    },
+  });
+  const listener = listeners.get("fetch");
+  assert.equal(typeof listener, "function");
+  listener({
+    request,
+    respondWith(value) {
+      responsePromise = value;
+    },
+  });
+  return { forwarded, responsePromise };
+}
 
 test("provides an installable manifest with standard PNG icons", () => {
   const asset = pwaAsset(PWA_MANIFEST_PATH);
@@ -39,6 +70,24 @@ test("provides a pass-through service worker with a fetch handler", () => {
   assert.match(source, /addEventListener\("activate"/u);
   assert.match(source, /addEventListener\("fetch"/u);
   assert.equal(asset.cacheControl, "no-cache");
+});
+
+test("does not proxy dynamic DSH API requests through the service worker", () => {
+  const result = dispatchServiceWorkerFetch({
+    method: "GET",
+    url: "https://dsh.example.test/_dsh/web-daemon/metrics",
+  });
+  assert.equal(result.forwarded.length, 0);
+  assert.equal(result.responsePromise, undefined);
+});
+
+test("continues to proxy ordinary GET requests through the service worker", () => {
+  const result = dispatchServiceWorkerFetch({
+    method: "GET",
+    url: "https://dsh.example.test/icons/icon-192.png",
+  });
+  assert.equal(result.forwarded.length, 1);
+  assert.ok(result.responsePromise instanceof Promise);
 });
 
 test("injects iOS metadata and one idempotent service-worker registration", () => {
