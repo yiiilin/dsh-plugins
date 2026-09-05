@@ -11,9 +11,10 @@ command remains unexecuted.
 ## Behavior
 
 The plugin adds a `systemPrompt` section that tells the model to omit
-`sandbox_permissions` during ordinary calls and to explain this failure instead
-of repeating it blindly. It also listens to `tools/post-execute` and replaces
-only the matching bash failure text with a diagnostic containing:
+`sandbox_permissions` and `justification` during ordinary calls, and to explain
+this failure instead of repeating it blindly. It also listens to
+`tools/post-execute` and replaces only the matching bash failure text with a
+diagnostic containing:
 
 - the fact that bash did not run;
 - the requested sandbox mode;
@@ -22,9 +23,14 @@ only the matching bash failure text with a diagnostic containing:
 
 Other bash failures pass through unchanged.
 
+When a sandbox denial genuinely requires more access, the injected guidance
+instructs the model to retry the exact command once with the narrowest wider mode
+and a non-empty justification, allowing DSH's native approval flow to ask the
+user. It does not ask for approval in chat first.
+
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-sandbox-guidance@0.1.0`.
+The published package is `@yiln-dsh/dsh-plugin-sandbox-guidance@0.1.1`.
 
 ```bash
 dsh plugin --profile web add @yiln-dsh/dsh-plugin-sandbox-guidance@latest
