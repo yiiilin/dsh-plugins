@@ -8,6 +8,7 @@ own directory.
 | Plugin | Purpose |
 | --- | --- |
 | [`@yiln-dsh/dsh-plugin-auth-webserver`](./dsh-plugin-auth-webserver) | Auth-gated reverse proxy with enforced deployment Host/Origin, HTTPS, TOTP, bounded sessions/rate limits, and WebSocket lifecycle protection. |
+| [`@yiln-dsh/dsh-plugin-sandbox-guidance`](./dsh-plugin-sandbox-guidance) | Explain non-widening sandbox failures to the model and user without changing execution policy. |
 | [`@yiln-dsh/dsh-plugin-file-explorer`](./dsh-plugin-file-explorer) | Contribute workspace Files and Git Graph pages to the right-panel host. |
 | [`@yiln-dsh/dsh-plugin-right-panel`](./dsh-plugin-right-panel) | Fixed right-side page host with keyed Slots, icon rail, and overflow page menu. |
 | [`@yiln-dsh/dsh-plugin-file-message`](./dsh-plugin-file-message) | Let the model send workspace-backed files and images into the conversation. |
@@ -63,6 +64,7 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 | Package | Version |
 | --- | --- |
 | `@yiln-dsh/dsh-plugin-auth-webserver` | `0.7.0` |
+| `@yiln-dsh/dsh-plugin-sandbox-guidance` | `0.1.0` |
 | `@yiln-dsh/dsh-plugin-file-explorer` | `0.8.1` |
 | `@yiln-dsh/dsh-plugin-right-panel` | `0.1.2` |
 | `@yiln-dsh/dsh-plugin-delete-session` | `0.1.3` |

@@ -1,0 +1,11 @@
+# dsh-plugin-sandbox-guidance bundle patch.
+#
+# Adds a Host-only prompt/result diagnostic; it never changes sandbox policy or
+# replaces the native bash executor.
+
+- insert:
+    - id: sandbox-guidance
+      name: '@yiln-dsh/dsh-plugin-sandbox-guidance'
+      inject:
+        - tools
+        - systemPrompt
