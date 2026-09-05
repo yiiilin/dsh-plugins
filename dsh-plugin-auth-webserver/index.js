@@ -4,10 +4,13 @@
  * An auth-gated reverse proxy for the DSH web server.
  *
  * The stock `dsh web` server stays untouched and keeps listening on
- * 127.0.0.1:3080 (loopback, no auth). This bundle instead listens on every
- * non-loopback network interface address at the same port (e.g. 192.168.1.5:3080),
- * requires HTTP Basic Auth or an HMAC-signed login cookie (optionally protected
- * by TOTP), and proxies every accepted request — including WebSocket upgrades — to 127.0.0.1:3080.
+ * 127.0.0.1:3080 (loopback, with DSH core browser authentication). This bundle
+ * instead listens on every non-loopback network interface address at the same
+ * port (e.g. 192.168.1.5:3080), requires HTTP Basic Auth or an HMAC-signed
+ * login cookie (optionally protected by TOTP), and proxies every accepted
+ * request — including WebSocket upgrades — to 127.0.0.1:3080. The gateway
+ * completes the official core browser-session exchange internally, so a public
+ * client never needs to receive or retain the rotating process token.
  *
  * Credential precedence is DSH_AUTH_USER/DSH_AUTH_PASS (or AUTH_USER/AUTH_PASS)
  * > the settings user document (namespace `auth-webserver`, written by the GUI
@@ -43,13 +46,20 @@ import {
   SETTINGS_EDITOR_DOCUMENT_PATH,
   MAX_SETTINGS_DOCUMENT_BYTES,
 } from "./settings-editor.js";
+import {
+  attachCoreCookie,
+  createCoreSessionBridge,
+  createLoopbackTarget,
+  stripCoreSetCookies,
+  stripLaunchToken,
+} from "./core-session.js";
 
 export const name = "auth-webserver";
 
-// Hard dependency on the settings service: the GUI card and this plugin share
-// one namespace ("auth-webserver"), so apply must wait until the service is
-// up instead of reading it with ctx.get at an arbitrary boot moment.
-export const inject = ["settings"];
+// Hard dependencies on the settings and core browser-connection services: the
+// gateway owns public auth, while the connection service owns the official
+// loopback browser-session exchange used by the upstream DSH web server.
+export const inject = ["settings", "connection"];
 
 const NS = "auth-webserver";
 
@@ -1672,6 +1682,10 @@ export async function apply(ctx, config) {
 
   const targetHost = config.targetHost;
   const targetPort = config.targetPort;
+  const coreTarget = createLoopbackTarget(targetHost, targetPort);
+  const coreSessionBridge = createCoreSessionBridge(ctx.connection, coreTarget, {
+    timeoutMs: config.upstreamTimeoutMs,
+  });
 
   const gatewayResponseHeaders = (headers, req, rawPath) => {
     const publicPwaRequest = isPublicPwaRequest(req, rawPath);
@@ -1681,6 +1695,7 @@ export async function apply(ctx, config) {
       if (result[key.toLowerCase()] === undefined) result[key.toLowerCase()] = value;
     }
     if (!publicPwaRequest) result["cache-control"] = "no-store";
+    stripCoreSetCookies(result);
     return result;
   };
 
@@ -1700,21 +1715,31 @@ export async function apply(ctx, config) {
     return headers;
   };
 
-  const proxyRequest = (req, res, rawPath) => {
+  const proxyRequest = async (req, res, rawPath) => {
+    let coreSession;
+    try {
+      coreSession = await coreSessionBridge.ensure();
+    } catch (error) {
+      ctx.logger?.warn?.("auth-webserver: core browser session bootstrap failed", error);
+      req.resume();
+      sendJson(res, 503, { ok: false, error: "Upstream authentication unavailable" });
+      return;
+    }
     const headers = cleanForwardedHeaders({ ...req.headers });
     if (headers.cookie !== undefined) {
       headers.cookie = stripGatewayCookies(headers.cookie);
       if (headers.cookie === undefined) delete headers.cookie;
     }
+    headers.cookie = attachCoreCookie(headers.cookie, coreSession);
     // Hop-by-hop request headers must not be forwarded to the upstream.
     for (const h of ["connection", "keep-alive", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"]) {
       delete headers[h];
     }
-    headers.host = `${targetHost}:${targetPort}`;
+    headers.host = coreTarget.authority;
     // The upstream API guard accepts a request only when its Origin matches
     // the rewritten Host header, so a validated public Origin is translated
     // to the local upstream authority after the gateway policy has run.
-    if (headers.origin !== undefined) headers.origin = `http://${targetHost}:${targetPort}`;
+    if (headers.origin !== undefined) headers.origin = coreTarget.origin;
     headers["x-forwarded-for"] = clientAddress(req);
 
     let proxyResponse;
@@ -1724,13 +1749,14 @@ export async function apply(ctx, config) {
     };
 
     const proxyReq = request({
-      hostname: targetHost,
+      hostname: coreTarget.hostname,
       port: targetPort,
-      path: req.url,
+      path: stripLaunchToken(req.url),
       method: req.method,
       headers,
     }, (proxyRes) => {
       proxyResponse = proxyRes;
+      if (proxyRes.statusCode === 401) coreSessionBridge.invalidate();
       const respondProxyError = () => {
         if (res.headersSent || res.writableEnded || res.destroyed) {
           res.destroy();
@@ -1766,7 +1792,7 @@ export async function apply(ctx, config) {
     req.pipe(proxyReq);
   };
 
-  const proxyUpgrade = (req, socket, head, auth) => {
+  const proxyUpgrade = async (req, socket, head, auth) => {
     if (disposed) {
       rejectUpgrade(socket, 503, "Service Unavailable");
       return;
@@ -1776,13 +1802,22 @@ export async function apply(ctx, config) {
       rejectUpgrade(socket, 400, "Bad Request");
       return;
     }
+    let coreSession;
+    try {
+      coreSession = await coreSessionBridge.ensure();
+    } catch (error) {
+      ctx.logger?.warn?.("auth-webserver: core browser session bootstrap failed", error);
+      rejectUpgrade(socket, 503, "Service Unavailable");
+      return;
+    }
     const headers = cleanForwardedHeaders({ ...req.headers });
     if (headers.cookie !== undefined) {
       headers.cookie = stripGatewayCookies(headers.cookie);
       if (headers.cookie === undefined) delete headers.cookie;
     }
-    headers.host = `${targetHost}:${targetPort}`;
-    if (headers.origin) headers.origin = `http://${targetHost}:${targetPort}`;
+    headers.cookie = attachCoreCookie(headers.cookie, coreSession);
+    headers.host = coreTarget.authority;
+    if (headers.origin) headers.origin = coreTarget.origin;
     headers["x-forwarded-for"] = clientAddress(req);
     for (const h of ["connection", "keep-alive", "proxy-connection", "te", "trailer", "transfer-encoding"]) {
       delete headers[h];
@@ -1790,9 +1825,9 @@ export async function apply(ctx, config) {
     headers.connection = "Upgrade";
     headers.upgrade = "websocket";
     const proxyReq = request({
-      hostname: targetHost,
+      hostname: coreTarget.hostname,
       port: targetPort,
-      path: req.url,
+      path: stripLaunchToken(req.url),
       method: "GET",
       headers,
     });
@@ -1829,6 +1864,7 @@ export async function apply(ctx, config) {
         return;
       }
       pair.request = null;
+      if (proxyRes.statusCode === 401) coreSessionBridge.invalidate();
       pair.upstream = proxySocket;
       const statusMessage = proxyRes.statusMessage || "Switching Protocols";
       // A 101 response is only valid for the browser when it carries the
@@ -1836,7 +1872,7 @@ export async function apply(ctx, config) {
       const lines = [`HTTP/1.1 ${proxyRes.statusCode} ${statusMessage}`];
       lines.push(`Upgrade: ${proxyRes.headers.upgrade ?? "websocket"}`);
       lines.push("Connection: Upgrade");
-      for (const [key, value] of Object.entries(proxyRes.headers)) {
+      for (const [key, value] of Object.entries(stripCoreSetCookies({ ...proxyRes.headers }))) {
         if (key.toLowerCase() === "connection" || key.toLowerCase() === "upgrade") continue;
         if (Array.isArray(value)) {
           for (const item of value) lines.push(`${key}: ${item}`);
@@ -1885,13 +1921,14 @@ export async function apply(ctx, config) {
     // Upstream refused the upgrade (e.g. 403): relay that response instead of
     // leaving the browser socket hanging without a handshake answer.
     proxyReq.on("response", (proxyRes) => {
+      if (proxyRes.statusCode === 401) coreSessionBridge.invalidate();
       pair.closed = true;
       removePair();
       socket.off("close", closePair);
       socket.off("error", closePair);
       const statusMessage = proxyRes.statusMessage || "";
       const lines = [`HTTP/1.1 ${proxyRes.statusCode} ${statusMessage}`.trimEnd()];
-      for (const [key, value] of Object.entries(proxyRes.headers)) {
+      for (const [key, value] of Object.entries(stripCoreSetCookies({ ...proxyRes.headers }))) {
         if (Array.isArray(value)) {
           for (const item of value) lines.push(`${key}: ${item}`);
         } else {
@@ -2088,6 +2125,7 @@ export async function apply(ctx, config) {
   const closeAll = () => {
     if (closeAllPromise !== undefined) return closeAllPromise;
     disposed = true;
+    coreSessionBridge.dispose();
     persistSessions();
     closeActiveSockets();
     closeAllPromise = Promise.all(servers.map(closeServer)).then(() => undefined);

@@ -1,6 +1,6 @@
 {
   "name": "@yiln-dsh/dsh-plugin-auth-webserver",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "publishConfig": {
     "access": "public"
   },
@@ -42,6 +42,7 @@
     "session-store.js",
     "settings-editor.js",
     "passkey-store.js",
+    "core-session.js",
     "pwa",
     "totp.js",
     "test",
@@ -57,6 +58,7 @@
     "@deepseek-ai/dsh-atomic-write": ">=0.1.2-rc.1",
     "@deepseek-ai/dsh-client-ui-settings": ">=0.1.2-rc.1",
     "@deepseek-ai/dsh-client-ui-settings-general": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-connection": ">=0.1.2-rc.1",
     "@deepseek-ai/dsh-settings": ">=0.1.2-rc.1",
     "@deepseek-ai/schemastery": ">=3.0.0"
   },

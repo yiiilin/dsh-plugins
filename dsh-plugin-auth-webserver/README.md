@@ -3,7 +3,7 @@
 A DSH `dsh.bundle` that keeps the stock webserver untouched and adds an
 **auth-gated reverse proxy** for LAN or explicitly configured public access:
 
-- the stock `dsh web` server stays on `127.0.0.1:3080` (loopback, no auth);
+- the stock `dsh web` server stays on `127.0.0.1:3080` (loopback, with DSH core browser authentication);
 - this bundle listens on every **non-loopback NIC address** at the same port
   (e.g. `192.168.1.5:3080`);
 - it requires HTTP Basic Auth or an HMAC login cookie; TOTP can be required to disable Basic Auth;
@@ -12,6 +12,9 @@ A DSH `dsh.bundle` that keeps the stock webserver untouched and adds an
   available for internet-facing deployments;
 - every accepted request — including WebSocket upgrades — is proxied to the
   stock `127.0.0.1:3080` server;
+- the gateway completes DSH core's rotating browser-session exchange internally
+  and keeps that upstream cookie in memory, so gateway clients do not need a new
+  core `?token=` URL after a daemon restart;
 - narrow browser viewports receive a full-width mobile conversation shell with
   drawer navigation and a mobile details panel, while desktop viewports keep
   the stock three-column layout;
@@ -33,7 +36,7 @@ authentication.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.7.0`.
+The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.7.1`.
 
 The plugin is plain JavaScript source; there is no build step.
 
@@ -55,7 +58,7 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.7.0.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.7.1.tgz
 ```
 
 The tarball already contains the runnable source. A user can also unpack it,
@@ -77,7 +80,7 @@ dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@latest
 Pin a version if you want reproducible installs:
 
 ```bash
-dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.7.0
+dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.7.1
 ```
 
 ### Direct GitHub
@@ -102,7 +105,7 @@ The plugin version is defined by the `version` field in `package.json`:
 ```json
 {
   "name": "@yiln-dsh/dsh-plugin-auth-webserver",
-  "version": "0.7.0"
+  "version": "0.7.1"
 }
 ```
 
@@ -114,8 +117,8 @@ Semantic versioning is recommended:
 
 The selected version is used for:
 
-- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.7.0`
-- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.7.0.tgz`
+- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.7.1`
+- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.7.1.tgz`
 - the metadata inside the tarball/npm package
 
 A `file:` source install uses the version that is currently in the source tree;
