@@ -1,6 +1,6 @@
 {
   "name": "@yiln-dsh/dsh-plugin-auth-webserver",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "publishConfig": {
     "access": "public"
   },
@@ -25,7 +25,8 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-runtime"
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-general"
       ],
       "platform": "web"
     }
@@ -53,9 +54,10 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
-    "@deepseek-ai/dsh-atomic-write": ">=0.1.0-rc.0",
-    "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.0",
-    "@deepseek-ai/dsh-settings": ">=0.1.0-rc.0",
+    "@deepseek-ai/dsh-atomic-write": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-settings": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-settings-general": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-settings": ">=0.1.2-rc.1",
     "@deepseek-ai/schemastery": ">=3.0.0"
   },
   "engines": {

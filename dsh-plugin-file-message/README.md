@@ -74,6 +74,8 @@ Writes are serialized per session and published through a temporary file plus re
 
 ## Install
 
+The published package is `@yiln-dsh/dsh-plugin-file-message@0.3.1`.
+
 ```bash
 dsh plugin --profile web add file:/path/to/dsh-plugin-file-message
 ```

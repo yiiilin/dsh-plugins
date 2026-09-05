@@ -1,6 +1,6 @@
 import { launchEnvironmentOf } from "@deepseek-ai/dsh-launch-environment";
-import { CONTEXT_WINDOW_EXCEEDED_CODE, CallId, EMPTY_RESPONSE_CODE, INVALID_CREDENTIAL_CODE, LlmAdapter, LlmError, QUOTA_EXCEEDED_CODE, ReasoningEffortId, RetryPolicySchema, assertUsableApiKey, attributionHeaders, contentHasImage, isContextWindowExceededError, isQuotaExceededError, normalizeApiKey, offloadRequestImagesWithPolicy, requestImageHandleText, resolveRetryPolicy } from "@deepseek-ai/dsh-llm";
-import { deepEqualJson, installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
+import * as dshLlm from "@deepseek-ai/dsh-llm";
+import * as dshSettings from "@deepseek-ai/dsh-settings";
 import { createModels, createProvider, getSupportedThinkingLevels, isContextOverflow, clampThinkingLevel } from "@earendil-works/pi-ai";
 import { buildBaseOptions } from "@earendil-works/pi-ai/api/simple-options";
 import { MAX_TIMER_DELAY_MS, idleWatchdog, timeoutOf } from "@deepseek-ai/dsh-timeout";
@@ -14,6 +14,57 @@ import { homedir } from "node:os";
 import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 import { registerModelsSettingsPatch } from "./settings-patch.js";
+
+const {
+	CONTEXT_WINDOW_EXCEEDED_CODE,
+	EMPTY_RESPONSE_CODE,
+	INVALID_CREDENTIAL_CODE,
+	LlmAdapter,
+	LlmError,
+	QUOTA_EXCEEDED_CODE,
+	ReasoningEffortId,
+	RetryPolicySchema,
+	assertUsableApiKey,
+	attributionHeaders,
+	contentHasImage,
+	isContextWindowExceededError,
+	isQuotaExceededError,
+	normalizeApiKey,
+	offloadRequestImagesWithPolicy,
+	requestImageHandleText,
+	resolveRetryPolicy,
+} = dshLlm;
+
+const CallId = typeof dshLlm.ToolCallId === "function"
+	? dshLlm.ToolCallId
+	: typeof dshLlm.CallId === "function"
+		? dshLlm.CallId
+		: (value) => value;
+
+function deepEqualJson(left, right) {
+	if (Object.is(left, right)) return true;
+	if (Array.isArray(left) || Array.isArray(right)) {
+		return Array.isArray(left) && Array.isArray(right)
+			&& left.length === right.length
+			&& left.every((value, index) => deepEqualJson(value, right[index]));
+	}
+	if (left === null || right === null || typeof left !== "object" || typeof right !== "object") return false;
+	const leftKeys = Object.keys(left).sort();
+	const rightKeys = Object.keys(right).sort();
+	return leftKeys.length === rightKeys.length
+		&& leftKeys.every((key, index) => key === rightKeys[index] && deepEqualJson(left[key], right[key]));
+}
+
+function installSettingsSection(ctx, ns, schema, entry, hooks) {
+	if (typeof dshSettings.installSettingsSection === "function") {
+		return dshSettings.installSettingsSection(ctx, ns, schema, entry, hooks);
+	}
+	const settings = typeof ctx?.get === "function" ? ctx.get("settings") : undefined;
+	if (settings !== undefined && typeof settings.installSection === "function") {
+		return settings.installSection(ctx, ns, schema, entry, hooks);
+	}
+	return ctx.inject(["settings"], (settingsCtx) => settingsCtx.settings.installSection(ctx, ns, schema, entry, hooks));
+}
 //#region lib/types/replay.js
 /**
 * Durable pi-ai replay metadata and assistant-history reconstruction.
@@ -2398,7 +2449,7 @@ function registerPiAiFlows(ctx, auth) {
 */
 const name = "llm-pi-ai";
 const inject = ["llm", "webServer", "clientModules"];
-const NS = settingsNamespace("llm-pi-ai");
+const NS = "llm-pi-ai";
 /**
 * The registry captures these per route; a change here must re-register.
 * Sorted by provider so a settings document that merely reorders its keys is

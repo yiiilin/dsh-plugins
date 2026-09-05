@@ -192,6 +192,7 @@ window.__ModuleLoader__.load({
 			"notice.passkeyRegistered": "通行密钥已注册。",
 			"notice.passkeyRevoked": "通行密钥已撤销。",
 			"settingsEditor.title": "模型配置文件",
+			"settingsEditor.open": "编辑配置文件",
 			"settingsEditor.filename": "settings.yaml",
 			"settingsEditor.loading": "正在加载配置文件…",
 			"settingsEditor.reload": "重新加载配置文件",
@@ -287,6 +288,7 @@ window.__ModuleLoader__.load({
 			"notice.passkeyRegistered": "Passkey registered.",
 			"notice.passkeyRevoked": "Passkey revoked.",
 			"settingsEditor.title": "Model configuration file",
+			"settingsEditor.open": "Edit configuration file",
 			"settingsEditor.filename": "settings.yaml",
 			"settingsEditor.loading": "Loading configuration file…",
 			"settingsEditor.reload": "Reload configuration file",
@@ -641,6 +643,24 @@ window.__ModuleLoader__.load({
 							}, t("settingsEditor.save")),
 						),
 					),
+				);
+			};
+		}
+
+		function createSettingsEditorAction(t) {
+			const SettingsEditorOverlay = createSettingsEditorOverlay(t);
+			return function SettingsEditorAction() {
+				const openEditor = () => {
+					const event = new CustomEvent(SETTINGS_EDITOR_EVENT, { cancelable: true });
+					window.dispatchEvent(event);
+				};
+				return React.createElement(React.Fragment, null,
+					React.createElement("button", {
+						type: "button",
+						className: "daw-btn ghost",
+						onClick: openEditor,
+					}, t("settingsEditor.open")),
+					React.createElement(SettingsEditorOverlay),
 				);
 			};
 		}
@@ -1228,12 +1248,13 @@ window.__ModuleLoader__.load({
 				? locale.bind(LOCALE_NS)
 				: (key, params) => applyParams(ZH_DICT[key] ?? EN_DICT[key] ?? key, params);
 			const AuthWebserverCard = createAuthWebserverCard(t);
-			const SettingsEditorOverlay = createSettingsEditorOverlay(t);
+			const SettingsEditorAction = createSettingsEditorAction(t);
 			ctx.effect(() => slots.inject("settings.action", () => slots.register({
 				name: "settings.action",
-				id: "auth-webserver.settings-editor",
-				order: 100,
-			}, SettingsEditorOverlay)), "auth-webserver: settings editor overlay");
+				id: "open-document",
+				priority: -1,
+				order: 0,
+			}, SettingsEditorAction)), "auth-webserver: settings editor action");
 			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
 				name: "settings.plugin.item",
 				key: "auth-webserver",

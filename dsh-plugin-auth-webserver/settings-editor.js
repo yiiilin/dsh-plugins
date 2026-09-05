@@ -3,42 +3,9 @@ import { lstat, readFile } from "node:fs/promises";
 import { withFileLock, writeFileAtomic } from "@deepseek-ai/dsh-atomic-write";
 import yaml from "js-yaml";
 
-export const SETTINGS_EDITOR_EVENT = "dsh-auth-open-settings-editor";
 export const SETTINGS_EDITOR_DOCUMENT_PATH = "/_dsh/auth-webserver/settings-editor/document";
-
-const SETTINGS_OPEN_DOCUMENT_BLOCK = /const response = await this\.api\.settings\.openDocument\(\{\}\);\s*if \(!response\.result\.ok\) throw new Error\(response\.result\.error\.message\);/u;
 const REVISION_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
 export const MAX_SETTINGS_DOCUMENT_BYTES = 1024 * 1024;
-
-/**
- * Rewire the stock Settings action only through the auth gateway. The matching
- * file-explorer client owns the overlay and calls preventDefault(), so local
- * DSH pages retain native opening while remote pages never navigate away.
- */
-export function patchSettingsGeneralClient(source) {
-  if (typeof source !== "string" || !SETTINGS_OPEN_DOCUMENT_BLOCK.test(source)) return null;
-  let patched = source.replace(
-    SETTINGS_OPEN_DOCUMENT_BLOCK,
-    `const settingsEditorEvent = new CustomEvent("${SETTINGS_EDITOR_EVENT}", { cancelable: true });\n\t\t\t\t\tglobalThis.dispatchEvent(settingsEditorEvent);\n\t\t\t\t\tif (!settingsEditorEvent.defaultPrevented) throw new Error("settings-editor-unavailable");\n\t\t\t\t\treturn;`,
-  );
-  patched = patched.replace(
-    '"openDocument": "打开配置文件",',
-    '"openDocument": "在应用内编辑配置文件",',
-  );
-  patched = patched.replace(
-    '"openDocument.error": "无法打开配置文件",',
-    '"openDocument.error": "无法打开内嵌配置编辑器",',
-  );
-  patched = patched.replace(
-    '"openDocument": "Open configuration file",',
-    '"openDocument": "Edit configuration file",',
-  );
-  patched = patched.replace(
-    '"openDocument.error": "Could not open configuration file",',
-    '"openDocument.error": "Could not open the in-app configuration editor",',
-  );
-  return patched;
-}
 
 /** Reject malformed documents before replacing the live settings file. */
 export function validateSettingsDocument(content) {

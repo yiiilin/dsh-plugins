@@ -39,7 +39,7 @@ Supported install formats:
 
   ```bash
   cd /path/to/dsh-plugin-auth-webserver && pnpm pack
-  dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.6.0.tgz
+  dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.7.0.tgz
   ```
 
 - **npm package.** Publish one plugin directory, then install by name:
@@ -62,15 +62,15 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 
 | Package | Version |
 | --- | --- |
-| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.6.0` |
-| `@yiln-dsh/dsh-plugin-file-explorer` | `0.8.0` |
-| `@yiln-dsh/dsh-plugin-right-panel` | `0.1.1` |
-| `@yiln-dsh/dsh-plugin-delete-session` | `0.1.2` |
-| `@yiln-dsh/dsh-plugin-file-message` | `0.3.0` |
-| `@yiln-dsh/dsh-plugin-llm-adapter` | `0.1.0` |
-| `@yiln-dsh/dsh-plugin-web-daemon` | `0.6.0` |
-| `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.6` |
-| `@yiln-dsh/dsh-plugin-web-browser` | `0.1.0` |
+| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.7.0` |
+| `@yiln-dsh/dsh-plugin-file-explorer` | `0.8.1` |
+| `@yiln-dsh/dsh-plugin-right-panel` | `0.1.2` |
+| `@yiln-dsh/dsh-plugin-delete-session` | `0.1.3` |
+| `@yiln-dsh/dsh-plugin-file-message` | `0.3.1` |
+| `@yiln-dsh/dsh-plugin-llm-adapter` | `0.2.0` |
+| `@yiln-dsh/dsh-plugin-web-daemon` | `0.7.0` |
+| `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.7` |
+| `@yiln-dsh/dsh-plugin-web-browser` | `0.1.1` |
 
 Each plugin's version is the `version` field in its own `package.json`.
 Semantic versioning is recommended: patch for fixes, minor for additive
@@ -97,7 +97,7 @@ shared three ways:
 
   ```bash
   cd dsh-plugin-auth-webserver && pnpm pack
-  dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.6.0.tgz
+  dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.7.0.tgz
   ```
 
 - **Direct GitHub URL.** This works only when the repository root itself is the

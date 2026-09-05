@@ -1,6 +1,6 @@
 {
   "name": "@yiln-dsh/dsh-plugin-terminal-tab",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "publishConfig": {
     "access": "public"
   },
@@ -18,7 +18,6 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-ui-conversation"
       ],
       "platform": "web"
@@ -36,10 +35,9 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
-    "@deepseek-ai/dsh-agent": ">=0.1.0-rc.0",
-    "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.0",
-    "@deepseek-ai/dsh-client-ui-conversation": ">=0.1.0-rc.0",
-    "@deepseek-ai/dsh-subprocess": ">=0.1.0-rc.0"
+    "@deepseek-ai/dsh-agent": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-conversation": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-subprocess": ">=0.1.2-rc.1"
   },
   "engines": {
     "node": ">=22"

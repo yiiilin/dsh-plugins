@@ -27,15 +27,13 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { cpus, freemem, homedir, loadavg, release, totalmem } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { settingsNamespace } from "@deepseek-ai/dsh-settings";
-import { resolveSessionPreset } from "@deepseek-ai/dsh-agent-presets";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 
 export const name = "web-daemon";
-export const inject = ["webServer", "settings", "clientModules", "apiProxy"];
+export const inject = ["webServer", "settings"];
 
-const NS = settingsNamespace("web-daemon");
+const NS = "web-daemon";
 const WORKER_FLAG = "DSH_WEB_DAEMON_WORKER";
 const API_PREFIX = "/_dsh/web-daemon";
 const SESSION_REGISTRY_DIR = ["plugins", "dsh-plugin-web-daemon"];
@@ -47,6 +45,13 @@ const SESSION_REGISTRY_STALE_MS = 30000;
 const RESUME_PLUGIN_SOURCE = "dsh-plugin-web-daemon";
 const INTERRUPTED_RESUME_TEXT = "The daemon restarted while this session was running. Continue the task from the recovered conversation. Before repeating any operation, verify the outcome of tool calls marked as unknown.";
 const RECOVERY_GATED_API_METHODS = {
+  sessionController: ["list", "search", "create", "page", "modelCatalog", "selectModel", "rename", "prompt", "fork", "attachment", "updateQueue", "cancel"],
+  goals: ["create", "edit", "pause", "resume", "complete", "clear"],
+  agentPresets: ["remoteExportList", "select"],
+  subagents: ["listChildren", "prompt", "interruptByParent"],
+};
+
+const LEGACY_RECOVERY_GATED_API_METHODS = {
   sessions: ["list", "search", "create", "history", "models", "selectModel", "rename", "prompt", "fork", "attachment", "updateQueue", "cancel"],
   goals: ["create", "edit", "pause", "resume", "complete", "clear"],
   agentPresets: ["list", "select"],
@@ -135,172 +140,23 @@ function answerHeadlessOpen(res, envelope) {
   res.end(body);
 }
 
-const DELIVERABLES_CLIENT_PATH = "/plugins/@deepseek-ai/dsh-client-ui-deliverables/client.js";
-const TOOL_CLIENT_PATH = "/plugins/@deepseek-ai/dsh-client-ui-tool/client.js";
-const SIDEBAR_CLIENT_PATH = "/plugins/@deepseek-ai/dsh-client-ui-sidebar/client.js";
-
-function patchDeliverablesClient(source) {
-  let patched = source;
-  patched = patched.replace(
-    /function producedFileMentions\(paths, openFile, label\) \{/,
-    "function producedFileMentions(paths, openFile, label, canOpenPath) {",
-  );
-  patched = patched.replace(
-    /open: \(\) => \{\s*openFile\(path\);\s*\},/,
-    "open: () => { if (canOpenPath) openFile(path); },",
-  );
-  patched = patched.replace(
-    /onClick: \(\) => \{\s*openFile\(path\);\s*\},/,
-    "onClick: () => { if (canOpenPath) openFile(path); },",
-  );
-  patched = patched.replace(
-    /return producedFileMentions\(paths, owner\.openFile, \(path\) => t\("produced\.open", \{ name: path \}\)\);/,
-    "const description = connection.hostDescription.getSnapshot();\n\t\t\t\t\tconst canOpenPath = connection.isLoopback && description?.canOpenPath === true;\n\t\t\t\t\treturn producedFileMentions(paths, owner.openFile, (path) => t(\"produced.open\", { name: path }), canOpenPath);",
-  );
-  return patched;
-}
-
-function patchToolClient(source) {
-  let patched = source;
-  patched = patched.replace(
-    /function ToolRow\(\{ t, variant, toolName, icon, title, summary, summarySuffix, body, output, errorSummary, terminal, diff, read, search, web, state, filePath, onOpenFile, inspect \}\) \{/,
-    "function ToolRow({ t, variant, toolName, icon, title, summary, summarySuffix, body, output, errorSummary, terminal, diff, read, search, web, state, filePath, onOpenFile, inspect }) {",
-  );
-  patched = patched.replace(
-    /const fileLink = filePath !== void 0 && onOpenFile !== void 0 && failureLine === null;/,
-    "const fileLink = filePath !== void 0 && onOpenFile !== void 0 && failureLine === null && false;",
-  );
-  patched = patched.replace(
-    /const openFile = \(event\) => \{\s*event\.stopPropagation\(\);\s*if \(filePath !== void 0\) onOpenFile\?\.\(filePath\);\s*\};/,
-    "const openFile = (event) => { event.stopPropagation(); };",
-  );
-  return patched;
-}
-
-function registerHeadlessToolPatch(ctx, webServer, clientModules) {
-  if (!isHeadlessHost()) return;
-  const clientPath = clientModules?.clientPath("@deepseek-ai/dsh-client-ui-tool");
-  if (typeof clientPath !== "string") {
-    ctx.logger?.warn?.("web-daemon: tool client bundle was not found; native-open tool link patch was not applied");
-    return;
-  }
-  let body;
+function installHeadlessSessionOpenGuard(ctx, sessionController) {
+  if (!isHeadlessHost() || sessionController === undefined) return;
+  const original = sessionController.openWorkspacePath;
+  if (typeof original !== "function") return;
+  const message = "this server has no graphical environment, so it cannot open files natively — use the file explorer panel to preview or download the file instead";
+  const guarded = async () => {
+    throw new Error(message);
+  };
   try {
-    body = patchToolClient(readFileSync(clientPath, "utf8"));
-  } catch (error) {
-    ctx.logger?.warn?.("web-daemon: could not read tool client bundle: %s", error);
+    sessionController.openWorkspacePath = guarded;
+  } catch {
+    ctx.logger?.warn?.("web-daemon: could not install the headless workspace-open guard");
     return;
   }
-  ctx.effect(() => webServer.register({
-    kind: "exact",
-    path: TOOL_CLIENT_PATH,
-    handler: (req, res) => {
-      if (req.method !== "GET" && req.method !== "HEAD") {
-        res.writeHead(405);
-        res.end();
-        return;
-      }
-      res.writeHead(200, {
-        "content-type": "text/javascript; charset=utf-8",
-        "cache-control": "no-store",
-        "content-length": Buffer.byteLength(body),
-      });
-      if (req.method === "HEAD") res.end();
-      else res.end(body);
-    },
-  }), "web-daemon: headless tool client patch");
-}
-
-function registerHeadlessDeliverablesPatch(ctx, webServer, clientModules) {
-  if (!isHeadlessHost()) return;
-  const clientPath = clientModules?.clientPath("@deepseek-ai/dsh-client-ui-deliverables");
-  if (typeof clientPath !== "string") {
-    ctx.logger?.warn?.("web-daemon: deliverables client bundle was not found; native-open chip patch was not applied");
-    return;
-  }
-  let body;
-  try {
-    body = patchDeliverablesClient(readFileSync(clientPath, "utf8"));
-  } catch (error) {
-    ctx.logger?.warn?.("web-daemon: could not read deliverables client bundle: %s", error);
-    return;
-  }
-  ctx.effect(() => webServer.register({
-    kind: "exact",
-    path: DELIVERABLES_CLIENT_PATH,
-    handler: (req, res) => {
-      if (req.method !== "GET" && req.method !== "HEAD") {
-        res.writeHead(405);
-        res.end();
-        return;
-      }
-      res.writeHead(200, {
-        "content-type": "text/javascript; charset=utf-8",
-        "cache-control": "no-store",
-        "content-length": Buffer.byteLength(body),
-      });
-      if (req.method === "HEAD") res.end();
-      else res.end(body);
-    },
-  }), "web-daemon: headless deliverables client patch");
-}
-
-/**
- * The shipped sidebar currently has no additive seat immediately before New
- * Session. Add one to the served shell bundle so the status panel can use the
- * slot system without replacing the navigation column.
- */
-function patchSidebarClient(source) {
-  const declaration = /("sidebar\.footer\.action"\s*:\s*\{\s*kind:\s*"list"\s*,\s*scope:\s*"root"\s*\})/;
-  if (!declaration.test(source)) return null;
-  let patched = source.replace(
-    declaration,
-    '"sidebar.server.status": { kind: "single", scope: "root" },\n\t\t\t\t\t$1',
-  );
-
-  const newSession = /(\(0,\s*react_jsx_runtime\.jsx\)\(_deepseek_ai_dsh_client_ui_primitives\.Tooltip,\s*\{\s*label:\s*t\("session\.new\.label"\),)/;
-  if (!newSession.test(patched)) return null;
-  patched = patched.replace(newSession, 'renderSlot("sidebar.server.status", { wide }),\n\t\t\t\t\t$1');
-  return patched;
-}
-
-function registerSidebarStatusPatch(ctx, webServer, clientModules) {
-  const clientPath = clientModules?.clientPath("@deepseek-ai/dsh-client-ui-sidebar");
-  if (typeof clientPath !== "string") {
-    ctx.logger?.warn?.("web-daemon: sidebar client bundle was not found; server status panel was not mounted");
-    return;
-  }
-
-  let body;
-  try {
-    body = patchSidebarClient(readFileSync(clientPath, "utf8"));
-  } catch (error) {
-    ctx.logger?.warn?.("web-daemon: could not read sidebar client bundle: %s", error);
-    return;
-  }
-  if (body === null) {
-    ctx.logger?.warn?.("web-daemon: sidebar client bundle shape changed; server status panel was not mounted");
-    return;
-  }
-
-  ctx.effect(() => webServer.register({
-    kind: "exact",
-    path: SIDEBAR_CLIENT_PATH,
-    handler: (req, res) => {
-      if (req.method !== "GET" && req.method !== "HEAD") {
-        res.writeHead(405);
-        res.end();
-        return;
-      }
-      res.writeHead(200, {
-        "content-type": "text/javascript; charset=utf-8",
-        "cache-control": "no-store",
-        "content-length": Buffer.byteLength(body),
-      });
-      if (req.method === "HEAD") res.end();
-      else res.end(body);
-    },
-  }), "web-daemon: sidebar server status patch");
+  ctx.effect(() => () => {
+    if (sessionController.openWorkspacePath === guarded) sessionController.openWorkspacePath = original;
+  }, "web-daemon: headless workspace-open guard");
 }
 
 function registerHeadlessOpenGuard(ctx, webServer) {
@@ -376,11 +232,25 @@ function registryAgentOptions(value) {
   return Object.keys(result).length === 0 ? undefined : result;
 }
 
+function sessionEvents(session) {
+  if (Array.isArray(session?.events)) return session.events;
+  if (typeof session?.snapshotEvents === "function") {
+    try {
+      return session.snapshotEvents();
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 function sessionPreset(session) {
-  const preset = resolveSessionPreset({
-    header: session.header,
-    events: session.events ?? [],
-  });
+  const header = session?.header ?? session?.meta;
+  let preset = header?.agentPreset;
+  for (const event of sessionEvents(session)) {
+    if (event?.type !== "agent-preset/selected") continue;
+    if (isRegistryString(event.data?.agentPreset)) preset = event.data.agentPreset;
+  }
   return isRegistryString(preset) ? preset : undefined;
 }
 
@@ -434,7 +304,7 @@ function loggedAgentOptions(events) {
 /**
  * The model a live agent is actually routed through, or undefined when the
  * agent is not running. The web GUI's per-session model switch mutates only
- * the api-proxy's in-memory selection, so `agent.options` keeps the model the
+ * the live session controller's selection, so `agent.options` keeps the model the
  * session was created with. `agent.session.requestHeader()` is the durable
  * log of the model each request was made with — fold its last entry so the
  * recorded options always follow the model actually in use.
@@ -853,7 +723,7 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
           }
 
           // The recorded options are only the creation-time snapshot; the GUI's
-          // per-session model switch lives in the api-proxy's in-memory selection
+          // per-session model switch lives in the live session controller's selection
           // and never reaches agent.options, so the session log's LAST
           // request/header is the single source of truth for the model the
           // session was actually using before the restart. Inspect every
@@ -869,8 +739,8 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
             record.cwd = inspected.meta.cwd;
             dirty = true;
           }
-          const preset = resolveSessionPreset({
-            header: inspected.meta,
+          const preset = sessionPreset({
+            meta: inspected.meta,
             events: inspected.events,
           });
           if (preset === undefined) {
@@ -1599,10 +1469,12 @@ function createWebDaemonManager(ctx, settings, config) {
   };
 }
 
-function installRecoveryApiGate(ctx, apiProxy, recoveryReady, diag) {
+function installRecoveryApiGate(ctx, services, recoveryReady, diag) {
+  const legacy = services.apiProxy !== undefined;
+  const methodMap = legacy ? LEGACY_RECOVERY_GATED_API_METHODS : RECOVERY_GATED_API_METHODS;
   const restorers = [];
-  for (const [domainName, methodNames] of Object.entries(RECOVERY_GATED_API_METHODS)) {
-    const domain = apiProxy?.[domainName];
+  for (const [domainName, methodNames] of Object.entries(methodMap)) {
+    const domain = legacy ? services.apiProxy?.[domainName] : services[domainName];
     if (domain === undefined || domain === null) continue;
     for (const methodName of methodNames) {
       const original = domain[methodName];
@@ -1614,7 +1486,7 @@ function installRecoveryApiGate(ctx, apiProxy, recoveryReady, diag) {
       try {
         domain[methodName] = gated;
       } catch {
-        ctx.logger?.warn?.("web-daemon: could not gate apiProxy.%s.%s during recovery", domainName, methodName);
+        ctx.logger?.warn?.("web-daemon: could not gate %s.%s during recovery", domainName, methodName);
         continue;
       }
       restorers.push(() => {
@@ -1632,15 +1504,12 @@ async function apply(ctx, config = {}) {
   const webServer = ctx.get("webServer");
   if (webServer === undefined) return;
 
-  const clientModules = ctx.get("clientModules");
   registerHeadlessOpenGuard(ctx, webServer);
-  registerHeadlessDeliverablesPatch(ctx, webServer, clientModules);
-  registerHeadlessToolPatch(ctx, webServer, clientModules);
-  registerSidebarStatusPatch(ctx, webServer, clientModules);
 
   const settings = ctx.get("settings");
   const manager = createWebDaemonManager(ctx, settings, config);
   const agents = ctx.get("agents");
+  installHeadlessSessionOpenGuard(ctx, ctx.get("sessionController"));
   const isWorker = process.env[WORKER_FLAG] === "1";
   const diag = { pid: process.pid, lock: null, lockError: null, entries: [], gatedCalls: [] };
   let recoveryReady;
@@ -1655,8 +1524,14 @@ async function apply(ctx, config = {}) {
       const agentPresets = recoveryCtx.get("agentPresets");
       return createSessionRecovery(recoveryCtx, agents, persistence, agentPresets, diag);
     });
-    const apiProxy = ctx.get("apiProxy");
-    if (apiProxy !== undefined) installRecoveryApiGate(ctx, apiProxy, recoveryReady, diag);
+    const recoveryServices = {
+      apiProxy: ctx.get("apiProxy"),
+      sessionController: ctx.get("sessionController"),
+      goals: ctx.get("goals"),
+      agentPresets: ctx.get("agentPresets"),
+      subagents: ctx.get("subagents"),
+    };
+    installRecoveryApiGate(ctx, recoveryServices, recoveryReady, diag);
   }
   const getServerMetrics = createServerMetrics();
 

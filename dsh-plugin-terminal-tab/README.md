@@ -30,6 +30,8 @@ conversation session.
 
 ## Install
 
+The published package is `@yiln-dsh/dsh-plugin-terminal-tab@0.1.7`.
+
 Local source directory:
 
 ```bash

@@ -101,6 +101,15 @@ function hostAllowed(hostname, allowedHosts) {
   return false
 }
 
+export function requireLiveBrowserSession(agents, rawSessionId) {
+  const sessionId = typeof rawSessionId === 'string' ? rawSessionId.trim() : ''
+  if (sessionId === '') throw new Error('sessionId is required')
+  if (typeof agents?.get !== 'function' || agents.get(sessionId) === undefined) {
+    throw new Error('session is no longer live')
+  }
+  return sessionId
+}
+
 export function apply(ctx, config = {}) {
   const webServer = ctx.get('webServer')
   const agents = ctx.get('agents')
@@ -114,7 +123,7 @@ export function apply(ctx, config = {}) {
 
   const wss = new WebSocketServer({ noServer: true })
 
-  /** Map<sessionId|'default', BrowserRecord> */
+  /** Map<live sessionId, BrowserRecord> */
   const browsers = new Map()
   let nextTabId = 0
 
@@ -574,22 +583,22 @@ export function apply(ctx, config = {}) {
   }
 
   route(`${API_PREFIX}/open`, async (args) => {
-    const sessionId = typeof args.sessionId === 'string' ? args.sessionId : ''
+    const sessionId = requireLiveBrowserSession(agents, args.sessionId)
     const record = recordFor(sessionId)
     const tab = await openTab(record, args.url)
     return { tab: await tabSnapshot(tab), ...await recordSnapshot(record) }
   })
 
   route(`${API_PREFIX}/list`, async (args) => {
-    const sessionId = typeof args.sessionId === 'string' ? args.sessionId : ''
-    const record = browsers.get(sessionId === '' ? 'default' : sessionId)
+    const sessionId = requireLiveBrowserSession(agents, args.sessionId)
+    const record = browsers.get(sessionId)
     if (record === undefined) return { tabs: [], activeTabId: null }
     return await recordSnapshot(record)
   })
 
   route(`${API_PREFIX}/close`, async (args) => {
-    const sessionId = typeof args.sessionId === 'string' ? args.sessionId : ''
-    const record = browsers.get(sessionId === '' ? 'default' : sessionId)
+    const sessionId = requireLiveBrowserSession(agents, args.sessionId)
+    const record = browsers.get(sessionId)
     if (record !== undefined) await closeRecord(record)
     return { closed: true }
   })
@@ -597,14 +606,14 @@ export function apply(ctx, config = {}) {
   ctx.effect(() => webServer.registerUpgrade({
     path: WS_PATH,
     handler: (req, socket, head) => {
-      let url
+      let sessionId
       try {
         url = new URL(req.url || '', 'http://127.0.0.1')
-      } catch (_e) {
-        rejectUpgrade(socket, 400, 'Bad Request')
+        sessionId = requireLiveBrowserSession(agents, url.searchParams.get('sessionId'))
+      } catch (error) {
+        rejectUpgrade(socket, 404, error && typeof error.message === 'string' ? error.message : 'Not Found')
         return
       }
-      const sessionId = url.searchParams.get('sessionId') || ''
       const record = recordFor(sessionId)
       wss.handleUpgrade(req, socket, head, (websocket) => attachSocket(record, websocket))
     },

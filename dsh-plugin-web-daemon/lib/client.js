@@ -651,10 +651,11 @@ window.__ModuleLoader__.load({
 				? locale.bind(LOCALE_NS)
 				: (key, params) => applyParams(ZH_DICT[key] ?? EN_DICT[key] ?? key, params);
 			const ServerStatus = createServerStatus(timer, t);
-			ctx.slots.inject("sidebar.server.status", () => ctx.slots.register({
-				name: "sidebar.server.status",
+			ctx.slots.inject("sidebar.footer.action", () => ctx.slots.register({
+				name: "sidebar.footer.action",
 				id: "web-daemon-server-status",
-				inject: () => ({})
+				order: -10,
+				inject: () => ({}),
 			}, ServerStatus));
 			const WebDaemonCard = createWebDaemonCard(t);
 			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({

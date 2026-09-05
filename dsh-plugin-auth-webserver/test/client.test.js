@@ -40,12 +40,15 @@ test("owns the settings editor overlay inside the Settings layer", () => {
     "dsh-auth-open-settings-editor",
     "/_dsh/auth-webserver/settings-editor/document",
     "settings.action",
+    "settingsEditor.open",
     "daw-settingsEditorOverlay",
     "api(SETTINGS_EDITOR_DOCUMENT_PATH",
     "X-DSH-CSRF",
   ]) {
     assert.ok(CLIENT_SOURCE.includes(token), `auth client must include ${token}`);
   }
+  assert.match(CLIENT_SOURCE, /id: "open-document"/u);
+  assert.match(CLIENT_SOURCE, /priority: -1/u);
   assert.equal(CLIENT_SOURCE.includes('slots.inject("shell.overlay"'), false);
 });
 

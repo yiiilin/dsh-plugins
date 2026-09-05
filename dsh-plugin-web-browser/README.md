@@ -13,10 +13,13 @@ the GUI, and injects mouse / wheel / keyboard events back into the real page.
 - Registers a **浏览器 (Browser)** view in the `conversation.view` tab row, next to 对话 / 轨迹 / 终端, so it sits right beside the terminal.
 - Opening the Browser view automatically creates one `about:blank` tab and shows a clean blank new-tab canvas; navigation is done from the top address bar. Closing the last tab returns to the empty state.
 - Address bar with back / forward / reload, and a tab strip with up to 12 tabs.
-- Each conversation session gets an isolated Chromium browsing context; a shared context is used when no session is selected.
+- Each conversation session gets an isolated Chromium browsing context; browser
+  API and WebSocket calls require a live session id and never use a shared
+  default context.
 - Frames are pushed as binary JPEG over `/_dsh/web-browser/ws`; the view renders them in an `<img>` and maps pointer / wheel / keyboard input back through the same WebSocket (CDP `Input.dispatchMouseEvent` / `dispatchKeyEvent`).
 - Security posture is intranet-first: `http`/`https` schemes (optional `file`), optional host allowlist, and **private-network access is allowed by default** because reaching intranet hosts is the point of this view. This intentionally differs from `dsh-plugin-browser-use`, which defaults to blocking private networks.
-- Idle browser contexts are reclaimed after 10 minutes; everything is torn down when the plugin unloads.
+- `ws` is a runtime dependency for the Host WebSocket upgrade route; it is
+  installed with this package rather than relying on another plugin's copy.
 
 ## Requirements
 
@@ -78,4 +81,4 @@ Restart `dsh web` after installing.
 - `dsh-deeptutor` renders answers to self-contained HTML files (`html` parameter, `html-doc` skill). With `allowFile: true`, those files can be opened directly in this panel.
 - `dsh-plugin-browser-use` drives its own headless Chromium for agent tool calls. Sharing a single browser session between the agent's tools and this visible panel is planned (both speak CDP); in this release they are independent.
 
-The published package is `@yiln-dsh/dsh-plugin-web-browser@0.1.0`.
+The published package is `@yiln-dsh/dsh-plugin-web-browser@0.1.1`.

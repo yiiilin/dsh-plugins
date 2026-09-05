@@ -24,6 +24,8 @@ tracked by the plugin.
 
 ## Install
 
+The published package is `@yiln-dsh/dsh-plugin-delete-session@0.1.3`.
+
 ```bash
 dsh plugin --profile web add file:/path/to/dsh-plugin-delete-session
 ```

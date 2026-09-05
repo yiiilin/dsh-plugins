@@ -1,11 +1,14 @@
 {
   "name": "@yiln-dsh/dsh-plugin-web-browser",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publishConfig": {
     "access": "public"
   },
   "description": "DSH Web bundle plugin that adds a server-side browser view next to the terminal: Chromium runs on the DSH host, frames stream back via CDP screencast over WebSocket, and mouse/keyboard input is injected back.",
   "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
   "main": "index.js",
   "exports": {
     ".": "./index.js",
@@ -18,9 +21,7 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-layout",
-        "@deepseek-ai/dsh-client-ui-renderer"
+        "@deepseek-ai/dsh-client-ui-conversation"
       ],
       "platform": "web"
     }
@@ -32,14 +33,13 @@
     "README.md"
   ],
   "dependencies": {
-    "playwright-core": "^1.62.1"
+    "playwright-core": "^1.62.1",
+    "ws": "^8.18.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
-    "@deepseek-ai/dsh-agent": ">=0.1.0-rc.0",
-    "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.0",
-    "@deepseek-ai/dsh-client-ui-layout": ">=0.1.0-rc.0",
-    "@deepseek-ai/dsh-client-ui-renderer": ">=0.1.0-rc.0"
+    "@deepseek-ai/dsh-agent": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-conversation": ">=0.1.2-rc.1"
   },
   "engines": {
     "node": ">=22"

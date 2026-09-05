@@ -21,7 +21,6 @@ import { existsSync, mkdirSync, readFileSync, statSync, lstatSync, chmodSync, wr
 import { isIP } from "node:net";
 import { homedir, networkInterfaces } from "node:os";
 import { join, resolve } from "node:path";
-import { settingsNamespace } from "@deepseek-ai/dsh-settings";
 import z from "@deepseek-ai/schemastery";
 import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from "@simplewebauthn/server";
 import { generateTotpSecret, verifyTotp } from "./totp.js";
@@ -39,7 +38,6 @@ import {
 } from "./policy.js";
 import { injectMobileLayout } from "./mobile.js";
 import {
-  patchSettingsGeneralClient,
   readSettingsDocument,
   replaceSettingsDocument,
   SETTINGS_EDITOR_DOCUMENT_PATH,
@@ -53,7 +51,7 @@ export const name = "auth-webserver";
 // up instead of reading it with ctx.get at an arbitrary boot moment.
 export const inject = ["settings"];
 
-const NS = settingsNamespace("auth-webserver");
+const NS = "auth-webserver";
 
 const COOKIE_NAME = "dsh_auth_token";
 const CSRF_COOKIE_NAME = "dsh_auth_csrf";
@@ -994,6 +992,7 @@ export async function apply(ctx, config) {
     for (const path of PWA_PUBLIC_PATHS) {
       ctx.effect(() => webServer.register({ kind: "exact", path, handler: handlePwaAsset }));
     }
+    ctx.effect(() => webServer.register({ kind: "exact", path: SETTINGS_EDITOR_DOCUMENT_PATH, handler: (req, res) => handleSettingsEditorDocument(req, res, SETTINGS_EDITOR_DOCUMENT_PATH) }));
     ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/state", handler: handleState }));
     ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/clients", handler: (req, res) => handleClients(req, res, authenticateRequest(req)) }));
     ctx.effect(() => webServer.register({ kind: "exact", path: "/_dsh/auth-webserver/clients/revoke", handler: handleSessionRevoke }));
@@ -1232,7 +1231,8 @@ export async function apply(ctx, config) {
     ...extra,
   });
   const allowsSettingsEditorTransport = (req, res) => {
-    if (isSecureRequest(req) || config.allowInsecureSettingsEditor) return true;
+    const local = req[GATEWAY_REQUEST] !== true && isLoopbackAddress(req.socket?.remoteAddress);
+    if (isSecureRequest(req) || config.allowInsecureSettingsEditor || local) return true;
     sendEditorJson(req, res, 400, {
       ok: false,
       error: "HTTPS is required to edit the configuration file in a browser",
@@ -1242,6 +1242,9 @@ export async function apply(ctx, config) {
   const requireSettingsEditorSession = (req, res, rawPath) => {
     const auth = authenticateRequest(req);
     if (auth?.kind === "cookie") return auth;
+    if (req[GATEWAY_REQUEST] !== true && isLoopbackAddress(req.socket?.remoteAddress)) {
+      return { kind: "local", csrf: null };
+    }
     const current = credentials();
     sendUnauthorized(req, res, current.realm, rawPath, current.twoFactorEnabled,
       isSecureRequest(req), passkeyStore.hasAny());
@@ -1298,37 +1301,6 @@ export async function apply(ctx, config) {
         error: status === 400 ? "Configuration document must be a valid YAML mapping" : "Configuration document could not be saved",
       });
     }
-  };
-  const handleNativeSettingsOpenFallback = async (req, res) => {
-    if (req.method !== "POST") {
-      sendEditorJson(req, res, 405, { ok: false, error: "Method not allowed" });
-      return;
-    }
-    if (requireSession(req, res) === null) return;
-    let envelope;
-    try {
-      envelope = JSON.parse(await readBody(req));
-    } catch {
-      sendEditorJson(req, res, 400, { ok: false, error: "Invalid request body" });
-      return;
-    }
-    if (!isObject(envelope) || envelope.type !== "client-request" ||
-      envelope.method !== "settings.openDocument" || typeof envelope.rpcId !== "string") {
-      sendEditorJson(req, res, 400, { ok: false, error: "Invalid settings open request" });
-      return;
-    }
-    sendEditorJson(req, res, 200, {
-      type: "server-response",
-      rpcId: envelope.rpcId,
-      result: {
-        ok: false,
-        error: {
-          code: "internal",
-          message: "Open the authenticated browser configuration editor instead",
-          details: {},
-        },
-      },
-    });
   };
   const sendPasskeyJson = (res, status, value, extra = {}) => sendJson(res, status, value, {
     "Cache-Control": "no-store",
@@ -1700,30 +1672,6 @@ export async function apply(ctx, config) {
 
   const targetHost = config.targetHost;
   const targetPort = config.targetPort;
-  const CONNECTION_CLIENT_PATH = "/plugins/@deepseek-ai/dsh-client-connection/client.js";
-  const SETTINGS_GENERAL_CLIENT_PATH = "/plugins/@deepseek-ai/dsh-client-ui-settings-general/client.js";
-  const LOOPBACK_ASSIGNMENT = /isLoopback:\s*pageLocation\s*===\s*void 0\s*\|\|\s*isLoopbackHostname\(pageLocation\.hostname\)/;
-  let connectionPatchWarned = false;
-  let settingsEditorPatchWarned = false;
-
-  const patchConnectionClient = (source) => {
-    const patched = source.replace(LOOPBACK_ASSIGNMENT, "isLoopback: true");
-    if (patched === source && !connectionPatchWarned) {
-      connectionPatchWarned = true;
-      ctx.logger?.warn?.("auth-webserver: official connection client marker was not found; LAN settings patch was not applied");
-    }
-    return patched;
-  };
-  const patchClientBundle = (source, rawPath) => {
-    if (rawPath === CONNECTION_CLIENT_PATH) return patchConnectionClient(source);
-    if (rawPath !== SETTINGS_GENERAL_CLIENT_PATH) return source;
-    const patched = patchSettingsGeneralClient(source);
-    if (patched === null && !settingsEditorPatchWarned) {
-      settingsEditorPatchWarned = true;
-      ctx.logger?.warn?.("auth-webserver: official settings client marker was not found; browser configuration editor was not installed");
-    }
-    return patched ?? source;
-  };
 
   const gatewayResponseHeaders = (headers, req, rawPath) => {
     const publicPwaRequest = isPublicPwaRequest(req, rawPath);
@@ -1753,15 +1701,11 @@ export async function apply(ctx, config) {
   };
 
   const proxyRequest = (req, res, rawPath) => {
-    const shouldPatchClientBundle = req.method === "GET" && (
-      rawPath === CONNECTION_CLIENT_PATH || rawPath === SETTINGS_GENERAL_CLIENT_PATH
-    );
     const headers = cleanForwardedHeaders({ ...req.headers });
     if (headers.cookie !== undefined) {
       headers.cookie = stripGatewayCookies(headers.cookie);
       if (headers.cookie === undefined) delete headers.cookie;
     }
-    if (shouldPatchClientBundle) headers["accept-encoding"] = "identity";
     // Hop-by-hop request headers must not be forwarded to the upstream.
     for (const h of ["connection", "keep-alive", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"]) {
       delete headers[h];
@@ -1801,24 +1745,8 @@ export async function apply(ctx, config) {
       for (const h of ["connection", "keep-alive", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"]) {
         delete resHeaders[h];
       }
-      if (!shouldPatchClientBundle || proxyRes.statusCode !== 200) {
-        res.writeHead(proxyRes.statusCode, resHeaders);
-        proxyRes.pipe(res);
-        return;
-      }
-      const chunks = [];
-      proxyRes.on("data", (chunk) => chunks.push(chunk));
-      proxyRes.on("end", () => {
-        const source = Buffer.concat(chunks).toString("utf8");
-        const body = patchClientBundle(source, rawPath);
-        delete resHeaders["content-encoding"];
-        delete resHeaders["content-length"];
-        delete resHeaders.etag;
-        resHeaders["cache-control"] = "no-store";
-        resHeaders["content-length"] = Buffer.byteLength(body);
-        res.writeHead(proxyRes.statusCode, resHeaders);
-        res.end(body);
-      });
+      res.writeHead(proxyRes.statusCode, resHeaders);
+      proxyRes.pipe(res);
     });
     res.once("close", () => {
       if (!res.writableEnded) abortUpstream();
@@ -2081,9 +2009,6 @@ export async function apply(ctx, config) {
         }
         if (rawPath === SETTINGS_EDITOR_DOCUMENT_PATH) {
           return handleSettingsEditorDocument(req, res, rawPath);
-        }
-        if (rawPath === "/api/settings.openDocument") {
-          return handleNativeSettingsOpenFallback(req, res);
         }
         if (rawPath === "/_dsh/auth-webserver/state" ||
           rawPath === "/_dsh/auth-webserver/clients" ||

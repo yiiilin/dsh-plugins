@@ -9,8 +9,10 @@
       inject:
         - webServer
         - settings
-        - clientModules
-        - apiProxy
+        - sessionController
+        - goals
+        - agentPresets
+        - subagents
       config:
         enabled: false
         profile: web
