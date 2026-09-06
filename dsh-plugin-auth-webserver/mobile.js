@@ -248,6 +248,19 @@ html[data-dsh-auth-mobile] [class~='VOzbGW_options'] {
   display: none !important;
 }
 
+[data-dsh-auth-mobile-nav],
+[data-dsh-auth-mobile-right-nav],
+html[data-dsh-auth-mobile] [data-dsh-mobile-sidebar],
+html[data-dsh-auth-mobile] [data-dsh-mobile-details] {
+  /* Keep mobile navigation on the single-tap path on touch browsers. */
+  touch-action: manipulation;
+}
+
+html[data-dsh-auth-mobile] [data-dsh-mobile-sidebar] [role='treeitem'] {
+  touch-action: manipulation;
+  -webkit-user-drag: none;
+}
+
 [data-dsh-auth-mobile-backdrop] {
   position: fixed;
   z-index: 1001;
@@ -340,6 +353,12 @@ html[data-dsh-auth-mobile] [data-dsh-mobile-center] header {
   padding-right: max(56px, calc(56px + env(safe-area-inset-right))) !important;
 }
 
+/* Session log export is desktop-only; keep the remaining header utilities
+   available without letting this fixed-width action crowd the mobile header. */
+html[data-dsh-auth-mobile] [data-dsh-mobile-center] header [class*='_sessionLogButton'] {
+  display: none !important;
+}
+
 html[data-dsh-auth-mobile] [data-dsh-mobile-details] > * {
   padding-bottom: env(safe-area-inset-bottom);
 }
@@ -420,6 +439,8 @@ const MOBILE_LAYOUT_SCRIPT = String.raw`(function () {
   var interactionSidebar;
   var interactionDetails;
   var mobileDetailsOpen = false;
+  var sidebarPointer = null;
+  var suppressNativeSidebarClick = null;
 
   function setAttributeState(node, name, enabled) {
     if (!node) return;
@@ -485,8 +506,53 @@ const MOBILE_LAYOUT_SCRIPT = String.raw`(function () {
   function onSidebarClick(event) {
     var row = panelSessionRow(event.target, interactionSidebar);
     if (!row) return;
+    if (suppressNativeSidebarClick !== null && row === suppressNativeSidebarClick.row && event.isTrusted) {
+      event.preventDefault();
+      event.stopPropagation();
+      suppressNativeSidebarClick = null;
+      return;
+    }
     /* Let React's row onClick select the session first, then close the drawer. */
     window.setTimeout(closeSidebarAfterSelection, 0);
+  }
+
+  function onSidebarPointerDown(event) {
+    if (!isMobile() || event.pointerType !== "touch") return;
+    var row = panelSessionRow(event.target, interactionSidebar);
+    if (!row || event.button !== 0) {
+      sidebarPointer = null;
+      return;
+    }
+    sidebarPointer = {
+      row,
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      moved: false,
+    };
+  }
+
+  function onSidebarPointerMove(event) {
+    if (sidebarPointer === null || sidebarPointer.pointerId !== event.pointerId) return;
+    if (Math.abs(event.clientX - sidebarPointer.x) > 8 || Math.abs(event.clientY - sidebarPointer.y) > 8) sidebarPointer.moved = true;
+  }
+
+  function onSidebarPointerCancel(event) {
+    if (sidebarPointer !== null && sidebarPointer.pointerId === event.pointerId) sidebarPointer = null;
+  }
+
+  function onSidebarPointerUp(event) {
+    var pointer = sidebarPointer;
+    if (pointer === null || pointer.pointerId !== event.pointerId) return;
+    sidebarPointer = null;
+    if (!isMobile() || pointer.moved || !pointer.row.isConnected) return;
+    event.preventDefault();
+    var entry = { row: pointer.row };
+    suppressNativeSidebarClick = entry;
+    window.setTimeout(function () {
+      if (suppressNativeSidebarClick === entry) suppressNativeSidebarClick = null;
+    }, 500);
+    pointer.row.click();
   }
 
   function onSidebarDragStart(event) {
@@ -516,11 +582,21 @@ const MOBILE_LAYOUT_SCRIPT = String.raw`(function () {
     if (interactionSidebar === sidebar) return;
     if (interactionSidebar) {
       interactionSidebar.removeEventListener("click", onSidebarClick, true);
+      interactionSidebar.removeEventListener("pointerdown", onSidebarPointerDown, true);
+      interactionSidebar.removeEventListener("pointermove", onSidebarPointerMove, true);
+      interactionSidebar.removeEventListener("pointerup", onSidebarPointerUp, true);
+      interactionSidebar.removeEventListener("pointercancel", onSidebarPointerCancel, true);
       interactionSidebar.removeEventListener("dragstart", onSidebarDragStart, true);
     }
     interactionSidebar = sidebar;
+    sidebarPointer = null;
+    suppressNativeSidebarClick = null;
     if (interactionSidebar) {
       interactionSidebar.addEventListener("click", onSidebarClick, true);
+      interactionSidebar.addEventListener("pointerdown", onSidebarPointerDown, true);
+      interactionSidebar.addEventListener("pointermove", onSidebarPointerMove, true);
+      interactionSidebar.addEventListener("pointerup", onSidebarPointerUp, true);
+      interactionSidebar.addEventListener("pointercancel", onSidebarPointerCancel, true);
       interactionSidebar.addEventListener("dragstart", onSidebarDragStart, true);
     }
   }

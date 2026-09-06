@@ -91,8 +91,27 @@ test("ships the mobile override and drawer markers in the payload", () => {
   assert.ok(script.includes("data-dsh-auth-mobile-right-nav"));
   assert.ok(script.includes("rightPanelExpandSource"));
   assert.ok(script.includes("mobileDetailsOpen"));
+  assert.ok(script.includes("onSidebarPointerUp"));
+  assert.ok(script.includes("suppressNativeSidebarClick"));
   assert.ok(script.includes("VOzbGW_overlay"));
   assert.ok(script.includes("openRightPanel"));
+});
+
+test("keeps mobile controls on the single-tap gesture path", () => {
+  const { style } = mobileLayoutPayload();
+  assert.match(style, /\[data-dsh-auth-mobile-nav\],[\s\S]*?\[data-dsh-auth-mobile-right-nav\][\s\S]*?touch-action: manipulation/u);
+  assert.match(style, /\[data-dsh-mobile-sidebar\],[\s\S]*?\[data-dsh-mobile-details\][\s\S]*?touch-action: manipulation/u);
+});
+
+test("keeps session rows on the single-tap path", () => {
+  const { style } = mobileLayoutPayload();
+  assert.match(style, /\[data-dsh-mobile-sidebar\] \[role='treeitem'\][\s\S]*?touch-action: manipulation/u);
+  assert.match(style, /\[data-dsh-mobile-sidebar\] \[role='treeitem'\][\s\S]*?-webkit-user-drag: none/u);
+});
+
+test("hides the Session log utility on mobile headers", () => {
+  const { style } = mobileLayoutPayload();
+  assert.match(style, /header \[class\*='_sessionLogButton'\][\s\S]*?display: none !important/u);
 });
 
 test("drawer matches the official sidebar width and hides nav while open", () => {

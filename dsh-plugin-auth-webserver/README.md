@@ -17,7 +17,9 @@ A DSH `dsh.bundle` that keeps the stock webserver untouched and adds an
   core `?token=` URL after a daemon restart;
 - narrow browser viewports receive a full-width mobile conversation shell with
   drawer navigation and a mobile details panel, while desktop viewports keep
-  the stock three-column layout;
+  the stock three-column layout; mobile session rows switch on one touch
+  without invoking native drag behavior, and the Session log download action
+  stays desktop-only so it cannot crowd the mobile header;
 - the gateway maintains owner-only persistent browser-session records, so valid
   Cookie sessions survive a daemon restart and can be revoked individually from
   the settings card;
@@ -36,7 +38,7 @@ authentication.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.7.1`.
+The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.7.2`.
 
 The plugin is plain JavaScript source; there is no build step.
 
@@ -58,7 +60,7 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.7.1.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.7.2.tgz
 ```
 
 The tarball already contains the runnable source. A user can also unpack it,
@@ -80,7 +82,7 @@ dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@latest
 Pin a version if you want reproducible installs:
 
 ```bash
-dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.7.1
+dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.7.2
 ```
 
 ### Direct GitHub
@@ -105,7 +107,7 @@ The plugin version is defined by the `version` field in `package.json`:
 ```json
 {
   "name": "@yiln-dsh/dsh-plugin-auth-webserver",
-  "version": "0.7.1"
+  "version": "0.7.2"
 }
 ```
 
@@ -117,8 +119,8 @@ Semantic versioning is recommended:
 
 The selected version is used for:
 
-- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.7.1`
-- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.7.1.tgz`
+- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.7.2`
+- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.7.2.tgz`
 - the metadata inside the tarball/npm package
 
 A `file:` source install uses the version that is currently in the source tree;
