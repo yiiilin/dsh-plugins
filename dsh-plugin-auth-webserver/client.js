@@ -913,6 +913,9 @@ window.__ModuleLoader__.load({
 			};
 
 			const disabled = busy || meta === null;
+			const changed = meta !== null && (
+				username !== meta.username || realm !== meta.realm || password !== ""
+			);
 			const twoFactorEnabled = Boolean(meta?.twoFactorEnabled);
 			const twoFactorOverriddenByEnv = Boolean(meta?.twoFactorOverriddenByEnv);
 			const twoFactorRequiredByConfig = Boolean(meta?.twoFactorRequiredByConfig);

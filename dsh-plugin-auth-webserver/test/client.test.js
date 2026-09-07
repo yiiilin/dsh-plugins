@@ -25,6 +25,7 @@ test("keeps the zh/en dictionary key sets identical", () => {
 test("declares the settings plugin Slot dependency", () => {
   assert.match(PACKAGE_SOURCE, /@deepseek-ai\/dsh-client-ui-settings-plugins/u);
   assert.match(CLIENT_SOURCE, /name: "settings\.plugin\.item"/u);
+  assert.match(CLIENT_SOURCE, /const changed = meta !== null/u);
   assert.match(CLIENT_SOURCE, /key: "auth-webserver"/u);
 });
 
