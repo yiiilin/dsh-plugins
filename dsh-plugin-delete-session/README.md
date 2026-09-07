@@ -6,6 +6,8 @@ GUI.
 ## Behavior
 
 - Adds a trash icon beside the current session title.
+- Adds a batch-management control beside the New Workspace action; management mode exposes a checkbox on each visible ordinary session plus Cancel and Delete selected controls.
+- Sends selected sessions through one serialized Host operation, so active sessions are flushed and disposed safely before their persisted logs are removed.
 - Requires an explicit confirmation before sending the destructive request.
 - Flushes and disposes an active session before deleting its persisted log.
 - Opens the next ordinary session when available, then reloads the browser session list so the deleted selection disappears.
@@ -24,7 +26,7 @@ tracked by the plugin.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-delete-session@0.1.3`.
+The published package is `@yiln-dsh/dsh-plugin-delete-session@0.2.0`.
 
 ```bash
 dsh plugin --profile web add file:/path/to/dsh-plugin-delete-session

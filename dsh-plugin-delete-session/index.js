@@ -6,6 +6,7 @@ export const inject = ["webServer", "sessions", "agents", "sessionPersistence"];
 
 const API_PATH = "/_dsh/delete-session/delete";
 const JSONL_FILE = /^session\.jsonl(?:\.zstd)?$/;
+const MAX_BATCH_SIZE = 100;
 
 function sendJson(res, status, value) {
   const body = JSON.stringify(value);
@@ -44,6 +45,14 @@ function isSessionId(value) {
     && value.length > 0
     && value.length <= 512
     && !/[\0\r\n]/u.test(value);
+}
+
+function isSessionIdList(value) {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.length <= MAX_BATCH_SIZE
+    && new Set(value).size === value.length
+    && value.every(isSessionId);
 }
 
 function encodeSessionSegment(raw) {
@@ -158,59 +167,69 @@ export function apply(ctx) {
   ctx.effect(() => captureDisposer, "delete-session: capture agent handles");
 
   let mutationTail = Promise.resolve();
+  const deleteSessionNow = async (sessionId) => {
+    const liveSession = ctx.sessions.get(sessionId);
+    const liveAgent = ctx.agents.get(sessionId);
+
+    if (liveAgent !== undefined || liveSession !== undefined) {
+      if (liveAgent === undefined) {
+        throw requestError(409, "the session is live but has no disposable agent handle");
+      }
+      const handle = handles.get(sessionId);
+      if (handle === undefined) {
+        throw requestError(409, "this active session was opened before the delete plugin was mounted; restart dsh web before deleting it");
+      }
+
+      // Flush before disposal so the JSONL writer has no buffered tail when
+      // the artifact is removed below.
+      await ctx.sessions.flush(liveSession ?? liveAgent.session);
+      await handle.dispose();
+      if (ctx.agents.get(sessionId) !== undefined || ctx.sessions.get(sessionId) !== undefined) {
+        throw requestError(409, "the session did not finish shutting down");
+      }
+    }
+
+    const headers = await ctx.sessionPersistence.list();
+    const header = liveSession?.header ?? headers.find((candidate) => candidate.id === sessionId);
+    if (header === undefined) throw requestError(404, "session not found");
+
+    const location = safeJsonlLocation(ctx.sessionPersistence, header);
+    let materialized = false;
+    try {
+      const info = await stat(location.path);
+      if (!info.isFile()) throw requestError(409, "the session artifact is not a regular file");
+      materialized = true;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+
+    let directoryPresent = false;
+    try {
+      const info = await stat(location.sessionDir);
+      if (!info.isDirectory()) throw requestError(409, "the session artifact parent is not a directory");
+      directoryPresent = true;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    await rm(location.sessionDir, { recursive: true, force: true });
+
+    return {
+      sessionId,
+      deleted: true,
+      materialized,
+      removedDirectory: directoryPresent,
+    };
+  };
   const deleteSession = (sessionId) => {
+    const queued = enqueue(mutationTail, () => deleteSessionNow(sessionId));
+    mutationTail = queued.nextTail;
+    return queued.result;
+  };
+  const deleteSessions = (sessionIds) => {
     const queued = enqueue(mutationTail, async () => {
-      const liveSession = ctx.sessions.get(sessionId);
-      const liveAgent = ctx.agents.get(sessionId);
-
-      if (liveAgent !== undefined || liveSession !== undefined) {
-        if (liveAgent === undefined) {
-          throw requestError(409, "the session is live but has no disposable agent handle");
-        }
-        const handle = handles.get(sessionId);
-        if (handle === undefined) {
-          throw requestError(409, "this active session was opened before the delete plugin was mounted; restart dsh web before deleting it");
-        }
-
-        // Flush before disposal so the JSONL writer has no buffered tail when
-        // the artifact is removed below.
-        await ctx.sessions.flush(liveSession ?? liveAgent.session);
-        await handle.dispose();
-        if (ctx.agents.get(sessionId) !== undefined || ctx.sessions.get(sessionId) !== undefined) {
-          throw requestError(409, "the session did not finish shutting down");
-        }
-      }
-
-      const headers = await ctx.sessionPersistence.list();
-      const header = liveSession?.header ?? headers.find((candidate) => candidate.id === sessionId);
-      if (header === undefined) throw requestError(404, "session not found");
-
-      const location = safeJsonlLocation(ctx.sessionPersistence, header);
-      let materialized = false;
-      try {
-        const info = await stat(location.path);
-        if (!info.isFile()) throw requestError(409, "the session artifact is not a regular file");
-        materialized = true;
-      } catch (error) {
-        if (error?.code !== "ENOENT") throw error;
-      }
-
-      let directoryPresent = false;
-      try {
-        const info = await stat(location.sessionDir);
-        if (!info.isDirectory()) throw requestError(409, "the session artifact parent is not a directory");
-        directoryPresent = true;
-      } catch (error) {
-        if (error?.code !== "ENOENT") throw error;
-      }
-      await rm(location.sessionDir, { recursive: true, force: true });
-
-      return {
-        sessionId,
-        deleted: true,
-        materialized,
-        removedDirectory: directoryPresent,
-      };
+      const results = [];
+      for (const sessionId of sessionIds) results.push(await deleteSessionNow(sessionId));
+      return results;
     });
     mutationTail = queued.nextTail;
     return queued.result;
@@ -236,7 +255,17 @@ export function apply(ctx) {
         sendJson(res, 400, { ok: false, error: "request body must be an object" });
         return;
       }
-      if (!isSessionId(body.sessionId)) {
+      const hasBatch = Object.hasOwn(body, "sessionIds");
+      const hasSingle = Object.hasOwn(body, "sessionId");
+      if (hasBatch && hasSingle) {
+        sendJson(res, 400, { ok: false, error: "provide either sessionId or sessionIds, not both" });
+        return;
+      }
+      if (hasBatch && !isSessionIdList(body.sessionIds)) {
+        sendJson(res, 400, { ok: false, error: `sessionIds must be a non-empty array of up to ${MAX_BATCH_SIZE} unique session ids` });
+        return;
+      }
+      if (!hasBatch && !isSessionId(body.sessionId)) {
         sendJson(res, 400, { ok: false, error: "sessionId is required" });
         return;
       }
@@ -246,6 +275,11 @@ export function apply(ctx) {
       }
 
       try {
+        if (hasBatch) {
+          const results = await deleteSessions(body.sessionIds);
+          sendJson(res, 200, { ok: true, results });
+          return;
+        }
         const result = await deleteSession(body.sessionId);
         sendJson(res, 200, { ok: true, ...result });
       } catch (error) {
