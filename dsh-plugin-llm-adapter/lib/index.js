@@ -1188,7 +1188,7 @@ async function userContent(blocks, requestImages) {
 			const version = requestImages.get(block.attachment.attachmentId);
 			content.push({
 				type: "text",
-				text: requestImageHandleText(version)
+				text: requestImageHandleText(block.attachment, version)
 			});
 			content.push({
 				type: "image",

@@ -19,6 +19,8 @@ export function apply(ctx: any, config?: Partial<{
   allowedOrigins: string[];
   trustedProxyAddresses: string[];
   requireHttps: boolean;
+  allowRemoteSettings: boolean;
+  allowInsecureRemoteSettings: boolean;
   allowInsecureSettingsEditor: boolean;
   passkeyRpName: string;
   passkeyRpId: string;

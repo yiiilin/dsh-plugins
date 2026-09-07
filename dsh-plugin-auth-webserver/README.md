@@ -31,6 +31,11 @@ A DSH `dsh.bundle` that keeps the stock webserver untouched and adds an
   configuration file** action for remote Settings pages; it does not depend on
   File Explorer, and a deliberately unsafe HTTP opt-in exists only for trusted
   LAN deployments.
+- authenticated HTTPS deployments can explicitly opt into the normal Host-backed
+  Settings and Models pages with `allowRemoteSettings: true`; it stays disabled
+  by default and never enables persistence over plain HTTP;
+- the remote Settings client patch rebuilds the composed browser bundle, so the
+  Host-backed behavior also applies when DSH serves combo client resources;
 
 So the default web module is a *new* module instead of a replacement: local
 access behaves exactly like stock DSH, and LAN clients get the full GUI behind
@@ -38,7 +43,7 @@ authentication.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.7.2`.
+The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.7.3`.
 
 The plugin is plain JavaScript source; there is no build step.
 
@@ -60,7 +65,7 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.7.2.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.7.3.tgz
 ```
 
 The tarball already contains the runnable source. A user can also unpack it,
@@ -82,7 +87,7 @@ dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@latest
 Pin a version if you want reproducible installs:
 
 ```bash
-dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.7.2
+dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.7.3
 ```
 
 ### Direct GitHub
@@ -107,7 +112,7 @@ The plugin version is defined by the `version` field in `package.json`:
 ```json
 {
   "name": "@yiln-dsh/dsh-plugin-auth-webserver",
-  "version": "0.7.2"
+  "version": "0.7.3"
 }
 ```
 
@@ -119,8 +124,8 @@ Semantic versioning is recommended:
 
 The selected version is used for:
 
-- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.7.2`
-- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.7.2.tgz`
+- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.7.3`
+- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.7.3.tgz`
 - the metadata inside the tarball/npm package
 
 A `file:` source install uses the version that is currently in the source tree;
@@ -328,12 +333,18 @@ Edit `$DSH_HOME/profiles/web/cordis.patch.yml` after installing:
     requireTwoFactor: true
     mobileMode: 'auto'
     mobileBreakpoint: 760
-    allowedHosts: ['dsh.yiln.de']
-    allowedOrigins: ['https://dsh.yiln.de']
+    allowedOrigins: ['http://192.168.55.155:3080', 'https://dsh.yiln.de']
     trustedProxyAddresses: ['192.0.2.10']
-    requireHttps: true
-    # Default false. Set true only for a physically trusted LAN; it exposes
-    # the full settings document and step-up credentials over plain HTTP.
+    # When allowedHosts is omitted, the gateway derives its Host allowlist
+    # from allowedOrigins; the Host check remains active for WebSockets and
+    # requests that have no Origin header.
+    requireHttps: false
+    # Default false. Enable the normal Host-backed Settings and Models pages
+    # for authenticated remote browsers.
+    allowRemoteSettings: true
+    # Required only because the IP endpoint above is plain HTTP. Settings and
+    # credentials then travel without transport encryption.
+    allowInsecureRemoteSettings: true
     allowInsecureSettingsEditor: false
     passkeyRpName: 'DeepSeek Harness'
     passkeyRpId: 'dsh.yiln.de'

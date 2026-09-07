@@ -15,6 +15,7 @@
         - webServer
         - settings
         - connection
+        - clientModules
       config:
         port: !!js ctx.webStartup.port ?? 3080
         targetHost: '127.0.0.1'

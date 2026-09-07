@@ -40,6 +40,12 @@ export function parseRequestHost(value) {
   }
 }
 
+/** Parse one allowed browser Origin and derive the Host authority it permits. */
+export function parseAllowedOriginHost(value, index = 0) {
+  const origin = parseOrigin(value, `allowedOrigins[${String(index)}]`, false);
+  return parseAuthority(origin.host, `allowedOrigins[${String(index)}]`, true);
+}
+
 /** Whether a request Host matches one configured authority. */
 export function hostMatches(requestHost, allowedHosts, secure = false) {
   const request = parseRequestHost(requestHost);

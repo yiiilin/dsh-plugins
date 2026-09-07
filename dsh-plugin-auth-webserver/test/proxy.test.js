@@ -162,7 +162,7 @@ test("bridges gateway-authenticated traffic to core after a stale public token",
       targetHost: "127.0.0.1",
       targetPort: corePort,
       addresses: ["127.0.0.2"],
-      allowedHosts: ["127.0.0.2"],
+      allowedOrigins: [`http://127.0.0.2:${gatewayPort}`],
       username: "admin",
       password: "gateway-pass",
     });

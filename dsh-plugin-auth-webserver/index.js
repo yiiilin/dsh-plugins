@@ -36,6 +36,7 @@ import {
   originMatches,
   parseAllowedHost,
   parseAllowedOrigin,
+  parseAllowedOriginHost,
   parseList,
   parseRequestHost,
 } from "./policy.js";
@@ -53,6 +54,10 @@ import {
   stripCoreSetCookies,
   stripLaunchToken,
 } from "./core-session.js";
+import {
+  injectRemoteSettingsMarker,
+  registerRemoteSettingsClientPatch,
+} from "./settings-client-patch.js";
 
 export const name = "auth-webserver";
 
@@ -268,7 +273,7 @@ export const Config = z.object({
   mobileMode: z.union([z.const("auto"), z.const("off")]).default("auto"),
   /** Maximum viewport width that receives the mobile drawer shell. */
   mobileBreakpoint: z.natural().min(320).max(1600).default(760),
-  /** Allowed public Host authorities; an empty list falls back to bound addresses. */
+  /** Optional explicit Host authorities; when empty, derive them from allowedOrigins or bound addresses. */
   allowedHosts: z.array(z.string()).default([]),
   /** Additional allowed browser Origins; requests must still match Host. */
   allowedOrigins: z.array(z.string()).default([]),
@@ -276,6 +281,10 @@ export const Config = z.object({
   trustedProxyAddresses: z.array(z.string()).default([]),
   /** Refuse every gateway request that is not observed as HTTPS. */
   requireHttps: z.boolean().default(false),
+  /** Permit authenticated HTTPS browser clients to use Host-backed settings pages. */
+  allowRemoteSettings: z.boolean().default(false),
+  /** Permit Host-backed settings over plain HTTP; use only on a trusted LAN. */
+  allowInsecureRemoteSettings: z.boolean().default(false),
   /** Permit the full-secret browser settings editor over HTTP; keep false unless explicitly accepted. */
   allowInsecureSettingsEditor: z.boolean().default(false),
   /** User-visible WebAuthn relying-party name. */
@@ -472,6 +481,8 @@ export async function apply(ctx, config) {
     allowedOrigins: config?.allowedOrigins ?? [],
     trustedProxyAddresses: config?.trustedProxyAddresses ?? [],
     requireHttps: config?.requireHttps ?? false,
+    allowRemoteSettings: config?.allowRemoteSettings ?? false,
+    allowInsecureRemoteSettings: config?.allowInsecureRemoteSettings ?? false,
     allowInsecureSettingsEditor: config?.allowInsecureSettingsEditor ?? false,
     passkeyRpName: config?.passkeyRpName ?? DEFAULT_PASSKEY_RP_NAME,
     passkeyRpId: config?.passkeyRpId ?? "",
@@ -555,12 +566,16 @@ export async function apply(ctx, config) {
   // stock webserver serves index, so register the polyfill as an index tap on
   // that service instead.
   const webServer = ctx.get("webServer");
+  const remoteSettingsClientPatched = config.allowRemoteSettings
+    ? registerRemoteSettingsClientPatch(ctx)
+    : false;
   if (webServer !== undefined && typeof webServer.tapIndex === "function") {
     const frame = `<script data-dsh-auth-polyfill="1">(function(){var c=window.crypto||(window.crypto={});if(typeof c.randomUUID!=="function"){if(typeof c.getRandomValues==="function"){c.randomUUID=function(){return([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g,function(x){return(x^c.getRandomValues(new Uint8Array(1))[0]&15>>x/4).toString(16)})}}else{c.randomUUID=function(){return"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,function(x){var r=Math.random()*16|0,v=x==="x"?r:(r&0x3|0x8);return v.toString(16)})}}}})();</script>`;
     ctx.effect(() => webServer.tapIndex((html) => {
       if (typeof html !== "string") return html;
       let output = injectPwaSupport(html);
       output = injectMobileLayout(output, config.mobileMode, config.mobileBreakpoint);
+      output = injectRemoteSettingsMarker(output, remoteSettingsClientPatched, config.allowInsecureRemoteSettings);
       if (output.includes("dsh-auth-polyfill")) return output;
       if (output.includes("<head>")) return output.replace("<head>", `<head>${frame}`);
       return `${frame}${output}`;
@@ -612,12 +627,15 @@ export async function apply(ctx, config) {
   const envRequireHttps = parseBooleanEnv(process.env.DSH_AUTH_REQUIRE_HTTPS ?? process.env.AUTH_REQUIRE_HTTPS, "AUTH_REQUIRE_HTTPS");
   const envPasskeyRpId = process.env.DSH_AUTH_PASSKEY_RP_ID || process.env.AUTH_PASSKEY_RP_ID;
   const envPasskeyRpName = process.env.DSH_AUTH_PASSKEY_RP_NAME || process.env.AUTH_PASSKEY_RP_NAME;
-  const allowedHostValues = envAllowedHosts ?? (config.allowedHosts.length > 0
-    ? config.allowedHosts
-    : pickAddresses(config));
-  const allowedHosts = allowedHostValues.map((value, index) => parseAllowedHost(value, index));
   const allowedOriginValues = envAllowedOrigins ?? config.allowedOrigins;
   const allowedOrigins = allowedOriginValues.map((value, index) => parseAllowedOrigin(value, index));
+  const derivedAllowedHosts = allowedOriginValues.map((value, index) => parseAllowedOriginHost(value, index));
+  const explicitAllowedHosts = envAllowedHosts ?? config.allowedHosts;
+  const allowedHosts = (explicitAllowedHosts.length > 0
+    ? explicitAllowedHosts.map((value, index) => parseAllowedHost(value, index))
+    : derivedAllowedHosts.length > 0
+      ? derivedAllowedHosts
+      : pickAddresses(config));
   const trustedProxyValues = envTrustedProxyAddresses ?? config.trustedProxyAddresses;
   for (const address of trustedProxyValues) {
     if (isIP(normalizeRemoteAddress(address)) === 0) {

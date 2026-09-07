@@ -5,6 +5,7 @@ import {
   originMatches,
   parseAllowedHost,
   parseAllowedOrigin,
+  parseAllowedOriginHost,
   parseList,
   parseRequestHost,
 } from "../policy.js";
@@ -34,6 +35,19 @@ test("matches configured and same-Host Origins", () => {
   assert.equal(originMatches("https://dsh.yiln.de", host, [parseAllowedOrigin("https://dsh.yiln.de")]), true);
   assert.equal(originMatches("http://dsh.yiln.de", host, [parseAllowedOrigin("https://dsh.yiln.de")]), false);
   assert.equal(originMatches("https://dsh.yiln.de", "other.yiln.de", [parseAllowedOrigin("https://dsh.yiln.de")]), false);
+});
+
+test("derives Host authorities from allowed Origins", () => {
+  assert.deepEqual(parseAllowedOriginHost("https://dsh.yiln.de"), {
+    hostname: "dsh.yiln.de",
+    port: "",
+    host: "dsh.yiln.de",
+  });
+  assert.deepEqual(parseAllowedOriginHost("http://192.168.55.155:3080"), {
+    hostname: "192.168.55.155",
+    port: "3080",
+    host: "192.168.55.155:3080",
+  });
 });
 
 test("parses comma-separated policy environment lists", () => {

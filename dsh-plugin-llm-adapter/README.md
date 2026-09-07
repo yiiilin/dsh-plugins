@@ -39,9 +39,10 @@ explicit session/request selection > model default > provider default
 For an OpenAI Responses model, `serviceTier: priority` is sent as `service_tier: priority`. `reasoningEffort` is exposed as the model's default reasoning selection and is still overridable from the conversation model picker.
 
 The Models page renders both fields in the `sub2api-gpt` provider-card extension.
-The extension uses the Settings Remote operations and survives the RC1 combo
-bundle loader; changes reach the next request without replacing the provider
-route.
+The adapter also preserves image request metadata when serializing admitted image
+history for pi-ai models. The Settings Models extension also tolerates the current
+upstream editor signature and uses the Settings Remote operations; changes reach
+the next request without replacing the provider route.
 
 ## Install locally
 
@@ -56,4 +57,4 @@ temporary `dsh-plugin-llm-fast` bundle installed at the same time. Restart
 
 `priority` only has an effect when the upstream gateway implements the OpenAI Responses `service_tier` field. The adapter cannot create priority capacity that the gateway does not provide.
 
-The published package is `@yiln-dsh/dsh-plugin-llm-adapter@0.2.0`.
+The published package is `@yiln-dsh/dsh-plugin-llm-adapter@0.2.1`.

@@ -8,7 +8,7 @@ const { Config, apply } = await import(pathToFileURL(modulePath).href);
 
 const credentials = { resolve: async () => ({ value: "test-key" }) };
 
-function mount(models) {
+function mount(models, attachments) {
   let adapter;
   const ctx = {
     llm: {
@@ -28,7 +28,11 @@ function mount(models) {
     clientModules: { clientPath() { return undefined; } },
     inject() {},
     effect(setup) { return setup(); },
-    get(name) { return name === "credentials" ? credentials : undefined; },
+    get(name) {
+      if (name === "credentials") return credentials;
+      if (name === "attachments") return attachments;
+      return undefined;
+    },
     logger: { warn() {}, info() {}, error() {} },
   };
   apply(ctx, Config({ providers: {
@@ -141,4 +145,39 @@ test("keeps request reasoning override and tool/replay-compatible history", asyn
   assert.equal(request.tools[0].name, "lookup");
   assert.ok(request.input.some((entry) => JSON.stringify(entry).includes("call-1")));
   assert.ok(request.input.some((entry) => JSON.stringify(entry).includes("result")));
+});
+
+test("serializes an admitted image with its request dimensions", async () => {
+  const ref = {
+    attachmentId: "sha256:test-image",
+    mediaType: "image/png",
+    bytes: 4,
+    width: 2,
+    height: 2,
+  };
+  const attachments = {
+    readImageRequest: async () => ({
+      attachment: ref,
+      data: new Uint8Array([1, 2, 3, 4]),
+      mediaType: "image/png",
+      bytes: 4,
+      width: 2,
+      height: 2,
+    }),
+  };
+  const adapter = mount([{
+    ...commonModel,
+    id: "gpt-5.6-luna",
+    input: ["text", "image"],
+    reasoningEffort: "max",
+    serviceTier: "priority",
+  }], attachments);
+  const request = await captureRequest(adapter, {
+    provider: "sub2api-gpt",
+    model: "gpt-5.6-luna",
+    messages: [message("user", "image-message", [{ type: "image", attachment: ref }], { kind: "user" })],
+  });
+
+  assert.ok(request, "the adapter should reach the provider request after image conversion");
+  assert.match(JSON.stringify(request), /2x2/);
 });

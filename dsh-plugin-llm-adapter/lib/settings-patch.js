@@ -9,13 +9,13 @@ export function patchModelsSettingsClient(source) {
   const englishAnchor = 'maxTokensPlaceholder: "Uses the provider default",';
   const chineseAnchor = 'maxTokensPlaceholder: "使用提供方默认值",';
   const modelEditorAnchor = "function ModelListEditor(props) {";
-  const modelDestructureAnchor = "const { models, onChange, probe, api, t, disabled } = props;";
+  const modelDestructureAnchor = /const \{ models, onChange, probe, (?:api|operations), t, disabled \} = props;/;
   const advancedAnchor = /className: ModelsSection_module_css_default\["modelAdvanced"\],\s*children: \[/;
   const catalogPropsAnchor = /const catalogProps = \{\s*models,\s*overridden: modelsOverridden,/;
   if (!source.includes(englishAnchor)
     || !source.includes(chineseAnchor)
     || !source.includes(modelEditorAnchor)
-    || !source.includes(modelDestructureAnchor)
+    || !modelDestructureAnchor.test(source)
     || !advancedAnchor.test(source)
     || !catalogPropsAnchor.test(source)) return null;
 

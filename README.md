@@ -7,12 +7,12 @@ own directory.
 
 | Plugin | Purpose |
 | --- | --- |
-| [`@yiln-dsh/dsh-plugin-auth-webserver`](./dsh-plugin-auth-webserver) | Auth-gated reverse proxy with enforced deployment Host/Origin, HTTPS, TOTP, bounded sessions/rate limits, and WebSocket lifecycle protection. |
+| [`@yiln-dsh/dsh-plugin-auth-webserver`](./dsh-plugin-auth-webserver) | Auth-gated reverse proxy with Host/Origin policy, HTTPS/TOTP, bounded sessions, WebSockets, and authenticated remote Settings/Models support. |
 | [`@yiln-dsh/dsh-plugin-sandbox-guidance`](./dsh-plugin-sandbox-guidance) | Explain non-widening sandbox failures to the model and user without changing execution policy. |
 | [`@yiln-dsh/dsh-plugin-file-explorer`](./dsh-plugin-file-explorer) | Contribute workspace Files and Git Graph pages to the right-panel host. |
 | [`@yiln-dsh/dsh-plugin-right-panel`](./dsh-plugin-right-panel) | Fixed right-side page host with keyed Slots, icon rail, and overflow page menu. |
 | [`@yiln-dsh/dsh-plugin-file-message`](./dsh-plugin-file-message) | Let the model send workspace-backed files and images into the conversation. |
-| [`@yiln-dsh/dsh-plugin-llm-adapter`](./dsh-plugin-llm-adapter) | Fork the DSH pi-ai adapter and expose per-model reasoning/tier controls while keeping the original provider routes. |
+| [`@yiln-dsh/dsh-plugin-llm-adapter`](./dsh-plugin-llm-adapter) | Fork the DSH pi-ai adapter with per-model reasoning/tier controls and reliable image request serialization. |
 | [`@yiln-dsh/dsh-plugin-delete-session`](./dsh-plugin-delete-session) | Add a confirmed permanent-delete action for the current session. |
 | [`@yiln-dsh/dsh-plugin-web-daemon`](./dsh-plugin-web-daemon) | Manages `dsh web` as a real systemd unit, auto-resumes sessions that were running across restarts, shows server CPU/memory/network/filesystem status above New Session, and edits its configuration from the GUI Settings section. |
 | [`@yiln-dsh/dsh-plugin-terminal-tab`](./dsh-plugin-terminal-tab) | Adds per-session persistent terminal tabs and a **新建终端** action to the Web GUI. |
@@ -40,7 +40,7 @@ Supported install formats:
 
   ```bash
   cd /path/to/dsh-plugin-auth-webserver && pnpm pack
-  dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.7.2.tgz
+  dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.7.3.tgz
   ```
 
 - **npm package.** Publish one plugin directory, then install by name:
@@ -63,13 +63,13 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 
 | Package | Version |
 | --- | --- |
-| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.7.2` |
+| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.7.3` |
 | `@yiln-dsh/dsh-plugin-sandbox-guidance` | `0.1.1` |
 | `@yiln-dsh/dsh-plugin-file-explorer` | `0.8.1` |
 | `@yiln-dsh/dsh-plugin-right-panel` | `0.1.2` |
 | `@yiln-dsh/dsh-plugin-delete-session` | `0.1.3` |
 | `@yiln-dsh/dsh-plugin-file-message` | `0.3.1` |
-| `@yiln-dsh/dsh-plugin-llm-adapter` | `0.2.0` |
+| `@yiln-dsh/dsh-plugin-llm-adapter` | `0.2.1` |
 | `@yiln-dsh/dsh-plugin-web-daemon` | `0.7.0` |
 | `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.7` |
 | `@yiln-dsh/dsh-plugin-web-browser` | `0.1.1` |
@@ -99,7 +99,7 @@ shared three ways:
 
   ```bash
   cd dsh-plugin-auth-webserver && pnpm pack
-  dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.7.2.tgz
+  dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.7.3.tgz
   ```
 
 - **Direct GitHub URL.** This works only when the repository root itself is the

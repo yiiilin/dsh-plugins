@@ -1,6 +1,6 @@
 {
   "name": "@yiln-dsh/dsh-plugin-auth-webserver",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "publishConfig": {
     "access": "public"
   },
@@ -43,6 +43,7 @@
     "settings-editor.js",
     "passkey-store.js",
     "core-session.js",
+    "settings-client-patch.js",
     "pwa",
     "totp.js",
     "test",
