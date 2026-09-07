@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const CLIENT_SOURCE = readFileSync(fileURLToPath(new URL("../client.js", import.meta.url)), "utf8");
+const PACKAGE_SOURCE = readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8");
 
 function dictionaryKeys(name, endMarker) {
   const start = CLIENT_SOURCE.indexOf(`const ${name} = {`);
@@ -19,6 +20,12 @@ test("keeps the zh/en dictionary key sets identical", () => {
   const zh = dictionaryKeys("ZH_DICT", "const EN_DICT");
   const en = dictionaryKeys("EN_DICT", "function applyParams");
   assert.deepEqual([...zh].sort(), [...en].sort());
+});
+
+test("declares the settings plugin Slot dependency", () => {
+  assert.match(PACKAGE_SOURCE, /@deepseek-ai\/dsh-client-ui-settings-plugins/u);
+  assert.match(CLIENT_SOURCE, /name: "settings\.plugin\.item"/u);
+  assert.match(CLIENT_SOURCE, /key: "auth-webserver"/u);
 });
 
 test("declares the online-client and revoke contracts in the client bundle", () => {
