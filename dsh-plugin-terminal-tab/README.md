@@ -8,6 +8,7 @@ conversation session.
 - Shows a closing spinner and filters stale list responses while a terminal is being closed, so a fast click cannot resurrect the tab.
 - Hides the conversation composer while the terminal view is active and restores
   it when the user returns to 对话 or 轨迹.
+- Hides the conversation width handles while the terminal view is active, so the terminal keeps a stable full-width surface.
 - Keeps the built-in 对话 / 轨迹 / 终端 view tabs in one conversation navigation row.
 - Renders multiple shell tabs inside the terminal view with the actual
   `@xterm/xterm` terminal emulator. xterm.js owns ANSI rendering, scrollback,
@@ -30,7 +31,7 @@ conversation session.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-terminal-tab@0.1.7`.
+The published package is `@yiln-dsh/dsh-plugin-terminal-tab@0.1.8`.
 
 Local source directory:
 

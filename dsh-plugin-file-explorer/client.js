@@ -19,7 +19,7 @@ window.__ModuleLoader__.load({
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 		let React = require("react");
 
-		const inject = ["slots", "rightPanel"];
+		const inject = ["slots", "rightPanel", "remote", "remote.session"];
 
 		const LOCALE_NS = "file-explorer";
 		const ZH_DICT = {
@@ -206,10 +206,139 @@ window.__ModuleLoader__.load({
 			return template.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match);
 		}
 
+		function createFileExplorerController(rightPanel) {
+			let nextRequestId = 0;
+			let request = null;
+			const listeners = new Set();
+			const notify = () => {
+				for (const listener of listeners) listener();
+			};
+			return {
+				open(path) {
+					if (typeof path !== "string" || path.trim() === "") return false;
+					request = { id: ++nextRequestId, path };
+					rightPanel.open("file-explorer.files");
+					notify();
+					return true;
+				},
+				getSnapshot: () => request,
+				consume(id) {
+					if (request?.id !== id) return;
+					request = null;
+					notify();
+				},
+				subscribe(listener) {
+					listeners.add(listener);
+					return () => listeners.delete(listener);
+				},
+			};
+		}
+
+		function parentPathOf(path) {
+			const cleaned = String(path).replace(/[/\\]+$/u, "");
+			if (cleaned === "" || /^[A-Za-z]:$/u.test(cleaned)) return null;
+			const slash = Math.max(cleaned.lastIndexOf("/"), cleaned.lastIndexOf("\\"));
+			if (slash < 0) return null;
+			if (slash === 0) return cleaned[0] === "/" ? "/" : null;
+			return cleaned.slice(0, slash);
+		}
+
+		function installWorkspaceOpenFallback(remote, controller) {
+			const session = remote?.session;
+			const originalOpen = session?.openWorkspacePath;
+			const originalCan = session?.canOpenWorkspacePath;
+			if (typeof originalOpen !== "function" || typeof controller?.open !== "function") return () => {};
+
+			const originalOpenDescriptor = Object.getOwnPropertyDescriptor(session, "openWorkspacePath");
+			const originalCanDescriptor = Object.getOwnPropertyDescriptor(session, "canOpenWorkspacePath");
+			const nativeOpen = originalOpen.bind(session);
+			const nativeCan = typeof originalCan === "function" ? originalCan.bind(session) : null;
+			const opened = () => ({ ok: true, value: { opened: true } });
+			const defineMethod = (name, value) => {
+				const descriptor = Object.getOwnPropertyDescriptor(session, name);
+				Object.defineProperty(session, name, {
+					configurable: true,
+					enumerable: descriptor?.enumerable ?? true,
+					writable: true,
+					value,
+				});
+				if (session[name] !== value) throw new Error(`file explorer could not install ${name} fallback`);
+			};
+			const restoreMethod = (name, descriptor) => {
+				try {
+					if (descriptor === undefined) delete session[name];
+					else Object.defineProperty(session, name, descriptor);
+				} catch (_error) {
+					// A newer owner may have replaced the Remote method during teardown.
+				}
+			};
+			const wrappedOpen = async (request, signal) => {
+				const path = request?.path;
+				if (typeof path !== "string" || path.length === 0) return nativeOpen(request, signal);
+
+				let nativeAvailable = nativeCan === null;
+				let nativeResult;
+				let nativeError;
+				if (nativeCan !== null) {
+					try {
+						const capability = await nativeCan();
+						nativeAvailable = capability?.ok === true && capability.value === true;
+					} catch (error) {
+						nativeError = error;
+					}
+				}
+				if (nativeAvailable) {
+					try {
+						nativeResult = await nativeOpen(request, signal);
+						if (nativeResult?.ok === true) return nativeResult;
+					} catch (error) {
+						nativeError = error;
+					}
+				}
+
+				if (controller.open(path)) return opened();
+				if (nativeResult !== undefined) return nativeResult;
+				if (nativeError !== undefined) throw nativeError;
+				return nativeOpen(request, signal);
+			};
+
+			try {
+				defineMethod("openWorkspacePath", wrappedOpen);
+			} catch (_error) {
+				return () => {};
+			}
+
+			let wrappedCan = null;
+			if (nativeCan !== null) {
+				wrappedCan = async (...args) => {
+					try {
+						const capability = await nativeCan(...args);
+						if (capability?.ok === true && capability.value === true) return capability;
+					} catch (_error) {
+						// The file explorer remains available when the native capability is absent.
+					}
+					return { ok: true, value: true };
+				};
+				try {
+					defineMethod("canOpenWorkspacePath", wrappedCan);
+				} catch (_error) {
+					wrappedCan = null;
+				}
+			}
+
+			return () => {
+				if (session.openWorkspacePath === wrappedOpen) restoreMethod("openWorkspacePath", originalOpenDescriptor);
+				if (wrappedCan !== null && session.canOpenWorkspacePath === wrappedCan) restoreMethod("canOpenWorkspacePath", originalCanDescriptor);
+			};
+		}
+
 		function apply(ctx) {
 			const slots = ctx.get('slots')
 			const rightPanel = ctx.get('rightPanel')
 			if (slots === undefined || rightPanel === undefined) return
+
+			const fileExplorer = createFileExplorerController(rightPanel);
+			ctx.effect(() => installWorkspaceOpenFallback(ctx.get("remote"), fileExplorer), "file-explorer: workspace opener");
 
 			const locale = ctx.get("locale");
 			if (locale !== undefined) {
@@ -1773,6 +1902,7 @@ window.__ModuleLoader__.load({
 				const [pendingDelete, setPendingDelete] = React.useState(null)
 				const [mdView, setMdView] = React.useState('editor') // 'editor' | 'render' for markdown files
 				const [mdHtml, setMdHtml] = React.useState(null) // {html} | {error} while render view is active
+				const openRequest = React.useSyncExternalStore(props.fileExplorer.subscribe, props.fileExplorer.getSnapshot, props.fileExplorer.getSnapshot)
 
 				React.useEffect(() => {
 					if (sessionId === undefined) {
@@ -1924,7 +2054,7 @@ window.__ModuleLoader__.load({
 						})
 				}
 
-				const openPreview = (entry) => {
+				const openPreview = (entry, fromWorkspaceOpen = false) => {
 					setPendingDelete(null)
 					resetImageView()
 					setPreviewLoading(true)
@@ -1936,13 +2066,35 @@ window.__ModuleLoader__.load({
 					setMdHtml(null)
 					api('read', { path: entry.path })
 						.then((raw) => {
-							setPreview(raw && raw.ok === true ? raw : { ok: false, error: raw && typeof raw.error === 'string' ? raw.error : t('files.readFailed') })
+							if (raw && raw.ok === true) {
+								setPreview(raw)
+								return
+							}
+							if (fromWorkspaceOpen) {
+								setPreview(null)
+								setRequestPath(entry.path)
+								return
+							}
+							setPreview({ ok: false, error: raw && typeof raw.error === 'string' ? raw.error : t('files.readFailed') })
 						})
 						.catch((err) => {
+							if (fromWorkspaceOpen) {
+								setPreview(null)
+								setRequestPath(entry.path)
+								return
+							}
 							setPreview({ ok: false, error: err && typeof err.message === 'string' ? err.message : String(err) })
 						})
 						.finally(() => setPreviewLoading(false))
 				}
+
+				React.useEffect(() => {
+					if (openRequest === null) return
+					props.fileExplorer.consume(openRequest.id)
+					const parent = parentPathOf(openRequest.path)
+					setRequestPath(parent === null ? openRequest.path : parent)
+					openPreview({ path: openRequest.path }, true)
+				}, [openRequest])
 
 				// Render the markdown source to HTML only while the render view is
 				// active; re-renders when the (edited) text changes so the two
@@ -2311,6 +2463,7 @@ window.__ModuleLoader__.load({
 				const disposeFilesSlot = slots.inject('right-panel.page', () => slots.register({
 					name: 'right-panel.page',
 					key: 'file-explorer.files',
+					inject: () => ({ fileExplorer }),
 				}, FileExplorerPage))
 				const disposeGitSlot = slots.inject('right-panel.page', () => slots.register({
 					name: 'right-panel.page',
@@ -2327,6 +2480,7 @@ window.__ModuleLoader__.load({
 
 		exports.apply = apply;
 		exports.inject = inject;
+		exports.installWorkspaceOpenFallback = installWorkspaceOpenFallback;
 		return module.exports;
 	}
 });

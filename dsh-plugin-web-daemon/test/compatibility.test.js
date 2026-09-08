@@ -22,3 +22,9 @@ test("registers the server status panel through the official sidebar footer slot
   assert.match(CLIENT_SOURCE, /id: "web-daemon-server-status"/u);
   assert.doesNotMatch(CLIENT_SOURCE, /sidebar\.server\.status/u);
 });
+
+test("gates session history streams during recovery", () => {
+  assert.match(HOST_SOURCE, /sessionController: \[[^\]]*"follow"/u);
+  assert.match(HOST_SOURCE, /sessions: \[[^\]]*"follow"/u);
+  assert.match(HOST_SOURCE, /async function\* \(\.\.\.args\)/u);
+});

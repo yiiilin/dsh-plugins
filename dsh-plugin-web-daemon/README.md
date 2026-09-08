@@ -57,7 +57,7 @@ disposed session is removed.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.7.0`.
+The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.7.1`.
 
 ### npm package
 
@@ -121,7 +121,7 @@ Recorded state is the single source of truth:
 - A foreground owner sharing `DSH_HOME` never resumes; `active-sessions.lock`
   (pid + boot identity + token) prevents two workers from racing.
 - While recovery is in progress, Host calls that would create or wake an Agent
-  (`session.prompt`, `session.page`, `session.modelCatalog`, …) wait behind the
+  (`session.prompt`, `session.page`, `session.follow`, `session.modelCatalog`, …) wait behind the
   same barrier, so an auto-reconnecting browser cannot claim a session before
   resume.
 

@@ -13,7 +13,7 @@ own directory.
 | [`@yiln-dsh/dsh-plugin-right-panel`](./dsh-plugin-right-panel) | Fixed right-side page host with keyed Slots, icon rail, and overflow page menu. |
 | [`@yiln-dsh/dsh-plugin-file-message`](./dsh-plugin-file-message) | Let the model send workspace-backed files and images into the conversation. |
 | [`@yiln-dsh/dsh-plugin-llm-adapter`](./dsh-plugin-llm-adapter) | Fork the DSH pi-ai adapter with per-model reasoning/tier controls and reliable image request serialization. |
-| [`@yiln-dsh/dsh-plugin-delete-session`](./dsh-plugin-delete-session) | Add confirmed permanent-delete actions for the current session and selected session batches. |
+| [`@yiln-dsh/dsh-plugin-delete-session`](./dsh-plugin-delete-session) | Add confirmed permanent-delete actions for the current session, session-row menus, and selected session batches. |
 | [`@yiln-dsh/dsh-plugin-web-daemon`](./dsh-plugin-web-daemon) | Manages `dsh web` as a real systemd unit, auto-resumes sessions that were running across restarts, shows server CPU/memory/network/filesystem status above New Session, and edits its configuration from the GUI Settings section. |
 | [`@yiln-dsh/dsh-plugin-terminal-tab`](./dsh-plugin-terminal-tab) | Adds per-session persistent terminal tabs and a **新建终端** action to the Web GUI. |
 | [`@yiln-dsh/dsh-plugin-web-browser`](./dsh-plugin-web-browser) | Server-side browser view next to the terminal: Chromium runs on the DSH host (playwright-core + CDP screencast), frames stream to the GUI, input is injected back, and a Chrome-style blank tab opens automatically. |
@@ -65,14 +65,14 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 | --- | --- |
 | `@yiln-dsh/dsh-plugin-auth-webserver` | `0.7.5` |
 | `@yiln-dsh/dsh-plugin-sandbox-guidance` | `0.1.1` |
-| `@yiln-dsh/dsh-plugin-file-explorer` | `0.8.1` |
+| `@yiln-dsh/dsh-plugin-file-explorer` | `0.9.0` |
 | `@yiln-dsh/dsh-plugin-right-panel` | `0.1.2` |
-| `@yiln-dsh/dsh-plugin-delete-session` | `0.2.0` |
+| `@yiln-dsh/dsh-plugin-delete-session` | `0.3.0` |
 | `@yiln-dsh/dsh-plugin-file-message` | `0.3.1` |
 | `@yiln-dsh/dsh-plugin-llm-adapter` | `0.2.1` |
-| `@yiln-dsh/dsh-plugin-web-daemon` | `0.7.0` |
-| `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.7` |
-| `@yiln-dsh/dsh-plugin-web-browser` | `0.1.1` |
+| `@yiln-dsh/dsh-plugin-web-daemon` | `0.7.1` |
+| `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.8` |
+| `@yiln-dsh/dsh-plugin-web-browser` | `0.1.2` |
 
 Each plugin's version is the `version` field in its own `package.json`.
 Semantic versioning is recommended: patch for fixes, minor for additive

@@ -1,11 +1,12 @@
 # @yiln-dsh/dsh-plugin-delete-session
 
-Adds a permanent-delete action to the current session header in the DSH Web
+Adds permanent-delete actions to the current session and session rows in the DSH Web
 GUI.
 
 ## Behavior
 
 - Adds a trash icon beside the current session title.
+- Adds a Delete session item to each ordinary session's three-dot menu and reuses the destructive confirmation dialog.
 - Adds a batch-management control beside the New Workspace action; management mode exposes a checkbox on each visible ordinary session plus Cancel and Delete selected controls.
 - Sends selected sessions through one serialized Host operation, so active sessions are flushed and disposed safely before their persisted logs are removed.
 - Requires an explicit confirmation before sending the destructive request.
@@ -26,7 +27,7 @@ tracked by the plugin.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-delete-session@0.2.0`.
+The published package is `@yiln-dsh/dsh-plugin-delete-session@0.3.0`.
 
 ```bash
 dsh plugin --profile web add file:/path/to/dsh-plugin-delete-session

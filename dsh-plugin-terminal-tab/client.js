@@ -431,6 +431,7 @@ window.__ModuleLoader__.load({
 .dtt-new-terminal:hover:not(:disabled){background:#26323c;color:#fff}
 .dtt-new-terminal:disabled{opacity:.55;cursor:default}
 [data-conversation-scroll][data-dsh-terminal-active] > [data-composer-seat]{display:none!important}
+[data-conversation-scroll][data-dsh-terminal-active] ~ [data-width-handle]{display:none!important}
 .dtt-name-overlay{position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.52)}
 .dtt-name-dialog{width:min(340px,calc(100% - 32px));box-sizing:border-box;padding:16px;border:1px solid #33424e;border-radius:8px;background:#151c23;color:#d6f5d6;box-shadow:0 16px 48px rgba(0,0,0,.4);font:13px/1.4 sans-serif}
 .dtt-name-title{margin:0 0 14px;font-size:14px;font-weight:600}

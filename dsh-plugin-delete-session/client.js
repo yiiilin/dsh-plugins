@@ -24,6 +24,7 @@ window.__ModuleLoader__.load({
     const ZH_DICT = {
       cancel: "取消",
       "confirm.title": "删除会话",
+      "menu.delete": "删除会话",
       "confirm.body": "确定要删除“{name}”吗？",
       "confirm.warning": "会话日志及其会话专属临时文件将被永久删除，无法恢复。",
       "delete.busy": "删除中…",
@@ -36,6 +37,7 @@ window.__ModuleLoader__.load({
     const EN_DICT = {
       cancel: "Cancel",
       "confirm.title": "Delete session",
+      "menu.delete": "Delete session",
       "confirm.body": "Delete “{name}”?",
       "confirm.warning": "The session transcript and its temporary workspace files will be permanently deleted and cannot be recovered.",
       "delete.busy": "Deleting…",
@@ -84,7 +86,13 @@ window.__ModuleLoader__.load({
  .dss-session-checkbox-host input{box-sizing:border-box;width:16px;height:16px;margin:0;accent-color:var(--dsw-alias-brand-primary,#2563eb);cursor:pointer}
  .dss-session-checkbox-host:focus-within{outline:2px solid var(--dsw-alias-brand-primary,#2563eb);outline-offset:1px}
  div[role="treeitem"]:has(> .dss-session-checkbox-host){position:relative}
- .dss-batch-status{position:absolute;z-index:3;left:8px;right:8px;bottom:8px;box-sizing:border-box;padding:7px 9px;border:1px solid rgba(239,68,68,.35);border-radius:6px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-state-error-primary,#b91c1c);font-size:12px;line-height:18px;overflow-wrap:anywhere;box-shadow:0 4px 14px rgba(0,0,0,.12)}
+  .dss-batch-status{position:absolute;z-index:3;left:8px;right:8px;bottom:8px;box-sizing:border-box;padding:7px 9px;border:1px solid rgba(239,68,68,.35);border-radius:6px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-state-error-primary,#b91c1c);font-size:12px;line-height:18px;overflow-wrap:anywhere;box-shadow:0 4px 14px rgba(0,0,0,.12)}
+ .dss-menu-delete-wrap{box-sizing:border-box;width:100%;padding:0}
+ .dss-menu-delete-item{box-sizing:border-box;width:100%;min-height:40px;display:flex;align-items:center;gap:8px;padding:8px 10px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-state-error-primary,#b91c1c);cursor:pointer;font:inherit;font-size:14px;line-height:22px;text-align:left}
+ .dss-menu-delete-item:hover{background:var(--dsw-alias-interactive-bg-hover,#e7e5e4)}
+ .dss-menu-delete-item:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#2563eb);outline-offset:-2px}
+ .dss-menu-delete-icon{width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;flex:none}
+
 `;
 
     function installStyle() {
@@ -242,6 +250,36 @@ window.__ModuleLoader__.load({
       return { sectionTarget: sectionHeader, headerTarget, targets };
     }
 
+    function openMenuForRow(row) {
+      if (typeof document === "undefined" || row === null) return null;
+      const anchor = [...row.querySelectorAll("button")].find((button) => button.getClientRects().length > 0);
+      const anchorRect = anchor?.getBoundingClientRect();
+      const menus = [...document.querySelectorAll('[role="menu"]')].filter((menu) => {
+        const rect = menu.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && getComputedStyle(menu).visibility !== "hidden";
+      });
+      if (menus.length === 0) return null;
+      if (anchorRect === undefined) return menus.at(-1) ?? null;
+      return menus.sort((left, right) => {
+        const leftRect = left.getBoundingClientRect();
+        const rightRect = right.getBoundingClientRect();
+        const leftDistance = Math.abs(leftRect.left - anchorRect.left) + Math.abs(leftRect.top - anchorRect.top);
+        const rightDistance = Math.abs(rightRect.left - anchorRect.left) + Math.abs(rightRect.top - anchorRect.top);
+        return leftDistance - rightDistance;
+      })[0] ?? null;
+    }
+
+    function menuContentTarget(menu) {
+      return menu?.querySelector('[role="presentation"]') ?? menu;
+    }
+
+    function keepSessionMenuOpen(row) {
+      if (row === null || typeof PointerEvent !== "function") return;
+      const trigger = [...row.querySelectorAll("button")].find((button) => button.getClientRects().length > 0);
+      const menuRoot = trigger?.parentElement;
+      menuRoot?.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" }));
+    }
+
     function createBatchManagementAction(t, sessions) {
       return function BatchManagementAction(props) {
         const list = typeof props.useSessions === "function" ? props.useSessions((state) => state) : EMPTY_SESSION_LIST;
@@ -255,6 +293,12 @@ window.__ModuleLoader__.load({
         const [headerTarget, setHeaderTarget] = React.useState(null);
         const [sectionTarget, setSectionTarget] = React.useState(null);
         const [rowTargets, setRowTargets] = React.useState([]);
+        const [menuTarget, setMenuTarget] = React.useState(null);
+        const [menuDeleteTarget, setMenuDeleteTarget] = React.useState(null);
+        const [menuDeleteBusy, setMenuDeleteBusy] = React.useState(false);
+        const [menuDeleteError, setMenuDeleteError] = React.useState(null);
+        const activeMenuRowRef = React.useRef(null);
+        const activeMenuSessionRef = React.useRef(null);
 
         React.useEffect(() => {
           setSelectedIds((previous) => {
@@ -271,6 +315,23 @@ window.__ModuleLoader__.load({
           setError(null);
         }, [managing, props.wide]);
 
+        React.useEffect(() => {
+          if (typeof document === "undefined") return undefined;
+          const rememberMenuRow = (event) => {
+            const source = event.target;
+            if (source === null || typeof source.closest !== "function") return;
+            const button = source.closest("button");
+            const row = button?.closest('div[role="treeitem"][aria-selected]');
+            if (row === null || row === undefined || row.hasAttribute("aria-expanded")) return;
+            const target = rowTargets.find((candidate) => candidate.element === row);
+            if (target === undefined) return;
+            activeMenuRowRef.current = row;
+            activeMenuSessionRef.current = { id: target.id, title: target.title };
+          };
+          document.addEventListener("click", rememberMenuRow, true);
+          return () => document.removeEventListener("click", rememberMenuRow, true);
+        }, [rowTargets]);
+
         React.useLayoutEffect(() => {
           let disposed = false;
           const refreshTargets = () => {
@@ -279,6 +340,18 @@ window.__ModuleLoader__.load({
             setSectionTarget((previous) => previous === found.sectionTarget ? previous : found.sectionTarget);
             setHeaderTarget((previous) => previous === found.headerTarget ? previous : found.headerTarget);
             setRowTargets((previous) => targetsEqual(previous, found.targets) ? previous : found.targets);
+            const activeSession = activeMenuSessionRef.current;
+            const openMenu = activeMenuRowRef.current === null ? null : openMenuForRow(activeMenuRowRef.current);
+            const contentTarget = menuContentTarget(openMenu);
+            const nextMenuTarget = activeSession === null || contentTarget === null
+              ? null
+              : { host: contentTarget, id: activeSession.id, title: activeSession.title };
+            setMenuTarget((previous) => previous !== null
+              && nextMenuTarget !== null
+              && previous.host === nextMenuTarget.host
+              && previous.id === nextMenuTarget.id
+              ? previous
+              : nextMenuTarget);
           };
           refreshTargets();
           let observer;
@@ -345,6 +418,42 @@ window.__ModuleLoader__.load({
           }
         };
 
+        const openMenuDelete = (target) => {
+          activeMenuRowRef.current = null;
+          activeMenuSessionRef.current = null;
+          setMenuTarget(null);
+          setMenuDeleteError(null);
+          setMenuDeleteBusy(false);
+          setMenuDeleteTarget({ id: target.id, title: target.title });
+        };
+        const cancelMenuDelete = () => {
+          if (menuDeleteBusy) return;
+          setMenuDeleteTarget(null);
+          setMenuDeleteError(null);
+        };
+        const confirmMenuDelete = async () => {
+          if (menuDeleteBusy || menuDeleteTarget === null) return;
+          const target = menuDeleteTarget;
+          setMenuDeleteBusy(true);
+          setMenuDeleteError(null);
+          try {
+            await requestDelete(target.id);
+            if (list.current === target.id) {
+              const archived = new Set(Array.isArray(workspaceList?.archivedSessionIds) ? workspaceList.archivedSessionIds : []);
+              const nextSessionId = (Array.isArray(list.ids) ? list.ids : []).find((id) => {
+                const summary = list.byId[id];
+                return id !== target.id && sessionIsVisible(summary, list.current, archived) && summary.blank !== true;
+              });
+              if (nextSessionId !== undefined && typeof sessions?.open === "function") sessions.open(nextSessionId);
+              else if (typeof sessions?.clear === "function") sessions.clear();
+            }
+            if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
+          } catch (reason) {
+            setMenuDeleteBusy(false);
+            setMenuDeleteError(messageOf(reason));
+          }
+        };
+
         const modeMarker = !managing || sectionTarget === null
           ? null
           : createPortal(React.createElement("span", { className: "dss-batch-mode-marker", "aria-hidden": "true" }), sectionTarget, "dss-batch-mode-marker");
@@ -392,6 +501,38 @@ window.__ModuleLoader__.load({
           headerTarget,
           "dss-batch-controls",
         );
+        const menuDeleteItem = !managing && menuTarget !== null
+          ? createPortal(
+              React.createElement(
+                "div",
+                { className: "dss-menu-delete-wrap" },
+                React.createElement(
+                  "button",
+                  {
+                    type: "button",
+                    role: "menuitem",
+                    className: "dss-menu-delete-item",
+                    onPointerEnter: () => keepSessionMenuOpen(activeMenuRowRef.current),
+                    onClick: (event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      openMenuDelete(menuTarget);
+                    },
+                  },
+                  React.createElement(
+                    "span",
+                    { className: "dss-menu-delete-icon" },
+                    primitives.IconTrashOutline16
+                      ? React.createElement(primitives.IconTrashOutline16, { size: 16 })
+                      : React.createElement("span", { "aria-hidden": "true" }, "×"),
+                  ),
+                  t("menu.delete"),
+                ),
+              ),
+              menuTarget.host,
+              "dss-menu-delete-item",
+            )
+          : null;
         const checkboxPortals = managing
           ? rowTargets.map((target) => createPortal(
               React.createElement(
@@ -417,6 +558,37 @@ window.__ModuleLoader__.load({
         const status = error === null
           ? null
           : React.createElement("div", { className: "dss-batch-status", role: "alert" }, error);
+        const menuDialog = menuDeleteTarget === null
+          ? null
+          : React.createElement(
+              "div",
+              {
+                className: "dss-overlay",
+                role: "presentation",
+                onClick: cancelMenuDelete,
+              },
+              React.createElement(
+                "div",
+                {
+                  className: "dss-dialog",
+                  role: "dialog",
+                  "aria-modal": "true",
+                  "aria-labelledby": "dss-menu-delete-title",
+                  onClick: (event) => event.stopPropagation(),
+                },
+                React.createElement("h2", { id: "dss-menu-delete-title", className: "dss-title" }, t("confirm.title")),
+                React.createElement("p", { className: "dss-copy" }, t("confirm.body", { name: menuDeleteTarget.title })),
+                React.createElement("p", { className: "dss-warning" }, t("confirm.warning")),
+                menuDeleteError === null ? null : React.createElement("div", { className: "dss-error", role: "alert" }, menuDeleteError),
+                React.createElement(
+                  "div",
+                  { className: "dss-buttons" },
+                  React.createElement("button", { type: "button", className: "dss-button", disabled: menuDeleteBusy, onClick: cancelMenuDelete }, t("cancel")),
+                  React.createElement("button", { type: "button", className: "dss-button dss-button-danger", disabled: menuDeleteBusy, onClick: () => void confirmMenuDelete() }, menuDeleteBusy ? t("delete.busy") : t("delete.confirm")),
+                ),
+              ),
+            );
+
         const footerControls = !props.wide
           ? managing
             ? React.createElement(
@@ -439,8 +611,10 @@ window.__ModuleLoader__.load({
           footerControls,
           modeMarker,
           controls,
+          menuDeleteItem,
           checkboxPortals,
           status,
+          menuDialog,
         );
       };
     }

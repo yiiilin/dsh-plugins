@@ -17,6 +17,9 @@ A DSH `dsh.bundle` that contributes a workspace file explorer page to the
   live text, so the render follows unsaved edits); image files open in a
   viewer with fullscreen, 25%-400% zoom, wheel zoom, and drag-to-pan after
   zooming.
+- In a headless `dsh web` session, AI tool/file links route to the Files page
+  and open the workspace file in the same preview/editor dialog instead of
+  invoking a native desktop opener.
 - **Git Graph** page: a vscode/le-git-graph style commit graph rendered from
   the repository containing the current directory —
   - colored lane graph with commit dots and merge curves (all branches or the
@@ -42,7 +45,7 @@ A DSH `dsh.bundle` that contributes a workspace file explorer page to the
 
 ## Install
 
-The package version is `@yiln-dsh/dsh-plugin-file-explorer@0.8.1`.
+The package version is `@yiln-dsh/dsh-plugin-file-explorer@0.9.0`.
 
 The right-panel package must be installed in the same `web` profile:
 
@@ -59,7 +62,7 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./yiln-dsh-dsh-plugin-file-explorer-0.8.1.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-file-explorer-0.9.0.tgz
 ```
 
 ### npm package

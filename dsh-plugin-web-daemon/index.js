@@ -45,14 +45,14 @@ const SESSION_REGISTRY_STALE_MS = 30000;
 const RESUME_PLUGIN_SOURCE = "dsh-plugin-web-daemon";
 const INTERRUPTED_RESUME_TEXT = "The daemon restarted while this session was running. Continue the task from the recovered conversation. Before repeating any operation, verify the outcome of tool calls marked as unknown.";
 const RECOVERY_GATED_API_METHODS = {
-  sessionController: ["list", "search", "create", "page", "modelCatalog", "selectModel", "rename", "prompt", "fork", "attachment", "updateQueue", "cancel"],
+  sessionController: ["list", "search", "create", "page", "follow", "modelCatalog", "selectModel", "rename", "prompt", "fork", "attachment", "updateQueue", "cancel"],
   goals: ["create", "edit", "pause", "resume", "complete", "clear"],
   agentPresets: ["remoteExportList", "select"],
   subagents: ["listChildren", "prompt", "interruptByParent"],
 };
 
 const LEGACY_RECOVERY_GATED_API_METHODS = {
-  sessions: ["list", "search", "create", "history", "models", "selectModel", "rename", "prompt", "fork", "attachment", "updateQueue", "cancel"],
+  sessions: ["list", "search", "create", "history", "models", "follow", "selectModel", "rename", "prompt", "fork", "attachment", "updateQueue", "cancel"],
   goals: ["create", "edit", "pause", "resume", "complete", "clear"],
   agentPresets: ["list", "select"],
   subagents: ["list", "history", "prompt", "interrupt"],
@@ -1479,10 +1479,16 @@ function installRecoveryApiGate(ctx, services, recoveryReady, diag) {
     for (const methodName of methodNames) {
       const original = domain[methodName];
       if (typeof original !== "function") continue;
-      const gated = function (...args) {
-        diag.gatedCalls.push(`${domainName}.${methodName}`);
-        return Promise.resolve(recoveryReady).then(() => original.apply(domain, args));
-      };
+      const gated = methodName === "follow"
+        ? async function* (...args) {
+          diag.gatedCalls.push(`${domainName}.${methodName}`);
+          await recoveryReady;
+          yield* original.apply(domain, args);
+        }
+        : function (...args) {
+          diag.gatedCalls.push(`${domainName}.${methodName}`);
+          return Promise.resolve(recoveryReady).then(() => original.apply(domain, args));
+        };
       try {
         domain[methodName] = gated;
       } catch {
