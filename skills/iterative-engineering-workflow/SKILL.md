@@ -1,7 +1,6 @@
 ---
 name: iterative-engineering-workflow
-description: Cost-aware planner/worker engineering with bounded repairs, selective escalation, optional subtractive audits, and acceptance-based verification.
-disable-model-invocation: true
+description: Use for planner/worker loops, large multi-agent engineering tasks, or development followed by subtractive engineering; provides bounded repairs, selective escalation, and acceptance-based verification.
 ---
 # Iterative Engineering Workflow
 
