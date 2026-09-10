@@ -1,0 +1,17 @@
+# dsh-plugin-session-list-cache bundle patch.
+#
+# Wraps the one sessionQuery.listSessions() method that both /api/session/list
+# and every /api/subagents/list call. Those requests arrive together from one
+# GUI burst, and each one otherwise re-enumerates every stored session log on
+# its own, so the burst pays for the whole store several times over and the
+# calls queue instead of overlapping.
+
+- insert:
+    - id: session-list-cache
+      name: '@yiln-dsh/dsh-plugin-session-list-cache'
+      inject:
+        - sessionQuery
+      config:
+        # Reuse one completed store scan for this long. Long enough to swallow a
+        # GUI burst, short enough that a new session appears immediately.
+        ttlMs: 1000

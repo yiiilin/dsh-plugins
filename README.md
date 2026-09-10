@@ -3,6 +3,13 @@
 A repository of plugins for DeepSeek Harness (DSH). Each plugin lives in its
 own directory.
 
+## Skills
+
+| Skill | Purpose |
+| --- | --- |
+| [collective-deliberation](./skills/collective-deliberation) | Portable multi-agent proposals and peer scoring, mixed-model routing, deterministic thresholds, and evidence checks; includes an optional DSH workflow adapter. |
+| [iterative-engineering-workflow](./skills/iterative-engineering-workflow) | Bounded planner/worker engineering loops with verification and selective escalation. |
+
 ## Plugins
 
 | Plugin | Purpose |
@@ -17,6 +24,7 @@ own directory.
 | [`@yiln-dsh/dsh-plugin-web-daemon`](./dsh-plugin-web-daemon) | Manages `dsh web` as a real systemd unit, auto-resumes sessions that were running across restarts, shows server CPU/memory/network/filesystem status above New Session, and edits its configuration from the GUI Settings section. |
 | [`@yiln-dsh/dsh-plugin-terminal-tab`](./dsh-plugin-terminal-tab) | Adds per-session persistent terminal tabs and a **新建终端** action to the Web GUI. |
 | [`@yiln-dsh/dsh-plugin-web-browser`](./dsh-plugin-web-browser) | Server-side browser view next to the terminal: Chromium runs on the DSH host (playwright-core + CDP screencast), frames stream to the GUI, input is injected back, and a Chrome-style blank tab opens automatically. |
+| [`@yiln-dsh/dsh-plugin-session-list-cache`](./dsh-plugin-session-list-cache) | Collapse the repeated full-store session enumerations the Web GUI fires concurrently, by caching and coalescing `sessionQuery.listSessions()` behind `/api/session/list` and `/api/subagents/list`. |
 
 ## Install
 
@@ -73,6 +81,7 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 | `@yiln-dsh/dsh-plugin-web-daemon` | `0.7.1` |
 | `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.8` |
 | `@yiln-dsh/dsh-plugin-web-browser` | `0.1.2` |
+| `@yiln-dsh/dsh-plugin-session-list-cache` | `0.1.0` |
 
 Each plugin's version is the `version` field in its own `package.json`.
 Semantic versioning is recommended: patch for fixes, minor for additive
