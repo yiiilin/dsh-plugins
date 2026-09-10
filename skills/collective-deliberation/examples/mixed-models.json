@@ -1,0 +1,14 @@
+{
+  "topic": "评审我的方案，提出可同时采用的改进建议。",
+  "constraints": ["替换路由占位符为平台真实可执行的模型ID后再运行"],
+  "context": [],
+  "threshold": 3.5,
+  "mode": "multi-model",
+  "maxConcurrent": 2,
+  "participants": [
+    {"id": "a", "model": "REPLACE_MODEL_A", "lens": "事实与反例"},
+    {"id": "b", "model": "REPLACE_MODEL_B", "lens": "目标与遗漏"},
+    {"id": "c", "model": "REPLACE_MODEL_A", "lens": "实施与成本"},
+    {"id": "d", "model": "REPLACE_MODEL_C", "lens": "边界与风险"}
+  ]
+}

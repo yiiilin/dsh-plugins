@@ -1,0 +1,122 @@
+[
+  {
+    "id": "actionlint",
+    "taskId": "actionlint-action-pinning-lint",
+    "title": "actionlint：action pinning 规则的配置与例外",
+    "task": {
+      "repo": "rhysd/actionlint",
+      "language": "go",
+      "baseCommit": "0bdc95715fa58f64e3fd6e63b0f89be8733cbbab",
+      "source": "https://github.com/datacurve-ai/deep-swe/blob/0b9fabbb63b9104d678fe965e1632f2dd9eaa2ea/tasks/actionlint-action-pinning-lint/instruction.md"
+    },
+    "problem": "只依据 actionlint 任务题面判断以下说法。任务要新增 error kind 为 action-pinning 的规则，检查 step-level action uses 和 job-level reusable workflow uses。pinning level 有 major-minor、semver、commit-sha，默认 semver；action-pinning: null 禁用，空对象启用默认值。支持全局/按路径配置、大小写不敏感的 allow/deny 列表；denied 项优先于 allowed 项，但仍应接受 pinning 检查。./ 和 docker:// 应跳过；action 名本身是表达式时跳过；只有 ref 是表达式时要报无法验证的错误。CLI 的 -action-pinning-level 只覆盖 level，但会启用规则。",
+    "options": [
+      {"id": "A", "text": "空对象 action-pinning: {} 会以默认 semver 启用规则，而 action-pinning: null 会保持禁用。"},
+      {"id": "B", "text": "完整 40 位小写十六进制 ref 满足 commit-sha；带 vMAJOR.MINOR.PATCH 的 prerelease ref 满足 semver。"},
+      {"id": "C", "text": "allowed-owners 或 allowed-actions 命中后即可免除 pinning 检查，即使同时命中 denied 列表也不例外。"},
+      {"id": "D", "text": "action 名本身是动态表达式时必须报 action-pinning 错误，因为无法知道它属于哪个 owner。"},
+      {"id": "E", "text": "本地 ./ action 和 docker:// action 也必须检查版本 ref，只是它们的错误信息可以不同。"},
+      {"id": "F", "text": "CLI 的 -action-pinning-level 只能改变严格度，不能在配置禁用时启用规则，也不能保留原有 allow/deny 配置。"}
+    ]
+  },
+  {
+    "id": "obsidian",
+    "taskId": "obsidian-linter-scoped-ignore-markers",
+    "title": "Obsidian Linter：作用域忽略 marker 的状态语义",
+    "task": {
+      "repo": "platers/obsidian-linter",
+      "language": "typescript",
+      "baseCommit": "6393b3ab32a2ace1fc24d4b0f5e0f13a179c874f",
+      "source": "https://github.com/datacurve-ai/deep-swe/blob/0b9fabbb63b9104d678fe965e1632f2dd9eaa2ea/tasks/obsidian-linter-scoped-ignore-markers/instruction.md"
+    },
+    "problem": "只依据 Obsidian Linter 任务题面判断以下说法。任务支持 HTML comment 和 Obsidian comment 两种 linter-disable/linter-enable marker，以及 next-line 和 next-N-lines 形式。marker 必须独占一行；在 YAML frontmatter、fenced/indented code、inline code 和 math block 内无效；marker 行自身不能被规则修改。规则列表大小写不敏感、去重，未知别名忽略。disable/enable 允许嵌套；无规则 enable 使用栈语义，带规则 enable 只从最近仍禁用该规则的作用域移除该规则。",
+    "options": [
+      {"id": "A", "text": "只有独占行的 marker 才生效，代码/数学等指定上下文中的 marker 被忽略，且 marker 行永远不应被任何规则修改。"},
+      {"id": "B", "text": "无规则的 enable 关闭最近的开放 disable 作用域；带规则的 enable 只从最近仍禁用这些规则的作用域移除它们，支持 disable all 后局部重新启用。"},
+      {"id": "C", "text": "linter-disable-next-n-lines: 0、负数或非十进制 N 仍然生效，只需把范围截断到文件末尾。"},
+      {"id": "D", "text": "规则列表中的未知别名会被解释成 all rules，以避免用户意外绕过 lint。"},
+      {"id": "E", "text": "如果 next-line marker 位于文件最后一行，它应改为作用于 marker 前一行，以确保 disable 总有一行效果。"},
+      {"id": "F", "text": "任务只要求支持 HTML comment marker，Obsidian 的 %% comment marker 属于普通文本，不参与作用域。"}
+    ]
+  },
+  {
+    "id": "abs-slices",
+    "taskId": "abs-stepped-slices",
+    "title": "ABS：步进切片和 Unicode 赋值",
+    "task": {
+      "repo": "abs-lang/abs",
+      "language": "go",
+      "baseCommit": "cb1b3b671d0ee9fa9da9f7b02f86967953ffd10a",
+      "source": "https://github.com/datacurve-ai/deep-swe/blob/0b9fabbb63b9104d678fe965e1632f2dd9eaa2ea/tasks/abs-stepped-slices/instruction.md"
+    },
+    "problem": "只依据 ABS 步进切片任务题面判断以下说法。要支持数组和字符串的 value[start:end:step]，包括省略 start/end 的形式、正负 step、AST stringification，以及数组和字符串的两段/三段 range assignment。step 为 0 必须报以 slice step cannot be 0 开头的错误。数组赋值支持精确长度或非数组广播；字符串按 Unicode rune 索引，单字符赋值要求一个字符，范围赋值可使用匹配长度字符串或单字符广播，并保留既有错误格式和非步进切片行为。",
+    "options": [
+      {"id": "A", "text": "省略边界和正负步长都必须支持，step=0 不能静默返回空结果，而要报以 slice step cannot be 0 开头的错误。"},
+      {"id": "B", "text": "字符串的单索引、两段切片、三段切片和赋值都必须按 Unicode rune 工作，并遵守单字符、广播和范围长度错误约束。"},
+      {"id": "C", "text": "新功能只需要实现数组/字符串的读取切片，范围赋值仍只支持两段语法，三段赋值不在任务范围内。"},
+      {"id": "D", "text": "范围中的非数字 end 或 step 应复用 index operator not supported 错误，而非已有的 numeric-range 错误格式。"},
+      {"id": "E", "text": "为了统一实现，现有两段字符串切片可以改成按 UTF-8 字节索引，只需保证三段切片按 rune 工作。"},
+      {"id": "F", "text": "step=0 的行为可以由语言现有的空切片规则决定，不要求新增稳定的错误前缀。"}
+    ]
+  },
+  {
+    "id": "httpx-json",
+    "taskId": "httpx-streaming-json-iteration",
+    "title": "HTTPX：流式 JSON、NDJSON 与 JSON-seq",
+    "task": {
+      "repo": "encode/httpx",
+      "language": "python",
+      "baseCommit": "b5addb64f0161ff6bfe94c124ef76f6a1fba5254",
+      "source": "https://github.com/datacurve-ai/deep-swe/blob/0b9fabbb63b9104d678fe965e1632f2dd9eaa2ea/tasks/httpx-streaming-json-iteration/instruction.md"
+    },
+    "problem": "只依据 HTTPX 任务题面判断以下说法。要新增 Response.iter_json() 和 aiter_json()。application/json 与 application/*+json 解析一个 JSON 文本，顶层数组逐元素 yield；NDJSON 按 LF/CR/CRLF 分行并忽略空行；application/json-seq 使用 RS 分隔记录。媒体类型大小写不敏感且允许参数；charset 若存在必须有效，否则使用 JSON 编码检测。流式响应的 JSON 迭代必须消费并关闭 stream，第二次迭代报 StreamConsumed；内存响应可以重复迭代。",
+    "options": [
+      {"id": "A", "text": "application/json 和 application/*+json 只允许一个完整 JSON 文本（顶层数组逐元素返回），尾部除空白外的数据必须报错；NDJSON 的空白行可忽略但每个非空行必须是一个完整 JSON 文本。"},
+      {"id": "B", "text": "流式响应迭代 JSON 后必须消费并关闭响应，第二次 JSON 迭代报 StreamConsumed；非流式内存响应的 JSON 迭代应可重复。"},
+      {"id": "C", "text": "只要媒体类型以 +json 结尾就接受，包括 image/svg+json 等非 application 类型。"},
+      {"id": "D", "text": "JSON Text Sequences 在空或只有空白时必须抛出空 payload 错误，因为每个 JSON-seq 都至少要有一个记录。"},
+      {"id": "E", "text": "未提供 charset 时固定按 UTF-8 解码即可，不需要识别 UTF-16、UTF-32 或 UTF-8 BOM。"},
+      {"id": "F", "text": "JSON-seq 最后一个 RS 后即使只有空白或一个 LF，也必须当作可忽略的空记录，不能报错。"}
+    ]
+  },
+  {
+    "id": "cattrs",
+    "taskId": "cattrs-partial-structuring-recovery",
+    "title": "cattrs：部分 structuring 与嵌套失败",
+    "task": {
+      "repo": "python-attrs/cattrs",
+      "language": "python",
+      "baseCommit": "6bc4708fb9b2ac52d9a18997e923da6a58916102",
+      "source": "https://github.com/datacurve-ai/deep-swe/blob/0b9fabbb63b9104d678fe965e1632f2dd9eaa2ea/tasks/cattrs-partial-structuring-recovery/instruction.md"
+    },
+    "problem": "只依据 cattrs 任务题面判断以下说法。BaseConverter 和顶层 API 要提供 partial_structure，返回包含 value、is_complete、structured_fields、failed_fields、errors、error_map 的 PartialResult。输入中缺失的字段算 failed；失败字段可以使用默认值；没有默认值的必填字段可能使 value 为 None。attrs/dataclass 的嵌套对象要递归部分 structuring；嵌套不完整时可保留 partial value 但父字段算 failed。List/Dict 等集合字段原子失败。支持 refine、forbid_extra_keys、detailed_validation、attrs/dataclass/TypedDict，并排除 init=False 字段的成功/失败集合。",
+    "options": [
+      {"id": "A", "text": "缺失字段应计入 failed_fields；失败字段有默认值时可回退到默认值；无默认值的必填字段可能令 value 为 None；init=False 字段不计入 structured_fields 或 failed_fields。"},
+      {"id": "B", "text": "嵌套对象可以保留部分 value 但将不完整的父字段标为 failed，集合字段任一元素失败则整体失败，refine 应返回新 PartialResult 并保留原已成功字段。"},
+      {"id": "C", "text": "partial_structure 的目标是尽快失败，因此第一个字段转换异常就必须抛出，不能返回包含 error_map 的部分结果。"},
+      {"id": "D", "text": "forbid_extra_keys 遇到额外 key 时必须放弃整个 value，并且 is_complete 仍可保持 true，只要已知字段成功。"},
+      {"id": "E", "text": "任务只覆盖 attrs class；dataclass 和 TypedDict 不需要支持，因为它们没有 cattrs 的字段转换器。"},
+      {"id": "F", "text": "集合字段应尽可能保留成功元素并丢弃失败元素，以实现比字段级失败更细的部分恢复。"}
+    ]
+  },
+  {
+    "id": "sql-pipe",
+    "taskId": "sql-formatter-bigquery-pipe-formatting",
+    "title": "SQL formatter：BigQuery pipe 语法与缩进",
+    "task": {
+      "repo": "sql-formatter-org/sql-formatter",
+      "language": "typescript",
+      "baseCommit": "954e5a474b9e3d45ca58f02a3a4eac8e1947acc5",
+      "source": "https://github.com/datacurve-ai/deep-swe/blob/0b9fabbb63b9104d678fe965e1632f2dd9eaa2ea/tasks/sql-formatter-bigquery-pipe-formatting/instruction.md"
+    },
+    "problem": "只依据 SQL formatter 任务题面判断以下说法。BigQuery pipe query 从独占一行的 FROM 开始，后续每个 |> step 占一行；WHERE、SELECT、ORDER BY、AGGREGATE、EXTEND、SET、DROP 等缩进型 clause 的 body 换到下一行并缩进，LIMIT/JOIN/AS 等单行 clause 保持同一行。AGGREGATE 可含有更深一层的 GROUP BY；每个 |> 重置到 base indentation；|> 必须是独立 token；传统 SQL 格式化不能回归，keywordCase 也适用于 pipe 专属关键字。",
+    "options": [
+      {"id": "A", "text": "pipe query 应从独占行的 FROM 开始，每个 |> step 回到基础缩进；缩进型 clause 的 body 换行并深入一层，单行型 clause 保持同一行。"},
+      {"id": "B", "text": "AGGREGATE 中的 GROUP BY 需要自己的嵌套缩进，|> 应作为独立 token，传统 SQL 仍需保持原有格式化行为。"},
+      {"id": "C", "text": "为了统一格式，所有 pipe clause（包括 LIMIT、JOIN、AS）都必须把 body 换到下一行。"},
+      {"id": "D", "text": "pipe-exclusive 的 AGGREGATE、EXTEND、SET、DROP、AS 不需要新增结构化 parse node，按普通 SQL 文本拼接即可。"},
+      {"id": "E", "text": "|> 可以继续按 bitwise | 和 > 两个 token 处理，只需在 formatter 阶段根据相邻 token 推断 pipe。"},
+      {"id": "F", "text": "每个 pipe step 后都应附加分号，最后一个 step 的分号不需要特殊处理。"}
+    ]
+  }
+]
