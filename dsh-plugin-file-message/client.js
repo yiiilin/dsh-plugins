@@ -4,7 +4,7 @@
  * The card owns the presentation for the two tools registered by the Host.
  * It asks the Host for bytes only when an image needs a preview or the user
  * explicitly downloads a file. The persisted tool-result metadata remains the
- * source of truth for replay.
+ * source of truth for replay; legacy results can recover their session identity through the Host's sidecar metadata route.
  */
 
 window.__ModuleLoader__.load({
@@ -26,6 +26,7 @@ window.__ModuleLoader__.load({
       "download.original": "下载原图",
       close: "关闭",
       preparing: "准备中…",
+      "loading.metadata": "正在恢复文件消息…",
       "loading.preview": "加载图片预览…",
       "loading.markdown": "正在加载 Markdown 预览…",
       "markdown.previewFailed": "Markdown 预览不可用",
@@ -43,6 +44,7 @@ window.__ModuleLoader__.load({
       close: "Close",
       preparing: "Preparing…",
       "loading.preview": "Loading image preview…",
+      "loading.metadata": "Restoring file message…",
       "loading.markdown": "Loading markdown preview…",
       "markdown.previewFailed": "Markdown preview unavailable",
       "markdown.preview": "Markdown preview",
@@ -120,14 +122,27 @@ window.__ModuleLoader__.load({
       return block !== null && typeof block === "object" && block.kind === "tool-result";
     }
 
-    function metadataOf(block) {
-      if (!settledBlock(block) || block.meta === null || typeof block.meta !== "object") return null;
-      const meta = block.meta;
+    function metadataRecordOf(value) {
+      if (value === null || typeof value !== "object") return null;
+      const meta = value;
       if (meta.plugin !== "dsh-plugin-file-message") return null;
       if (typeof meta.kind !== "string" || typeof meta.callId !== "string" || typeof meta.displayName !== "string") return null;
       if (typeof meta.path !== "string" || typeof meta.mediaType !== "string") return null;
       if (typeof meta.size !== "number") return null;
       return meta;
+    }
+
+    function metadataIdentityOf(value, callId) {
+      if (value === null || typeof value !== "object") return null;
+      const meta = value;
+      if (meta.plugin !== "dsh-plugin-file-message") return null;
+      if (typeof meta.callId !== "string" || meta.callId !== String(callId) || typeof meta.sessionId !== "string") return null;
+      return { callId: meta.callId, sessionId: meta.sessionId };
+    }
+
+    function metadataOf(block) {
+      if (!settledBlock(block) || block.meta === null || typeof block.meta !== "object") return null;
+      return metadataRecordOf(block.meta);
     }
 
     function argsName(block, fallback) {
@@ -157,6 +172,34 @@ window.__ModuleLoader__.load({
         throw new Error(detail);
       }
       return response;
+    }
+
+    const metadataRequests = new Map();
+    function fetchMetadata(callId, detail) {
+      const key = `${detail}:${String(callId)}`;
+      const cached = metadataRequests.get(key);
+      if (cached !== undefined) return cached;
+      const request = (async () => {
+        const query = new URLSearchParams({ callId: String(callId), mode: "meta", detail });
+        const response = await fetch(`${API_PATH}?${query.toString()}`, { cache: "no-store" });
+        if (!response.ok) {
+          let errorText = `file-message returned HTTP ${response.status}`;
+          try {
+            const result = await response.json();
+            if (typeof result?.error === "string") errorText = result.error;
+          } catch (_error) {
+            // Keep the HTTP fallback when the Host did not return JSON.
+          }
+          throw new Error(errorText);
+        }
+        const value = await response.json();
+        return detail === "full" ? metadataRecordOf(value) : metadataIdentityOf(value, callId);
+      })();
+      metadataRequests.set(key, request);
+      request.catch(() => {
+        if (metadataRequests.get(key) === request) metadataRequests.delete(key);
+      });
+      return request;
     }
 
     async function fetchResource(sessionId, callId, mode) {
@@ -356,19 +399,51 @@ window.__ModuleLoader__.load({
           return t("send.failed");
         };
 
+        const settled = settledBlock(props.block);
         const record = metadataOf(props.block);
-        if (!settledBlock(props.block)) {
+        const canRecover = props.toolName === "send_image" || props.toolName === "send_file";
+        const needsMetadata = settled && !props.block.isError && canRecover && (record === null || typeof record.sessionId !== "string");
+        const [replay, setReplay] = React.useState({ status: "idle", record: null, error: null });
+
+        React.useEffect(() => {
+          if (!needsMetadata) {
+            setReplay((current) => current.status === "idle" && current.record === null && current.error === null ? current : { status: "idle", record: null, error: null });
+            return undefined;
+          }
+          let active = true;
+          setReplay({ status: "loading", record: null, error: null });
+          fetchMetadata(props.callId, record === null ? "full" : "id").then((next) => {
+            if (!active) return;
+            const recovered = record === null ? next : next === null ? null : { ...record, sessionId: next.sessionId };
+            if (recovered === null || recovered.callId !== props.callId) setReplay({ status: "error", record: null, error: t("meta.unavailable") });
+            else setReplay({ status: "ready", record: recovered, error: null });
+          }).catch((error) => {
+            if (active) setReplay({ status: "error", record: null, error: messageOf(error) });
+          });
+          return () => {
+            active = false;
+          };
+        }, [props.callId, needsMetadata, record === null, record?.callId]);
+
+        if (!settled) {
           return React.createElement("div", { className: "dfm-placeholder" }, t("sending", { name: argsName(props.block, props.toolName) }));
         }
         if (props.block.isError) {
           return React.createElement("div", { className: "dfm-error", role: "alert" }, errorText(props.block));
         }
-        if (record === null) {
+        if (needsMetadata && replay.status === "error") {
+          return React.createElement("div", { className: "dfm-error", role: "alert" }, replay.error);
+        }
+        if (needsMetadata && replay.status !== "ready") {
+          return React.createElement("div", { className: "dfm-placeholder" }, t("loading.metadata"));
+        }
+        const resolvedRecord = needsMetadata ? replay.record : record;
+        if (resolvedRecord === null || typeof resolvedRecord.sessionId !== "string") {
           return React.createElement("div", { className: "dfm-error", role: "alert" }, t("meta.unavailable"));
         }
-        return record.kind === "image"
-          ? React.createElement(ImageMessage, { sessionId: props.sessionId, callId: props.callId, record })
-          : React.createElement(FileMessage, { sessionId: props.sessionId, callId: props.callId, record });
+        return resolvedRecord.kind === "image"
+          ? React.createElement(ImageMessage, { sessionId: resolvedRecord.sessionId, callId: props.callId, record: resolvedRecord })
+          : React.createElement(FileMessage, { sessionId: resolvedRecord.sessionId, callId: props.callId, record: resolvedRecord });
       };
     }
 

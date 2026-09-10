@@ -10,7 +10,9 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
  * The tool result is a live reference to a regular file in the current
  * session's workspace. The bytes are never copied into DSH attachment storage.
  * A small sidecar next to the session log keeps the same metadata available to
- * the file-message Host routes without scanning every session.
+ * the file-message Host routes without scanning every session during normal
+ * requests. Legacy replay can use the sidecar as a callId index when an older
+ * tool-result did not persist its session identity.
  */
 
 export const name = 'file-message'
@@ -176,7 +178,7 @@ async function readMetaFile(path, sessionId) {
   }
 }
 
-function createMetaWriter(ctx) {
+function createMetaWriter(ctx, recordIndex) {
   const tails = new Map()
 
   return async (record) => {
@@ -187,6 +189,7 @@ function createMetaWriter(ctx) {
       const current = await readMetaFile(path, sessionId)
       current.items[record.callId] = {
         callId: record.callId,
+        sessionId,
         toolName: record.toolName,
         kind: record.kind,
         path: record.path,
@@ -197,11 +200,13 @@ function createMetaWriter(ctx) {
         version: record.version,
         caption: record.caption,
         createdAt: record.createdAt,
+        plugin: 'dsh-plugin-file-message',
       }
       await mkdir(dirname(path), { recursive: true, mode: 0o700 })
       const temporary = `${path}.${process.pid}.${Date.now()}.tmp`
       await writeFile(temporary, `${JSON.stringify(current, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
       await rename(temporary, path)
+      recordIndex.remember(current.items[record.callId])
     })
     tails.set(sessionId, operation.then(() => {}, () => {}))
     return operation
@@ -226,6 +231,7 @@ function outputDefinition() {
       additionalProperties: false,
       properties: {
         callId: { type: 'string', required: true },
+        sessionId: { type: 'string', required: true },
         kind: { type: 'string', required: true },
         path: { type: 'string', required: true },
         cwd: { type: 'string', required: true },
@@ -240,6 +246,7 @@ function outputDefinition() {
     presentationMeta: (_args, value) => ({
       kind: value.kind,
       callId: value.callId,
+      sessionId: value.sessionId,
       path: value.path,
       cwd: value.cwd,
       displayName: value.displayName,
@@ -300,6 +307,7 @@ function createTool(ctx, writeMeta, kind) {
 
       const value = {
         callId: String(exec.callId),
+        sessionId: String(resolved.session.id),
         kind,
         path: resolved.path,
         cwd: resolved.cwd,
@@ -323,24 +331,108 @@ function createTool(ctx, writeMeta, kind) {
 }
 
 async function findSessionHeader(ctx, sessionId) {
+  if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined
   const live = ctx.sessions.get(sessionId)
   if (live !== undefined) return live.header
   const headers = await ctx.sessionPersistence.list()
   return headers.find((header) => String(header.id) === sessionId)
 }
 
-async function readRecord(ctx, sessionId, callId) {
-  if (typeof sessionId !== 'string' || sessionId.length === 0 || typeof callId !== 'string' || callId.length === 0) {
-    throw new Error('sessionId and callId are required')
-  }
-  const header = await findSessionHeader(ctx, sessionId)
-  if (header === undefined) throw new Error('session not found')
+async function listSessionHeaders(ctx) {
+  const headers = await ctx.sessionPersistence.list()
+  return Array.isArray(headers) ? headers : []
+}
+
+async function readMetaDocumentForHeader(ctx, header) {
   const location = ctx.sessionPersistence.locate(header)
-  if (location === undefined || typeof location.path !== 'string') throw new Error('session file metadata is unavailable')
+  if (location === undefined || typeof location.path !== 'string') return undefined
   const path = join(dirname(location.path), META_FILE)
-  const document = await readMetaFile(path, sessionId)
-  const record = document.items[callId]
-  if (!isPlainRecord(record) || String(record.callId) !== callId) throw new Error('file message not found')
+  return readMetaFile(path, String(header.id))
+}
+
+function recordFromHeader(header, record, callId) {
+  if (!isPlainRecord(record) || String(record.callId) !== callId) return undefined
+  if (record.sessionId !== undefined && String(record.sessionId) !== String(header.id)) {
+    throw new Error(`file message metadata belongs to ${String(record.sessionId)}`)
+  }
+  return {
+    ...record,
+    sessionId: String(header.id),
+    plugin: 'dsh-plugin-file-message',
+  }
+}
+
+async function readRecordForHeader(ctx, header, callId) {
+  const document = await readMetaDocumentForHeader(ctx, header)
+  if (document === undefined) return undefined
+  return recordFromHeader(header, document.items[callId], callId)
+}
+
+async function readRecordsForHeader(ctx, header) {
+  const document = await readMetaDocumentForHeader(ctx, header)
+  if (document === undefined) return []
+  return Object.values(document.items)
+    .map((record) => recordFromHeader(header, record, String(record?.callId || '')))
+    .filter((record) => record !== undefined)
+}
+
+function createRecordIndex(ctx) {
+  const records = new Map()
+  let loaded = false
+  let loadPromise = null
+
+  const remember = (record) => {
+    if (!isPlainRecord(record) || typeof record.callId !== 'string' || record.callId.length === 0) return
+    records.set(record.callId, { ...record })
+  }
+
+  const ensureLoaded = async () => {
+    if (loaded) return
+    if (loadPromise === null) {
+      loadPromise = (async () => {
+        for (const header of await listSessionHeaders(ctx)) {
+          try {
+            for (const record of await readRecordsForHeader(ctx, header)) {
+              if (!records.has(record.callId)) remember(record)
+            }
+          } catch {
+            // An unrelated or damaged sidecar must not block other sessions.
+          }
+        }
+        loaded = true
+      })().finally(() => {
+        loadPromise = null
+      })
+    }
+    await loadPromise
+  }
+
+  return {
+    remember,
+    async find(callId) {
+      const cached = records.get(callId)
+      if (cached !== undefined) return cached
+      await ensureLoaded()
+      return records.get(callId)
+    },
+  }
+}
+
+async function readRecord(ctx, sessionId, callId, recordIndex) {
+  if (typeof callId !== 'string' || callId.length === 0) {
+    throw new Error('callId is required')
+  }
+
+  if (typeof sessionId === 'string' && sessionId.length > 0) {
+    const header = await findSessionHeader(ctx, sessionId)
+    if (header === undefined) throw new Error('session not found')
+    const record = await readRecordForHeader(ctx, header, callId)
+    if (record === undefined) throw new Error('file message not found')
+    return record
+  }
+
+  const record = await recordIndex.find(callId)
+  if (record === undefined) throw new Error('file message not found')
   return record
 }
 
@@ -364,18 +456,36 @@ function sendJson(res, status, value) {
   res.end(body)
 }
 
-async function handleContent(ctx, req, res) {
+async function handleContent(ctx, req, res, recordIndex) {
   const url = new URL(req.url || '/', 'http://dsh.local')
   const sessionId = url.searchParams.get('sessionId')
   const callId = url.searchParams.get('callId')
   const mode = url.searchParams.get('mode') || 'preview'
-  if (mode !== 'preview' && mode !== 'download' && mode !== 'text') {
-    sendJson(res, 400, { ok: false, error: 'mode must be preview, text, or download' })
+  const detail = url.searchParams.get('detail') || 'id'
+  const hasSessionId = typeof sessionId === 'string' && sessionId.length > 0
+  if (mode !== 'preview' && mode !== 'download' && mode !== 'text' && mode !== 'meta') {
+    sendJson(res, 400, { ok: false, error: 'mode must be preview, text, download, or meta' })
+    return
+  }
+  if (mode === 'meta' && detail !== 'id' && detail !== 'full') {
+    sendJson(res, 400, { ok: false, error: 'meta detail must be id or full' })
+    return
+  }
+  if (mode !== 'meta' && !hasSessionId) {
+    sendJson(res, 400, { ok: false, error: 'sessionId is required for content access' })
     return
   }
 
   try {
-    const record = await readRecord(ctx, sessionId, callId)
+    const record = await readRecord(ctx, sessionId, callId, recordIndex)
+    if (mode === 'meta') {
+      const value = !hasSessionId && detail !== 'full'
+        ? { plugin: 'dsh-plugin-file-message', callId: record.callId, sessionId: record.sessionId }
+        : record
+      sendJson(res, 200, value)
+      return
+    }
+
     const target = await ctx.fs.resolve(record.path, { cwd: record.cwd })
     const info = await ctx.fs.stat(target)
     if (info === undefined || info.type !== 'file') throw new Error('source file is no longer available')
@@ -438,7 +548,8 @@ async function handleContent(ctx, req, res) {
 }
 
 export function apply(ctx) {
-  const writeMeta = createMetaWriter(ctx)
+  const recordIndex = createRecordIndex(ctx)
+  const writeMeta = createMetaWriter(ctx, recordIndex)
   ctx.systemPrompt.section({
     name: 'tool:file-message',
     order: 104,
@@ -456,7 +567,7 @@ export function apply(ctx) {
         sendJson(res, 405, { ok: false, error: 'method not allowed' })
         return
       }
-      return handleContent(ctx, req, res)
+      return handleContent(ctx, req, res, recordIndex)
     },
   })
 

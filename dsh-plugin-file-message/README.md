@@ -6,13 +6,13 @@ The plugin deliberately uses **live file references**, not copied attachment obj
 
 - `send_image` accepts an existing PNG, JPEG, WebP, or GIF in the current session workspace.
 - `send_file` accepts any regular file in the current session workspace.
-- The source path is stored in the tool result presentation metadata and in the session sidecar `send-attachments-metas.json` next to `session.jsonl.zstd`.
-- The browser card reads the current file through the Host when it needs an image preview or download.
+- The source path and session identity are stored in the tool result presentation metadata and in the session sidecar `send-attachments-metas.json` next to `session.jsonl.zstd`.
+- The browser card reads the current file through the Host when it needs an image preview or download; historical cards recover missing session identity from the sidecar by `callId`.
 - Deleting or moving the source file makes the historical message unavailable; deleting a session does not delete workspace files.
 
 ## UI
 
-Images render as a constrained preview with a **View original** lightbox and **Download original** action. Files render as a filename, media type, size, and **Download** action. Markdown files (`.md`, `.markdown`, `.mdx`) additionally render an inline rendered preview below the file row, with the download action preserved. The card is replayable because its path metadata is persisted with the `tool/result` event.
+Images render as a constrained preview with a **View original** lightbox and **Download original** action. Files render as a filename, media type, size, and **Download** action. Markdown files (`.md`, `.markdown`, `.mdx`) additionally render an inline rendered preview below the file row, with the download action preserved. The card is replayable because its path and session identity are persisted with the `tool/result` event; old cards without the identity use the Host's metadata recovery route.
 
 The image preview uses the current file bytes and CSS constraints rather than creating a second thumbnail object. Preview reads are capped at 16 MiB; markdown text previews are capped at 1 MiB.
 
@@ -46,6 +46,7 @@ The file has this shape:
   "items": {
     "call-id": {
       "callId": "call-id",
+      "sessionId": "session-...",
       "toolName": "send_image",
       "kind": "image",
       "path": "/workspace/output/result.png",
@@ -60,7 +61,7 @@ The file has this shape:
 }
 ```
 
-Writes are serialized per session and published through a temporary file plus rename. The Host resolves the session's persistence location instead of reconstructing the encoded session-directory name.
+Writes are serialized per session and published through a temporary file plus rename. The Host resolves the session's persistence location instead of reconstructing the encoded session-directory name. A legacy `callId` lookup builds an in-memory index once per process and skips unrelated unreadable sidecars.
 
 ## Security and limits
 
@@ -69,12 +70,13 @@ Writes are serialized per session and published through a temporary file plus re
 - Symlink escapes are rejected by canonical containment.
 - Only regular files are accepted.
 - The Host re-resolves and re-stats the recorded path for every preview or download, and streams it through `ctx.fs.processPath` after the workspace-containment check.
-- The `content` route serves three modes: `preview` (images, ≤ 16 MiB), `text` (text/* files, ≤ 1 MiB, used by the markdown card), and `download` (native streaming, unbounded).
+- The `content` route serves four modes: `meta` (replay metadata; legacy calls without a session ID return only the recovered identity, while `detail=full` returns the full record), `preview` (images, ≤ 16 MiB), `text` (text/* files, ≤ 1 MiB, used by the markdown card), and `download` (native streaming, unbounded).
+- `preview`, `text`, and `download` require the recorded `sessionId`; only the legacy identity lookup may omit it.
 - The browser never receives a `file://` URL or reads a local path directly.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-file-message@0.3.1`.
+The published package is `@yiln-dsh/dsh-plugin-file-message@0.3.2`.
 
 ```bash
 dsh plugin --profile web add file:/path/to/dsh-plugin-file-message

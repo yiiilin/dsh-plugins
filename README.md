@@ -68,8 +68,8 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 | `@yiln-dsh/dsh-plugin-file-explorer` | `0.9.0` |
 | `@yiln-dsh/dsh-plugin-right-panel` | `0.1.2` |
 | `@yiln-dsh/dsh-plugin-delete-session` | `0.3.0` |
-| `@yiln-dsh/dsh-plugin-file-message` | `0.3.1` |
-| `@yiln-dsh/dsh-plugin-llm-adapter` | `0.2.1` |
+| `@yiln-dsh/dsh-plugin-file-message` | `0.3.2` |
+| `@yiln-dsh/dsh-plugin-llm-adapter` | `0.3.1` |
 | `@yiln-dsh/dsh-plugin-web-daemon` | `0.7.1` |
 | `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.8` |
 | `@yiln-dsh/dsh-plugin-web-browser` | `0.1.2` |
