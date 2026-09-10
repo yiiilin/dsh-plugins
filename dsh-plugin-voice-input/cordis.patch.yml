@@ -1,0 +1,15 @@
+# dsh-plugin-voice-input bundle patch.
+#
+# The Host half provisions the local speech models, runs the realtime
+# recognizer, and owns the browser audio WebSocket. The browser half is
+# declared by dsh.client and contributes the mic button to the composer.
+#
+# Model storage defaults to $DSH_HOME/plugins/dsh-plugin-voice-input/models;
+# override it (and the CPU thread budget, language, or recording cap) here.
+
+- insert:
+    - id: dsh-voice-input
+      name: '@yiln-dsh/dsh-plugin-voice-input'
+      inject:
+        - webServer
+      config: {}

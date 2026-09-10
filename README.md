@@ -25,6 +25,7 @@ own directory.
 | [`@yiln-dsh/dsh-plugin-terminal-tab`](./dsh-plugin-terminal-tab) | Adds per-session persistent terminal tabs and a **新建终端** action to the Web GUI. |
 | [`@yiln-dsh/dsh-plugin-web-browser`](./dsh-plugin-web-browser) | Server-side browser view next to the terminal: Chromium runs on the DSH host (playwright-core + CDP screencast), frames stream to the GUI, input is injected back, and a Chrome-style blank tab opens automatically. |
 | [`@yiln-dsh/dsh-plugin-session-list-cache`](./dsh-plugin-session-list-cache) | Collapse the repeated full-store session enumerations the Web GUI fires concurrently, by caching and coalescing `sessionQuery.listSessions()` behind `/api/session/list` and `/api/subagents/list`. |
+| [`@yiln-dsh/dsh-plugin-voice-input`](./dsh-plugin-voice-input) | Two-pass local voice input in the composer: a realtime model recognizes while you speak, a non-realtime model corrects the transcript after you stop. |
 
 ## Install
 
@@ -82,6 +83,7 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 | `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.8` |
 | `@yiln-dsh/dsh-plugin-web-browser` | `0.1.2` |
 | `@yiln-dsh/dsh-plugin-session-list-cache` | `0.1.0` |
+| `@yiln-dsh/dsh-plugin-voice-input` | `0.1.0` |
 
 Each plugin's version is the `version` field in its own `package.json`.
 Semantic versioning is recommended: patch for fixes, minor for additive
