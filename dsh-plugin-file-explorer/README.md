@@ -26,7 +26,7 @@ A DSH `dsh.bundle` that contributes a workspace file explorer page to the
     current branch, refreshable),
   - pill decorations for branches / remotes / tags / HEAD,
   - an "Uncommitted changes" row from `git status` (count + changed files vs
-    HEAD),
+    HEAD), listing each file inside an untracked directory individually,
   - click a commit to expand its full message and changed-file list with
     A/M/D/R status badges,
   - click a file to open its diff patch (commit shows `git show`, working tree
@@ -45,7 +45,7 @@ A DSH `dsh.bundle` that contributes a workspace file explorer page to the
 
 ## Install
 
-The package version is `@yiln-dsh/dsh-plugin-file-explorer@0.9.0`.
+The package version is `@yiln-dsh/dsh-plugin-file-explorer@0.9.1`.
 
 The right-panel package must be installed in the same `web` profile:
 
@@ -62,7 +62,7 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./yiln-dsh-dsh-plugin-file-explorer-0.9.0.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-file-explorer-0.9.1.tgz
 ```
 
 ### npm package
@@ -112,7 +112,8 @@ apply the new profile composition.
   workspace root), then run `git log --all --date-order` (default 300 commits,
   `req.all === false` for the current branch only), `git diff-tree -m
   --first-parent` for commit file lists, `git show` / `git diff HEAD` for
-  patches, and `git status --porcelain=v1 -b` for the working tree. Commit
+  patches, and `git status --porcelain=v1 -b -uall` for the working tree, so
+  every file inside an untracked directory is returned individually. Commit
   hashes are validated against `^[0-9a-fA-F]{6,40}$` (or the `WORKING`
   sentinel) and file paths against a non-option, non-control-character check.
 - Rows have a fixed 34px height, so the hover action swap never changes the

@@ -653,7 +653,7 @@ export function apply(ctx) {
     if (req.method === 'POST') req = await readJson(req)
     try {
       const { git, root } = await resolveRepo(req.path)
-      const status = await runGit(git, root, ['status', '--porcelain=v1', '-b'], 1024 * 1024)
+      const status = await runGit(git, root, ['status', '--porcelain=v1', '-b', '-uall'], 1024 * 1024)
       if (status.code !== 0) {
         sendJson(res, 200, { ok: false, error: cleanGitError(status.stderr, 'git status failed') })
         return
