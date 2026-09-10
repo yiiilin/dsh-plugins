@@ -3,13 +3,6 @@
 A repository of plugins for DeepSeek Harness (DSH). Each plugin lives in its
 own directory.
 
-## Skills
-
-| Skill | Purpose |
-| --- | --- |
-| [collective-deliberation](./skills/collective-deliberation) | Portable multi-agent proposals and peer scoring, mixed-model routing, deterministic thresholds, and evidence checks; includes an optional DSH workflow adapter. |
-| [iterative-engineering-workflow](./skills/iterative-engineering-workflow) | Bounded planner/worker engineering loops with verification and selective escalation. |
-
 ## Plugins
 
 | Plugin | Purpose |
