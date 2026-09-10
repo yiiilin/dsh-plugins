@@ -49,9 +49,12 @@ window.__ModuleLoader__.load({
       'notice.download.progress': '正在下载本地语音模型 {percent}%',
       'notice.download.failed': '语音模型下载失败：{message}',
       'notice.ready': '语音模型已就绪',
-      'notice.insecure': '当前页面无法使用麦克风：请通过 HTTPS 或本机地址（localhost）打开。',
-      'notice.denied': '麦克风权限被拒绝，请在浏览器地址栏允许麦克风后重试。',
-      'notice.no.microphone': '没有找到可用的麦克风设备。',
+      'notice.insecure': '当前地址（{origin}）不是安全上下文，浏览器不提供麦克风。请改用 HTTPS 或 http://localhost 打开。',
+      'notice.blocked': '浏览器已记住对 {origin} 的拒绝，不会再弹出授权：请点地址栏左侧的图标，把「麦克风」改成「允许」后重试（Chrome：网站设置 → 麦克风）。',
+      'notice.denied': '麦克风授权未通过（{name}）。请点地址栏左侧的图标允许麦克风后重试。',
+      'notice.no.microphone': '没有找到可用的麦克风设备（{name}）。',
+      'notice.mic.busy': '麦克风被占用或系统拒绝访问（{name}），请关闭占用它的程序后重试。',
+      'notice.mic.failed': '打开麦克风失败（{name}）：{message}',
       'notice.host.unreachable': '无法连接语音识别服务：{message}',
       'notice.dependency': 'DSH 主机缺少 sherpa-onnx-node，请重新安装本插件以安装依赖。',
       'notice.download.disabled': '模型下载已被配置禁用，请手动放置模型后再使用。',
@@ -73,9 +76,12 @@ window.__ModuleLoader__.load({
       'notice.download.progress': 'Downloading local speech models {percent}%',
       'notice.download.failed': 'Speech model download failed: {message}',
       'notice.ready': 'Speech models are ready',
-      'notice.insecure': 'The microphone is unavailable here: open this page over HTTPS or from localhost.',
-      'notice.denied': 'Microphone permission was denied. Allow it in the address bar and try again.',
-      'notice.no.microphone': 'No microphone device is available.',
+      'notice.insecure': 'This address ({origin}) is not a secure context, so the browser exposes no microphone. Open the GUI over HTTPS or from http://localhost.',
+      'notice.blocked': 'The browser has remembered a denial for {origin} and will not prompt again: click the icon at the left of the address bar, set Microphone to Allow, then retry (Chrome: Site settings → Microphone).',
+      'notice.denied': 'Microphone access was not granted ({name}). Allow the microphone from the address bar and retry.',
+      'notice.no.microphone': 'No microphone device is available ({name}).',
+      'notice.mic.busy': 'The microphone is busy or the system refused access ({name}); close whatever is using it and retry.',
+      'notice.mic.failed': 'Could not open the microphone ({name}): {message}',
       'notice.host.unreachable': 'Cannot reach the speech recognition service: {message}',
       'notice.dependency': 'This DSH host is missing sherpa-onnx-node; reinstall the plugin to install it.',
       'notice.download.disabled': 'Model download is disabled by configuration; place the models manually.',
@@ -102,7 +108,7 @@ window.__ModuleLoader__.load({
 @keyframes dvi-pulse{0%{transform:scale(.86);opacity:.55}70%{transform:scale(1.12);opacity:0}100%{opacity:0}}
 .dvi-spinner{width:13px;height:13px;border:1.5px solid currentColor;border-top-color:transparent;border-radius:50%;animation:dvi-spin .8s linear infinite}
 @keyframes dvi-spin{to{transform:rotate(360deg)}}
-.dvi-bubble{position:absolute;right:0;bottom:calc(100% + 8px);z-index:20;max-width:min(60vw,340px);padding:7px 10px;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,#111827);font:12px/1.5 inherit;white-space:normal;text-align:left;word-break:break-word;box-shadow:0 6px 20px rgba(15,23,42,.14)}
+.dvi-bubble{position:absolute;right:0;bottom:calc(100% + 8px);z-index:20;width:max-content;max-width:min(68vw,380px);padding:7px 10px;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,#111827);font:12px/1.5 inherit;white-space:normal;overflow-wrap:anywhere;text-align:left;box-shadow:0 6px 20px rgba(15,23,42,.14)}
 .dvi-bubble-error{border-color:var(--dsw-alias-state-error-primary,#b91c1c);color:var(--dsw-alias-state-error-primary,#b91c1c)}
 .dvi-bubble-warn{border-color:var(--dsw-alias-state-warn-primary,#b45309);color:var(--dsw-alias-state-warn-label,#b45309)}
 `;
@@ -275,27 +281,70 @@ window.__ModuleLoader__.load({
           if (silent !== true) notify('info', t('notice.cancelled'));
         }, [closeSocket, notify, setDraftFrom, teardownAudio, t]);
 
-        const openMicrophone = React.useCallback(async (socket) => {
+        /**
+         * Ask for the microphone on the click itself, before any model or Host
+         * round-trip, so a permission problem is reported immediately instead of
+         * after a download. The probe stream is released right away — the real
+         * capture opens later, once the models and the socket are ready, and the
+         * browser does not prompt twice for the same origin.
+         */
+        const acquireMicrophone = React.useCallback(async () => {
+          const origin = window.location.origin;
+          if (window.isSecureContext === false) {
+            throw Object.assign(new Error(t('notice.insecure', { origin })), { friendly: true });
+          }
           const media = navigator.mediaDevices;
           if (media === undefined || typeof media.getUserMedia !== 'function') {
-            throw Object.assign(new Error(t('notice.insecure')), { friendly: true });
+            throw Object.assign(new Error(t('notice.insecure', { origin })), { friendly: true });
           }
-          let stream;
+          if (typeof navigator.permissions?.query === 'function') {
+            try {
+              const status = await navigator.permissions.query({ name: 'microphone' });
+              // A remembered denial never prompts again: say so instead of
+              // letting the user click into the same rejection.
+              if (status.state === 'denied') {
+                throw Object.assign(new Error(t('notice.blocked', { origin })), { friendly: true });
+              }
+            } catch (error) {
+              if (error && error.friendly === true) throw error;
+            }
+          }
           try {
-            stream = await media.getUserMedia({
+            return await media.getUserMedia({
               audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
             });
           } catch (error) {
-            const name = error && error.name ? String(error.name) : '';
-            const key = name === 'NotFoundError' || name === 'OverconstrainedError'
-              ? 'notice.no.microphone'
-              : 'notice.denied';
-            throw Object.assign(new Error(t(key)), { friendly: true });
+            const name = error && error.name ? String(error.name) : 'Error';
+            if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+              throw Object.assign(new Error(t('notice.no.microphone', { name })), { friendly: true });
+            }
+            if (name === 'NotReadableError' || name === 'AbortError' || name === 'TrackStartError') {
+              throw Object.assign(new Error(t('notice.mic.busy', { name })), { friendly: true });
+            }
+            if (name === 'NotAllowedError' || name === 'SecurityError') {
+              throw Object.assign(new Error(t('notice.denied', { name })), { friendly: true });
+            }
+            throw Object.assign(
+              new Error(t('notice.mic.failed', { name, message: error && error.message ? String(error.message) : '' })),
+              { friendly: true },
+            );
           }
+        }, [t]);
+
+        const stopStream = React.useCallback((stream) => {
+          try {
+            for (const track of stream.getTracks()) track.stop();
+          } catch (error) {
+            /* the track list is already released */
+          }
+        }, []);
+
+        const openMicrophone = React.useCallback(async (socket) => {
+          const stream = await acquireMicrophone();
           const AudioCtor = window.AudioContext || window.webkitAudioContext;
           if (typeof AudioCtor !== 'function') {
-            for (const track of stream.getTracks()) track.stop();
-            throw Object.assign(new Error(t('notice.insecure')), { friendly: true });
+            stopStream(stream);
+            throw Object.assign(new Error(t('notice.insecure', { origin: window.location.origin })), { friendly: true });
           }
           const context = new AudioCtor({ sampleRate: SAMPLE_RATE });
           if (typeof context.resume === 'function') await context.resume();
@@ -461,6 +510,10 @@ window.__ModuleLoader__.load({
           setBubble(null);
           setPhase('starting');
           try {
+            // 1. Microphone first, while the click is still the user's gesture:
+            //    a denied or blocked permission must not hide behind a download.
+            stopStream(await acquireMicrophone());
+            // 2. Then the models, downloading them if this is the first use.
             const status = (await api('status')).status;
             if (status.sherpaOnnx !== true) {
               notify('error', t('notice.dependency'));
@@ -489,7 +542,7 @@ window.__ModuleLoader__.load({
             setPhase('idle');
             setProgress(null);
           }
-        }, [api, closeSocket, notify, startCapture, stopCapture, t, teardownAudio, waitForModels]);
+        }, [acquireMicrophone, api, closeSocket, notify, startCapture, stopCapture, stopStream, t, teardownAudio, waitForModels]);
 
         React.useEffect(() => {
           aliveRef.current = true;

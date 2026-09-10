@@ -234,7 +234,12 @@ function securityHeaders({ secure = false, noStore = true } = {}) {
     "X-Frame-Options": "DENY",
     "Content-Security-Policy": "frame-ancestors 'none'",
     "Referrer-Policy": "no-referrer",
-    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    // `microphone=(self)` keeps the microphone usable by the GUI's own origin
+    // (composer voice input captures audio locally in the browser) while still
+    // denying it to every embedded third-party frame. Camera and geolocation
+    // stay fully disabled, and the frame-ancestors/`X-Frame-Options` pair above
+    // means no other origin can embed this document to borrow the allowance.
+    "Permissions-Policy": "camera=(), microphone=(self), geolocation=()",
     ...(secure ? { "Strict-Transport-Security": "max-age=31536000" } : {}),
     ...(noStore ? { "Cache-Control": "no-store" } : {}),
   };

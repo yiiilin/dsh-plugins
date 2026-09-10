@@ -72,7 +72,7 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 
 | Package | Version |
 | --- | --- |
-| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.7.5` |
+| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.7.6` |
 | `@yiln-dsh/dsh-plugin-sandbox-guidance` | `0.1.1` |
 | `@yiln-dsh/dsh-plugin-file-explorer` | `0.9.0` |
 | `@yiln-dsh/dsh-plugin-right-panel` | `0.1.2` |
@@ -83,7 +83,7 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 | `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.8` |
 | `@yiln-dsh/dsh-plugin-web-browser` | `0.1.2` |
 | `@yiln-dsh/dsh-plugin-session-list-cache` | `0.1.0` |
-| `@yiln-dsh/dsh-plugin-voice-input` | `0.1.0` |
+| `@yiln-dsh/dsh-plugin-voice-input` | `0.1.1` |
 
 Each plugin's version is the `version` field in its own `package.json`.
 Semantic versioning is recommended: patch for fixes, minor for additive

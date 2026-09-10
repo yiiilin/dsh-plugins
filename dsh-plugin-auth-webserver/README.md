@@ -43,7 +43,7 @@ authentication.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.7.5`.
+The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.7.6`.
 
 The plugin is plain JavaScript source; there is no build step.
 
@@ -65,7 +65,7 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.7.5.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.7.6.tgz
 ```
 
 The tarball already contains the runnable source. A user can also unpack it,
@@ -87,7 +87,7 @@ dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@latest
 Pin a version if you want reproducible installs:
 
 ```bash
-dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.7.5
+dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.7.6
 ```
 
 ### Direct GitHub
@@ -112,7 +112,7 @@ The plugin version is defined by the `version` field in `package.json`:
 ```json
 {
   "name": "@yiln-dsh/dsh-plugin-auth-webserver",
-  "version": "0.7.5"
+  "version": "0.7.6"
 }
 ```
 
@@ -124,8 +124,8 @@ Semantic versioning is recommended:
 
 The selected version is used for:
 
-- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.7.5`
-- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.7.5.tgz`
+- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.7.6`
+- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.7.6.tgz`
 - the metadata inside the tarball/npm package
 
 A `file:` source install uses the version that is currently in the source tree;
@@ -379,7 +379,10 @@ it across an untrusted network. For a TLS-terminating reverse proxy, configure
 `Secure` cookies only for that trusted proxy path. Direct clients cannot make a
 forged forwarding header turn an HTTP request into a secure one. HTTPS responses
 include HSTS, frame, MIME, referrer, and permissions hardening headers; private
-responses are marked `no-store`.
+responses are marked `no-store`. The permissions header disables camera and
+geolocation outright and allows the microphone only for the gateway's own origin
+(`microphone=(self)`), which the composer needs for browser-local voice input
+while embedded third-party frames stay denied.
 
 The gateway validates the configured Host and browser Origin before any
 authentication or proxying. It rejects malformed request targets, requires JSON

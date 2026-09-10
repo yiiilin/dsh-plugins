@@ -22,6 +22,10 @@ key leaves the machine: this plugin talks to no speech service.
   and leaves the draft as it was.
 - Appends to whatever is already in the composer instead of replacing it, and
   inserts a separating space only where the two languages need one.
+- Asks for the microphone on the click itself, before any download, so a
+  permission problem is reported immediately: a remembered denial, a
+  permissions-policy block, a missing device, and a busy device each get their
+  own message naming the browser's error.
 - Shows download progress on the button during the one-time model fetch, and
   refuses to record with an actionable message when the microphone, the page
   origin, or a dependency is missing.
@@ -39,7 +43,7 @@ key leaves the machine: this plugin talks to no speech service.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-voice-input@0.1.0`.
+The published package is `@yiln-dsh/dsh-plugin-voice-input@0.1.1`.
 
 Local source directory:
 
