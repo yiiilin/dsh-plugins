@@ -714,6 +714,7 @@ function resolveRouteModels(request) {
 			maxTokens,
 			...entry.reasoningEffort === void 0 ? {} : { reasoningEffort: entry.reasoningEffort },
 			...entry.serviceTier === void 0 ? {} : { serviceTier: entry.serviceTier },
+			...entry.dropArgumentFillers === void 0 ? {} : { dropArgumentFillers: entry.dropArgumentFillers },
 			...resolveModelReasoning(provider, entry, base),
 			...resolveModelCompat(provider, entry, request.compat, base, api)
 		};
@@ -1027,6 +1028,7 @@ const modelFields = {
 	reasoningEfforts: z.union([z.const(false), reasoningEfforts]),
 	reasoningEffort: z.union(THINKING_LEVELS),
 	serviceTier: z.union(SERVICE_TIERS),
+	dropArgumentFillers: z.boolean(),
 	compat: compatProfile
 };
 const modelProfile = z.object({
@@ -1431,15 +1433,123 @@ function mapStopReason(message, contextWindow) {
 	}
 }
 /**
+* The properties each advertised tool schema marks required, keyed by tool name.
+* @param tools - the tool schemas sent with one request.
+* @returns one entry per advertised tool; an entry holds an empty set when the
+*   schema requires nothing, and every property counts as optional.
+*/
+function requiredPropertiesByTool(tools) {
+	const requiredByTool = /* @__PURE__ */ new Map();
+	for (const tool of tools ?? []) {
+		const schema = tool?.parameters;
+		const required = schema !== null && typeof schema === "object" ? schema["required"] : void 0;
+		requiredByTool.set(tool.name, /* @__PURE__ */ new Set(Array.isArray(required) ? required.filter((name) => typeof name === "string") : []));
+	}
+	return requiredByTool;
+}
+/**
+* The sandbox markers that turn an escalation request into an answer to a
+* denial the model just received, rather than speculation ahead of one.
+*/
+const ESCALATION_GROUNDS = ["[sandbox: file access denied under", "[sandbox: escalation available"];
+/**
+* The latest tool-result text of each tool that has produced one.
+* @param messages - the request's message history.
+* @returns one entry per settled tool call, keyed by tool name; a later result
+*   for the same tool replaces the earlier text.
+*/
+function latestToolResults(messages) {
+	const toolNames = /* @__PURE__ */ new Map();
+	const latest = /* @__PURE__ */ new Map();
+	for (const message of messages ?? []) {
+		if (message.role === "assistant") {
+			for (const block of message.content) if (block.type === "tool-call") toolNames.set(CallId(block.id), block.name);
+			continue;
+		}
+		if (message.role !== "user") continue;
+		for (const block of message.content) {
+			if (block.type !== "tool-result") continue;
+			const name = toolNames.get(block.toolCallId);
+			if (name !== void 0) latest.set(name, toolResultText(block.content));
+		}
+	}
+	return latest;
+}
+/**
+* Drop the argument fillers a model writes when it emits every advertised
+* optional property instead of the ones it means.
+*
+* Three shapes, one cause: the model answers as if it had to fill the schema,
+* so an optional argument the tool would have defaulted arrives present.
+*
+* - A blank string (`justification: ""`, `provider: ""`) is refused by the
+*   validators behind `bash`, `write`, and `subagent` as a malformed ask, and
+*   `justification` alone is refused as a reason driving nothing.
+* - A **complete** sandbox-escalation pair is the same filler with an enum and
+*   a sentence in it. It is only ever grantable as the sanctioned one-shot
+*   retry of a denial the sandbox just returned — and a session already at the
+*   widest mode refuses every pair as "not strictly wider", so a speculative
+*   ask there can never succeed however it is worded. The pair therefore
+*   survives only when the latest result of *that same tool* carries a sandbox
+*   denial marker; otherwise it is dropped and the call runs at the mode
+*   already in effect, which is exactly what omitting the fields would do.
+*
+* Both refusals name a shape the model cannot see, so it repeats the identical
+* call; dropping the filler restores the omission it meant. Nothing the tool
+* requires is touched: an empty `write.content` still writes an empty file, and
+* a denied command still escalates on the retry that answers its denial.
+*
+* Enabled per model through `dropArgumentFillers`, because emitting every
+* advertised property is a trait of the model behind a route, not of the wire
+* protocol.
+* @param tools - the tool schemas sent with this exact request.
+* @param messages - the request's history, read for the denial an escalation answers.
+* @returns a normalizer for one `(toolName, arguments)` pair, or `undefined`
+*   when the request advertises no tool to look required properties up in.
+*/
+function blankOptionalArgNormalizer(tools, messages) {
+	const requiredByTool = requiredPropertiesByTool(tools);
+	if (requiredByTool.size === 0) return void 0;
+	const latestResults = latestToolResults(messages);
+	return (name, args) => {
+		if (args === null || typeof args !== "object" || Array.isArray(args)) return args;
+		const required = requiredByTool.get(name);
+		if (required === void 0) return args;
+		let next;
+		const drop = (key) => {
+			if (next === void 0) next = {
+				...args
+			};
+			delete next[key];
+		};
+		const kept = (key) => next === void 0 ? args[key] : next[key];
+		for (const key of Object.keys(args)) if (args[key] === "" && !required.has(key)) drop(key);
+		if (!required.has("sandbox_permissions")) {
+			const mode = kept("sandbox_permissions");
+			const reason = kept("justification");
+			const requested = mode !== void 0 && mode !== "" || reason !== void 0 && reason !== "";
+			const answered = ESCALATION_GROUNDS.some((marker) => (latestResults.get(name) ?? "").includes(marker));
+			if (requested && !(mode !== void 0 && mode !== "" && reason !== void 0 && reason !== "" && answered)) {
+				drop("sandbox_permissions");
+				drop("justification");
+			}
+		}
+		return next === void 0 ? args : next;
+	};
+}
+/**
 * Translate the pi-ai event stream into StreamChunks. pi-ai never throws
 * mid-stream — failures arrive as `error` events, which become error/aborted
 * `finish` chunks (the harness protocol's other error-delivery style).
 * @param events - one assistant turn's pi-ai event stream.
 * @param contextWindow - resolved catalog capacity for usage-based overflow detection.
+* @param normalizeToolArguments - optional per-model normalizer applied to a
+*   finished tool call's arguments before they become durable, so the recorded
+*   call is the one that dispatches.
 * @returns the harness chunks, ending with `usage` then `finish`; throws
 *   `LlmError` (`STREAM_CLOSED`) if the source ends without a terminal event.
 */
-async function* toStreamChunks(events, contextWindow) {
+async function* toStreamChunks(events, contextWindow, normalizeToolArguments) {
 	const toolIds = /* @__PURE__ */ new Map();
 	for await (const event of events) switch (event.type) {
 		case "start": break;
@@ -1517,7 +1627,8 @@ async function* toStreamChunks(events, contextWindow) {
 			};
 			break;
 		}
-		case "toolcall_end":
+		case "toolcall_end": {
+			const args = normalizeToolArguments === void 0 ? event.toolCall.arguments : normalizeToolArguments(event.toolCall.name, event.toolCall.arguments);
 			yield {
 				type: "block-end",
 				index: event.contentIndex,
@@ -1525,10 +1636,11 @@ async function* toStreamChunks(events, contextWindow) {
 					type: "tool-call",
 					id: CallId(event.toolCall.id),
 					name: event.toolCall.name,
-					arguments: JSON.stringify(event.toolCall.arguments)
+					arguments: JSON.stringify(args)
 				}
 			};
 			break;
+		}
 		case "done":
 			yield {
 				type: "usage",
@@ -1848,7 +1960,7 @@ var PiAiAdapter = class extends LlmAdapter {
 					...options.sessionId === void 0 ? {} : { sessionId: String(options.sessionId) },
 					signal: watchdog.signal,
 					headers: requestHeaders(profile.headers)
-				}), model.contextWindow)[Symbol.asyncIterator]();
+				}), model.contextWindow, model.dropArgumentFillers === true ? blankOptionalArgNormalizer(options.tools, options.messages) : void 0)[Symbol.asyncIterator]();
 				let exhausted = false;
 				try {
 					while (true) {
@@ -2598,4 +2710,4 @@ function apply(ctx, config) {
 	});
 }
 //#endregion
-export { Config, PiAiAdapter, apply, inject, name, recordKeyFor, supportedProtocols };
+export { Config, PiAiAdapter, apply, blankOptionalArgNormalizer, inject, name, recordKeyFor, supportedProtocols };

@@ -18,8 +18,10 @@ A DSH `dsh.bundle` that keeps the stock webserver untouched and adds an
 - narrow browser viewports receive a full-width mobile conversation shell with
   drawer navigation and a mobile details panel, while desktop viewports keep
   the stock three-column layout; mobile session rows switch on one touch
-  without invoking native drag behavior, and the Session log download action
-  stays desktop-only so it cannot crowd the mobile header;
+  without invoking native drag behavior, the Session log download action
+  stays desktop-only so it cannot crowd the mobile header, and the composer
+  toolbar stays on one line in sessions that carry a model label and the
+  context meter;
 - the gateway maintains owner-only persistent browser-session records, so valid
   Cookie sessions survive a daemon restart and can be revoked individually from
   the settings card;
@@ -209,6 +211,16 @@ Set `mobileMode: off` in the row config to leave presentation entirely to the
 upstream frontend, or use `?dsh_mode=mobile` / `?dsh_mode=desktop` to override
 the automatic choice for one page load. `mobileBreakpoint` controls the
 automatic cutoff when the shell is enabled.
+
+The shell also keeps the composer's toolbar on one line. The official composer
+ends in a `flex-wrap: wrap` row whose trailing cluster (microphone, model,
+context meter, send/stop) is pushed onto a second line as soon as a session
+carries both the model seat's label and the context ring — that is, any session
+with history, unlike a brand-new one — which grows the card from about 98px to
+about 138px and leaves a right-aligned, half-empty second line. The mobile
+override stops that wrap, tightens the toolbar spacing to 8px, and lets the
+trailing cluster absorb the squeeze; the official model trigger already
+ellipsizes its own label, so no control is dropped.
 
 Or start it explicitly:
 

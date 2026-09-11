@@ -134,6 +134,29 @@ test("hidden mobile controls remain hidden outside mobile mode", () => {
   assert.ok(style.includes("display: none !important"));
 });
 
+test("keeps the composer toolbar on one line for sessions that carry history", () => {
+  const { style } = mobileLayoutPayload();
+  // The card's toolbar row wraps the trailing cluster onto a second line once a
+  // session has both a model label and the context ring.
+  assert.match(style, /\[data-composer-card\] > :last-child\s*\{[\s\S]*?flex-wrap: nowrap !important/u);
+  assert.match(style, /\[data-composer-card\] > :last-child\s*\{[\s\S]*?gap: 8px !important/u);
+  // Both clusters may shrink; the leading buttons keep their size and the
+  // trailing cluster gives way to the model label.
+  assert.match(style, /\[data-composer-card\] > :last-child > \*\s*\{[\s\S]*?min-width: 0 !important/u);
+  assert.match(style, /\[data-composer-card\] > :last-child > :first-child\s*\{[\s\S]*?flex: 0 0 auto !important/u);
+  assert.match(style, /\[data-composer-card\] > :last-child > :last-child\s*\{[\s\S]*?flex: 0 1 auto !important/u);
+});
+
+test("scopes every composer rule to the mobile shell", () => {
+  const { style } = mobileLayoutPayload();
+  const css = style.replace(/\/\*[\s\S]*?\*\//gu, "");
+  const selectors = [...css.matchAll(/([^{}]*\[data-composer-card\][^{}]*)\{/gu)].map((match) => match[1].trim());
+  assert.ok(selectors.length >= 5, "expected the composer toolbar rules in the payload");
+  for (const selector of selectors) {
+    assert.match(selector, /^html\[data-dsh-auth-mobile\] /u, `unscoped composer rule: ${selector}`);
+  }
+});
+
 test("copies only the official panel icon into the floating mobile button", () => {
   const { script } = mobileLayoutPayload();
   assert.ok(script.includes('svg[class*="panelIcon"]'));

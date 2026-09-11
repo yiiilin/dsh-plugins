@@ -5,7 +5,9 @@ export const name = "delete-session";
 export const inject = ["webServer", "sessions", "agents", "sessionPersistence"];
 
 const API_PATH = "/_dsh/delete-session/delete";
-const JSONL_FILE = /^session\.jsonl(?:\.zstd)?$/;
+/** Every committed Session format generation, optionally zstd-compressed. */
+const JSONL_FILE = /^session(?:\.v[1-9][0-9]*)?\.jsonl(?:\.zstd)?$/;
+const SUBAGENT_ORIGIN = "subagent";
 const MAX_BATCH_SIZE = 100;
 
 function sendJson(res, status, value) {
@@ -117,6 +119,67 @@ function safeJsonlLocation(persistence, header) {
 }
 
 /**
+ * `sessionPersistence.list()` returns persistence snapshots
+ * (`{ header, revision, sizeBytes? }`); tolerate a bare header as well so the
+ * lookup does not depend on which shape the mounted backend hands back.
+ */
+function entryHeader(entry) {
+  const header = entry?.header;
+  return header !== null && header !== undefined && typeof header === "object" ? header : entry;
+}
+
+/**
+ * Index one listing pass by session id and by the parent recorded on each
+ * subagent child, so a whole descendant subtree is walked from memory instead
+ * of re-reading persistence once per level.
+ */
+function buildCatalog(entries) {
+  const byId = new Map();
+  const childIdsByParent = new Map();
+  for (const entry of entries) {
+    const header = entryHeader(entry);
+    const id = header?.id;
+    if (!isSessionId(id) || byId.has(id)) continue;
+    byId.set(id, header);
+    if (header.origin !== SUBAGENT_ORIGIN) continue;
+    const parentSession = header.parentSession;
+    if (!isSessionId(parentSession)) continue;
+    const siblings = childIdsByParent.get(parentSession);
+    if (siblings === undefined) childIdsByParent.set(parentSession, [id]);
+    else siblings.push(id);
+  }
+  return { byId, childIdsByParent };
+}
+
+/**
+ * Ids of every subagent session below `sessionId`, deepest level first, so a
+ * parent is torn down only after the children that name it in their headers.
+ *
+ * Only sessions whose header records `origin: "subagent"` are followed: a
+ * `parentSession` that merely marks fork lineage belongs to a session the user
+ * can still open, and must not be swept up by deleting its source.
+ */
+function descendantSubagentIds(catalog, sessionId) {
+  const seen = new Set([sessionId]);
+  const levels = [];
+  let frontier = [sessionId];
+  while (frontier.length > 0) {
+    const next = [];
+    for (const id of frontier) {
+      for (const child of catalog.childIdsByParent.get(id) ?? []) {
+        if (seen.has(child)) continue;
+        seen.add(child);
+        next.push(child);
+      }
+    }
+    if (next.length === 0) break;
+    levels.push(next);
+    frontier = next;
+  }
+  return levels.reverse().flat();
+}
+
+/**
  * Keep the public AgentHandles returned by the factory so an active session
  * can be disposed in the same ordered path as its owner.
  */
@@ -167,32 +230,36 @@ export function apply(ctx) {
   ctx.effect(() => captureDisposer, "delete-session: capture agent handles");
 
   let mutationTail = Promise.resolve();
-  const deleteSessionNow = async (sessionId) => {
+
+  /**
+   * Flush and dispose one live agent/session so no writer survives the removal
+   * of its artifact. A live session whose teardown handle was never observed is
+   * refused rather than having only its file removed.
+   */
+  const disposeLiveSession = async (sessionId) => {
     const liveSession = ctx.sessions.get(sessionId);
     const liveAgent = ctx.agents.get(sessionId);
+    if (liveAgent === undefined && liveSession === undefined) return;
 
-    if (liveAgent !== undefined || liveSession !== undefined) {
-      if (liveAgent === undefined) {
-        throw requestError(409, "the session is live but has no disposable agent handle");
-      }
-      const handle = handles.get(sessionId);
-      if (handle === undefined) {
-        throw requestError(409, "this active session was opened before the delete plugin was mounted; restart dsh web before deleting it");
-      }
-
-      // Flush before disposal so the JSONL writer has no buffered tail when
-      // the artifact is removed below.
-      await ctx.sessions.flush(liveSession ?? liveAgent.session);
-      await handle.dispose();
-      if (ctx.agents.get(sessionId) !== undefined || ctx.sessions.get(sessionId) !== undefined) {
-        throw requestError(409, "the session did not finish shutting down");
-      }
+    if (liveAgent === undefined) {
+      throw requestError(409, `the session ${sessionId} is live but has no disposable agent handle`);
+    }
+    const handle = handles.get(sessionId);
+    if (handle === undefined) {
+      throw requestError(409, `this active session ${sessionId} was opened before the delete plugin was mounted; restart dsh web before deleting it`);
     }
 
-    const headers = await ctx.sessionPersistence.list();
-    const header = liveSession?.header ?? headers.find((candidate) => candidate.id === sessionId);
-    if (header === undefined) throw requestError(404, "session not found");
+    // Flush before disposal so the JSONL writer has no buffered tail when
+    // the artifact is removed below.
+    await ctx.sessions.flush(liveSession ?? liveAgent.session);
+    await handle.dispose();
+    if (ctx.agents.get(sessionId) !== undefined || ctx.sessions.get(sessionId) !== undefined) {
+      throw requestError(409, `the session ${sessionId} did not finish shutting down`);
+    }
+  };
 
+  /** Remove the guarded per-session directory holding one session artifact. */
+  const removeSessionArtifact = async (header) => {
     const location = safeJsonlLocation(ctx.sessionPersistence, header);
     let materialized = false;
     try {
@@ -213,27 +280,65 @@ export function apply(ctx) {
     }
     await rm(location.sessionDir, { recursive: true, force: true });
 
+    return { materialized, removedDirectory: directoryPresent };
+  };
+
+  /**
+   * Delete one session together with the subagent sessions delegated from it,
+   * at any depth. Every live target is flushed and disposed before the first
+   * artifact is removed, and the requested session's own record is reported in
+   * the same shape as before, with the subagent ids listed alongside it.
+   */
+  const deleteSessionNow = async (sessionId, catalog, removed) => {
+    if (removed.has(sessionId)) return { sessionId, deleted: true, alreadyRemoved: true };
+
+    const header = ctx.sessions.get(sessionId)?.header ?? catalog.byId.get(sessionId);
+    if (header === undefined) throw requestError(404, "session not found");
+
+    const targets = [];
+    for (const id of [...descendantSubagentIds(catalog, sessionId), sessionId]) {
+      if (removed.has(id)) continue;
+      const targetHeader = id === sessionId ? header : catalog.byId.get(id);
+      if (targetHeader === undefined) continue;
+      targets.push({ id, header: targetHeader });
+    }
+
+    for (const target of targets) await disposeLiveSession(target.id);
+
+    const results = [];
+    for (const target of targets) {
+      const removal = await removeSessionArtifact(target.header);
+      removed.add(target.id);
+      results.push({ sessionId: target.id, ...removal });
+    }
+
+    const requested = results.at(-1);
     return {
       sessionId,
       deleted: true,
-      materialized,
-      removedDirectory: directoryPresent,
+      materialized: requested.materialized,
+      removedDirectory: requested.removedDirectory,
+      subagentSessionIds: results.slice(0, -1).map((result) => result.sessionId),
     };
   };
-  const deleteSession = (sessionId) => {
-    const queued = enqueue(mutationTail, () => deleteSessionNow(sessionId));
-    mutationTail = queued.nextTail;
-    return queued.result;
-  };
-  const deleteSessions = (sessionIds) => {
+
+  const withCatalog = (operation) => {
     const queued = enqueue(mutationTail, async () => {
-      const results = [];
-      for (const sessionId of sessionIds) results.push(await deleteSessionNow(sessionId));
-      return results;
+      const catalog = buildCatalog(await ctx.sessionPersistence.list());
+      return operation(catalog);
     });
     mutationTail = queued.nextTail;
     return queued.result;
   };
+  const deleteSession = (sessionId) => withCatalog(
+    (catalog) => deleteSessionNow(sessionId, catalog, new Set()),
+  );
+  const deleteSessions = (sessionIds) => withCatalog(async (catalog) => {
+    const removed = new Set();
+    const results = [];
+    for (const sessionId of sessionIds) results.push(await deleteSessionNow(sessionId, catalog, removed));
+    return results;
+  });
 
   ctx.effect(() => ctx.webServer.register({
     kind: "exact",

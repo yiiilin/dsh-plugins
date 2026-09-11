@@ -98,6 +98,14 @@ window.__ModuleLoader__.load({
 
     const STYLE_TEXT = `
 .dvi-root{position:relative;display:inline-flex;align-items:center;flex:none}
+/* The product's trailing cluster renders the input-right seat first, so
+   the mic would sit left of the model seat and the context meter. The button
+   belongs next to send instead: raise its flex order above those two seats and
+   push the product's own primary controls (stop and send) after it. Both
+   product buttons carry the same CSS-module _primary suffix, and our button is
+   a flex item of the cluster because the slot anchor uses display: contents. */
+[data-composer-card] .dvi-root{order:1}
+[data-composer-card] button[class*="_primary"]{order:2}
 .dvi-button{box-sizing:border-box;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;flex:none;padding:0;border:0;border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;transition:background-color .15s ease,color .15s ease}
 .dvi-button:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#e7e5e4);color:var(--dsw-alias-label-primary,#111827)}
 .dvi-button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#2563eb);outline-offset:2px}

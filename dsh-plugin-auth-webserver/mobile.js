@@ -391,6 +391,41 @@ html[data-dsh-auth-mobile] [data-dsh-mobile-center] [data-composer-seat] {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+/* The composer card ends in one toolbar row: a leading tool cluster (commands,
+   attach, access mode) and a trailing cluster (microphone, model, context ring,
+   send/stop). That row is flex-wrap: wrap, so as soon as a conversation carries
+   both the model seat's label and the context ring — any session with history,
+   unlike a brand-new one — the trailing cluster is pushed onto a second line:
+   the card grows from ~98px to ~138px and the lower line sits right-aligned and
+   half empty. Keep the row on one line instead; the official model trigger
+   already shrinks and ellipsizes its own label, so the trailing cluster is the
+   only part that has to give. The card's last child is that toolbar row and its
+   first/last children are the two clusters; slot contributions are injected
+   with display: contents, so they stay direct flex items. */
+html[data-dsh-auth-mobile] [data-composer-card] > :last-child {
+  flex-wrap: nowrap !important;
+  gap: 8px !important;
+}
+
+html[data-dsh-auth-mobile] [data-composer-card] > :last-child > * {
+  min-width: 0 !important;
+  gap: 8px !important;
+}
+
+html[data-dsh-auth-mobile] [data-composer-card] > :last-child > * > * {
+  gap: 8px !important;
+}
+
+/* The leading buttons keep their size; the trailing cluster absorbs the squeeze
+   and passes it to the model label. */
+html[data-dsh-auth-mobile] [data-composer-card] > :last-child > :first-child {
+  flex: 0 0 auto !important;
+}
+
+html[data-dsh-auth-mobile] [data-composer-card] > :last-child > :last-child {
+  flex: 0 1 auto !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html[data-dsh-auth-mobile] [data-dsh-mobile-sidebar],
   html[data-dsh-auth-mobile] [data-dsh-mobile-details],

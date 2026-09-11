@@ -9,10 +9,9 @@ own directory.
 | --- | --- |
 | [`@yiln-dsh/dsh-plugin-auth-webserver`](./dsh-plugin-auth-webserver) | Auth-gated reverse proxy with Host/Origin policy, HTTPS/TOTP, bounded sessions, WebSockets, and authenticated remote Settings/Models support. |
 | [`@yiln-dsh/dsh-plugin-sandbox-guidance`](./dsh-plugin-sandbox-guidance) | Explain non-widening sandbox failures to the model and user without changing execution policy. |
-| [`@yiln-dsh/dsh-plugin-file-explorer`](./dsh-plugin-file-explorer) | Contribute workspace Files and Git Graph pages to the right-panel host. |
-| [`@yiln-dsh/dsh-plugin-right-panel`](./dsh-plugin-right-panel) | Fixed right-side page host with keyed Slots, icon rail, and overflow page menu. |
 | [`@yiln-dsh/dsh-plugin-file-message`](./dsh-plugin-file-message) | Let the model send workspace-backed files and images into the conversation. |
-| [`@yiln-dsh/dsh-plugin-llm-adapter`](./dsh-plugin-llm-adapter) | Fork the DSH pi-ai adapter with per-model reasoning/tier controls and reliable image request serialization. |
+| [`@yiln-dsh/dsh-plugin-git-graph`](./dsh-plugin-git-graph) | Contribute a Git Graph page tab to the DSH Web right Sidebar: lane graph, commit and working-tree diffs, and uncommitted changes. |
+| [`@yiln-dsh/dsh-plugin-llm-adapter`](./dsh-plugin-llm-adapter) | Fork the DSH pi-ai adapter with per-model reasoning/tier controls, optional tool-argument filler cleanup, and reliable image request serialization. |
 | [`@yiln-dsh/dsh-plugin-delete-session`](./dsh-plugin-delete-session) | Add confirmed permanent-delete actions for the current session, session-row menus, and selected session batches. |
 | [`@yiln-dsh/dsh-plugin-web-daemon`](./dsh-plugin-web-daemon) | Manages `dsh web` as a real systemd unit, auto-resumes sessions that were running across restarts, shows server CPU/memory/network/filesystem status above New Session, and edits its configuration from the GUI Settings section. |
 | [`@yiln-dsh/dsh-plugin-terminal-tab`](./dsh-plugin-terminal-tab) | Adds per-session persistent terminal tabs and a **新建终端** action to the Web GUI. |
@@ -67,16 +66,15 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 | --- | --- |
 | `@yiln-dsh/dsh-plugin-auth-webserver` | `0.7.6` |
 | `@yiln-dsh/dsh-plugin-sandbox-guidance` | `0.1.1` |
-| `@yiln-dsh/dsh-plugin-file-explorer` | `0.9.1` |
-| `@yiln-dsh/dsh-plugin-right-panel` | `0.1.2` |
-| `@yiln-dsh/dsh-plugin-delete-session` | `0.3.0` |
+| `@yiln-dsh/dsh-plugin-delete-session` | `0.4.0` |
 | `@yiln-dsh/dsh-plugin-file-message` | `0.3.2` |
-| `@yiln-dsh/dsh-plugin-llm-adapter` | `0.3.1` |
-| `@yiln-dsh/dsh-plugin-web-daemon` | `0.7.1` |
-| `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.8` |
-| `@yiln-dsh/dsh-plugin-web-browser` | `0.1.2` |
+| `@yiln-dsh/dsh-plugin-git-graph` | `0.1.0` |
+| `@yiln-dsh/dsh-plugin-llm-adapter` | `0.4.0` |
+| `@yiln-dsh/dsh-plugin-web-daemon` | `0.7.4` |
+| `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.9` |
+| `@yiln-dsh/dsh-plugin-web-browser` | `0.1.3` |
 | `@yiln-dsh/dsh-plugin-session-list-cache` | `0.1.0` |
-| `@yiln-dsh/dsh-plugin-voice-input` | `0.1.1` |
+| `@yiln-dsh/dsh-plugin-voice-input` | `0.1.2` |
 
 Each plugin's version is the `version` field in its own `package.json`.
 Semantic versioning is recommended: patch for fixes, minor for additive

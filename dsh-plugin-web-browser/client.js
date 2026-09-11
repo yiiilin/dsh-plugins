@@ -16,7 +16,7 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
 
     let React = require('react');
-    const inject = ['slots'];
+    const inject = ['slots', 'sidebarRight', 'sidebarRightTabs'];
     const API_PREFIX = '/_dsh/web-browser';
     const WS_PATH = `${API_PREFIX}/ws`;
     const STYLE_ID = 'dsh-plugin-web-browser-style';
@@ -30,6 +30,7 @@ window.__ModuleLoader__.load({
     const LOCALE_NS = 'web-browser';
     const ZH_DICT = {
       'browser.title': '浏览器',
+      'browser.guide': '在服务器上开一个真实浏览器',
       'browser.region': '浏览器面板',
       'browser.address.placeholder': '输入网址，回车打开',
       'browser.address.label': '地址栏',
@@ -50,6 +51,7 @@ window.__ModuleLoader__.load({
     };
     const EN_DICT = {
       'browser.title': 'Browser',
+      'browser.guide': 'Drive a real browser on the server',
       'browser.region': 'Browser panel',
       'browser.address.placeholder': 'Enter a URL and press Enter',
       'browser.address.label': 'Address bar',
@@ -816,17 +818,47 @@ window.__ModuleLoader__.load({
         : (key, params) => applyParams(ZH_DICT[key] ?? EN_DICT[key] ?? key, params);
       const BrowserPage = createBrowserPage(t);
 
-      ctx.effect(() => {
-        const slots = ctx.get('slots');
-        if (slots === undefined) return;
-        const disposeSlot = slots.inject('conversation.view', () => slots.register({
-          name: 'conversation.view',
-          id: 'browser',
-          order: 30,
-          label: t('browser.title'),
-        }, BrowserPage));
-        return disposeSlot;
-      });
+      // The browser is a page tab in the product's right Sidebar: the seat is
+      // `sidebar.right.pane.tab`, keyed by the tab type's id, and the body
+      // receives the seat's own `sessionId` — the same prop the page already
+      // consumes.
+      const slots = ctx.get('slots');
+      const sidebarRight = ctx.get('sidebarRight');
+      const sidebarRightTabs = ctx.get('sidebarRightTabs');
+      if (slots === undefined || sidebarRight === undefined || sidebarRightTabs === undefined) return;
+
+      const BROWSER_TAB_ID = '@yiln-dsh/dsh-plugin-web-browser/browser';
+      const BROWSER_TAB_KIND = 'web-browser';
+      const BrowserGlyph = ({ size }) => React.createElement('svg', {
+        viewBox: '0 0 16 16', width: size || 20, height: size || 20, fill: 'none',
+        stroke: 'currentColor', strokeWidth: 1.2, strokeLinecap: 'round', 'aria-hidden': true,
+      },
+        React.createElement('circle', { cx: '8', cy: '8', r: '6.25' }),
+        React.createElement('path', { d: 'M1.9 8h12.2M8 1.75c1.7 1.8 2.6 3.9 2.6 6.25S9.7 12.45 8 14.25C6.3 12.45 5.4 10.35 5.4 8S6.3 3.55 8 1.75Z' }),
+      );
+
+      ctx.effect(() => sidebarRightTabs.register({
+        id: BROWSER_TAB_ID,
+        kind: BROWSER_TAB_KIND,
+        priority: 'extension',
+        title: () => t('browser.title'),
+        guide: [{
+          order: 31,
+          title: () => t('browser.title'),
+          description: () => t('browser.guide'),
+          icon: BrowserGlyph,
+        }],
+      }), 'web-browser: right sidebar type');
+
+      ctx.effect(() => slots.inject('sidebar.right.pane.tab', () => slots.register({
+        name: 'sidebar.right.pane.tab',
+        key: BROWSER_TAB_ID,
+        locale: LOCALE_NS,
+      }, BrowserPage)), 'web-browser: right sidebar body');
+
+      exports.openBrowser = () => {
+        try { sidebarRight.openTab(BROWSER_TAB_KIND); } catch (error) { /* no live session surface */ }
+      };
     }
 
     exports.apply = apply;

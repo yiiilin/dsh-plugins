@@ -13,7 +13,7 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
 
     let React = require('react');
-    const inject = ['slots'];
+    const inject = ['slots', 'sidebarRight', 'sidebarRightTabs'];
     const API_PREFIX = '/_dsh/terminal-tab';
     const WS_PATH = `${API_PREFIX}/ws`;
     const STYLE_ID = 'dsh-plugin-terminal-tab-style';
@@ -37,6 +37,7 @@ window.__ModuleLoader__.load({
       'terminal.error': '终端操作失败',
       'terminal.connection.failed': '终端连接失败',
       'terminal.socket.failed': '终端 WebSocket 连接失败',
+      'terminal.guide': '在工作区里跑持久终端',
       'terminal.new': '新建终端',
       'terminal.empty': '暂无终端',
     };
@@ -57,6 +58,7 @@ window.__ModuleLoader__.load({
       'terminal.error': 'Terminal operation failed',
       'terminal.connection.failed': 'Terminal connection failed',
       'terminal.socket.failed': 'Terminal WebSocket connection failed',
+      'terminal.guide': 'Run persistent terminals in this workspace',
       'terminal.new': 'New terminal',
       'terminal.empty': 'No terminals',
     };
@@ -466,6 +468,11 @@ window.__ModuleLoader__.load({
       document.head.appendChild(style);
       ctx.effect(() => () => style.remove(), 'terminal-tab stylesheet');
 
+      const slots = ctx.get('slots');
+      const sidebarRight = ctx.get('sidebarRight');
+      const sidebarRightTabs = ctx.get('sidebarRightTabs');
+      if (slots === undefined || sidebarRight === undefined || sidebarRightTabs === undefined) return;
+
       const locale = ctx.get('locale');
       if (locale !== undefined) {
         ctx.effect(() => locale.register(LOCALE_NS, { zh: ZH_DICT, en: EN_DICT }), 'terminal-tab: locale');
@@ -475,12 +482,38 @@ window.__ModuleLoader__.load({
         : (key, params) => applyParams(ZH_DICT[key] ?? EN_DICT[key] ?? key, params);
       const TerminalView = createTerminalView(t);
 
-      ctx.slots.inject('conversation.view', () => ctx.slots.register({
-        name: 'conversation.view',
-        id: 'terminal',
-        order: 20,
-        label: t('terminal.title'),
-      }, TerminalView));
+      // The right Sidebar seat is `sidebar.right.pane.tab`, keyed by the tab
+      // type's id, and the body receives the seat's own `sessionId` — which is
+      // exactly what the terminal view already consumes.
+      const TERMINAL_TAB_ID = '@yiln-dsh/dsh-plugin-terminal-tab/terminal';
+      const TERMINAL_TAB_KIND = 'terminal-tab';
+      const TerminalGlyph = ({ size }) => React.createElement('svg', {
+        viewBox: '0 0 16 16', width: size || 20, height: size || 20, fill: 'none',
+        stroke: 'currentColor', strokeWidth: 1.2, strokeLinecap: 'round', 'aria-hidden': true,
+      },
+        React.createElement('rect', { x: '1.75', y: '2.75', width: '12.5', height: '10.5', rx: '1.75' }),
+        React.createElement('path', { d: 'M4.6 6.4 6.6 8l-2 1.6M8.2 10.2h3.2' }),
+      );
+      ctx.effect(() => sidebarRightTabs.register({
+        id: TERMINAL_TAB_ID,
+        kind: TERMINAL_TAB_KIND,
+        priority: 'extension',
+        title: () => t('terminal.title'),
+        guide: [{
+          order: 30,
+          title: () => t('terminal.title'),
+          description: () => t('terminal.guide'),
+          icon: TerminalGlyph,
+        }],
+      }), 'terminal-tab: right sidebar type');
+      ctx.effect(() => slots.inject('sidebar.right.pane.tab', () => slots.register({
+        name: 'sidebar.right.pane.tab',
+        key: TERMINAL_TAB_ID,
+        locale: LOCALE_NS,
+      }, TerminalView)), 'terminal-tab: right sidebar body');
+      exports.openTerminal = () => {
+        try { sidebarRight.openTab(TERMINAL_TAB_KIND); } catch (error) { /* no live session surface */ }
+      };
     }
 
     exports.apply = apply;

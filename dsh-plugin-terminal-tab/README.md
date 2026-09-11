@@ -9,7 +9,7 @@ conversation session.
 - Hides the conversation composer while the terminal view is active and restores
   it when the user returns to 对话 or 轨迹.
 - Hides the conversation width handles while the terminal view is active, so the terminal keeps a stable full-width surface.
-- Keeps the built-in 对话 / 轨迹 / 终端 view tabs in one conversation navigation row.
+- Contributes the terminal as a **page tab in the DSH Web right Sidebar** (`ctx.sidebarRightTabs` + the `sidebar.right.pane.tab` seat), so the conversation keeps only its own 对话 / 轨迹 tabs.
 - Renders multiple shell tabs inside the terminal view with the actual
   `@xterm/xterm` terminal emulator. xterm.js owns ANSI rendering, scrollback,
   cursor, keyboard input and composition; there is no separate input bar.
@@ -26,12 +26,12 @@ conversation session.
 | File | Content |
 | --- | --- |
 | `index.js` | Host HTTP routes plus the `/_dsh/terminal-tab/ws` upgrade route, backed by `agents` and each Agent's scoped `subprocess.spawnTerminal` PTY primitive. |
-| `client.js` | Browser bundle that loads `@xterm/xterm`, registers the terminal view and tab-bar `+` button, hides the composer while active, and binds one xterm.js instance to each WebSocket. |
+| `client.js` | Browser bundle that loads `@xterm/xterm`, registers the terminal page kind in `ctx.sidebarRightTabs` and its body in the `sidebar.right.pane.tab` seat, and binds one xterm.js instance to each WebSocket. |
 | `cordis.patch.yml` | Web-profile composition patch for the Host row. |
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-terminal-tab@0.1.8`.
+The published package is `@yiln-dsh/dsh-plugin-terminal-tab@0.1.9`.
 
 Local source directory:
 

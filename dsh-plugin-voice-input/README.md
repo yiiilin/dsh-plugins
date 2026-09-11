@@ -16,8 +16,9 @@ Speaking is recognized twice, by two different models:
 Both models are local `sherpa-onnx` models on CPU. No audio, transcript, or API
 key leaves the machine: this plugin talks to no speech service.
 
-- Places one mic button in the composer's trailing cluster, immediately left of
-  the model seat, the context meter, and the send button.
+- Places one mic button in the composer's trailing cluster, ordered immediately
+  left of the send/stop controls (`order` keeps it after the model seat and the
+  context meter, which the product renders inside that cluster first).
 - Click to start, click again to stop and correct. `Esc` cancels the recording
   and leaves the draft as it was.
 - Appends to whatever is already in the composer instead of replacing it, and
@@ -43,7 +44,7 @@ key leaves the machine: this plugin talks to no speech service.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-voice-input@0.1.1`.
+The published package is `@yiln-dsh/dsh-plugin-voice-input@0.1.2`.
 
 Local source directory:
 
