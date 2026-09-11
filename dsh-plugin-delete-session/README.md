@@ -6,7 +6,7 @@ GUI.
 ## Behavior
 
 - Adds a trash icon beside the current session title.
-- Adds a Delete session item to each ordinary session's three-dot menu and reuses the destructive confirmation dialog.
+- Adds a Delete session item to each ordinary session's three-dot menu — only while that row's own menu is open, so an unrelated popup (the composer's permission dropdown, for instance) never receives it — and reuses the destructive confirmation dialog. The product renders every menu through one primitives component, so the item is anchored to the menu box that actually sits against the row's action button rather than to the nearest open menu anywhere on the page.
 - Adds a batch-management control beside the New Workspace action; management mode exposes a checkbox on each visible ordinary session plus Cancel and Delete selected controls.
 - Sends selected sessions through one serialized Host operation, so active sessions are flushed and disposed safely before their persisted logs are removed.
 - Requires an explicit confirmation before sending the destructive request.
@@ -18,7 +18,7 @@ GUI.
 - Reports the cascaded ids in `subagentSessionIds`; a batch target already
   removed by an earlier cascade in the same request is acknowledged with
   `alreadyRemoved` instead of failing.
-- Opens the next ordinary session when available, then reloads the browser session list so the deleted selection disappears.
+- Opens the next ordinary session when available, then re-reads the browser session list through the client session service's `refresh()`, so the deleted rows disappear without reloading the whole page. The deletion goes through this plugin's own Host route, which the Session Controller never sees, so that pull is what updates the sidebar; a shell too old to expose `refresh()` still falls back to the page reload.
 - Deletes the guarded per-session directory, including temporary files placed there by session-scoped features; it does not delete the workspace directory or content-addressed image objects, which may be shared by other sessions.
 
 The plugin supports the stock per-session JSONL persistence backend, including
@@ -36,7 +36,7 @@ tracked by the plugin.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-delete-session@0.4.0`.
+The published package is `@yiln-dsh/dsh-plugin-delete-session@0.4.1`.
 
 ```bash
 dsh plugin --profile web add file:/path/to/dsh-plugin-delete-session

@@ -66,7 +66,7 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 | --- | --- |
 | `@yiln-dsh/dsh-plugin-auth-webserver` | `0.7.6` |
 | `@yiln-dsh/dsh-plugin-sandbox-guidance` | `0.1.1` |
-| `@yiln-dsh/dsh-plugin-delete-session` | `0.4.0` |
+| `@yiln-dsh/dsh-plugin-delete-session` | `0.4.1` |
 | `@yiln-dsh/dsh-plugin-file-message` | `0.3.2` |
 | `@yiln-dsh/dsh-plugin-git-graph` | `0.1.0` |
 | `@yiln-dsh/dsh-plugin-llm-adapter` | `0.4.0` |

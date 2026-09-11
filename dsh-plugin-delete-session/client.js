@@ -19,6 +19,8 @@ window.__ModuleLoader__.load({
     const API_PATH = "/_dsh/delete-session/delete";
     const MAX_BATCH_SIZE = 100;
     const STYLE_ID = "dsh-plugin-delete-session-style";
+    /** Widest gap, in pixels, between a session row's action button and its own popup menu. */
+    const MENU_ANCHOR_GAP_PX = 24;
 
     const LOCALE_NS = "delete-session";
     const ZH_DICT = {
@@ -145,6 +147,28 @@ window.__ModuleLoader__.load({
       return result;
     }
 
+    /**
+     * Re-read the session list after a deletion.
+     *
+     * The Host deletes through this plugin's own route, which the Session
+     * Controller never sees, so the sidebar keeps the deleted rows until its
+     * baseline is pulled again. `sessions.refresh()` is that pull; a shell too
+     * old to expose it still gets the page reload this plugin used to rely on.
+     * @param {object|undefined} sessions - client Session service.
+     * @returns {Promise<void>} completion of the refresh or the reload.
+     */
+    async function refreshSessionList(sessions) {
+      if (typeof sessions?.refresh === "function") {
+        try {
+          await sessions.refresh();
+          return;
+        } catch {
+          // Fall through to the reload below.
+        }
+      }
+      if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
+    }
+
     const EMPTY_SESSION_LIST = { current: undefined, ids: [], byId: {} };
     const EMPTY_WORKSPACE_LIST = { items: [], archivedSessionIds: [] };
 
@@ -250,23 +274,47 @@ window.__ModuleLoader__.load({
       return { sectionTarget: sectionHeader, headerTarget, targets };
     }
 
+    /**
+     * Distance between two boxes, zero when they overlap.
+     * @param {DOMRect} left - first box.
+     * @param {DOMRect} right - second box.
+     * @returns {number} shortest gap between the boxes, in pixels.
+     */
+    function boxDistance(left, right) {
+      const dx = Math.max(left.left - right.right, right.left - left.right, 0);
+      const dy = Math.max(left.top - right.bottom, right.top - left.bottom, 0);
+      return Math.hypot(dx, dy);
+    }
+
+    /**
+     * The open popup menu that belongs to one session row.
+     *
+     * Every menu in the product is one primitives component, so a document-wide
+     * `[role="menu"]` lookup also matches popups that have nothing to do with a
+     * session row — the composer's permission dropdown, for instance. A row's
+     * own menu is the visible menu anchored against that row's action button, so
+     * the association is geometric: a menu further away than {@link MENU_ANCHOR_GAP_PX}
+     * is not this row's, and null means the row has no open menu at all.
+     * @param {Element|null} row - session row element.
+     * @returns {Element|null} the row's open menu, or null when none is adjacent.
+     */
     function openMenuForRow(row) {
       if (typeof document === "undefined" || row === null) return null;
       const anchor = [...row.querySelectorAll("button")].find((button) => button.getClientRects().length > 0);
-      const anchorRect = anchor?.getBoundingClientRect();
-      const menus = [...document.querySelectorAll('[role="menu"]')].filter((menu) => {
+      if (anchor === undefined) return null;
+      const anchorRect = anchor.getBoundingClientRect();
+      let closest = null;
+      let closestDistance = Infinity;
+      for (const menu of document.querySelectorAll('[role="menu"]')) {
         const rect = menu.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0 && getComputedStyle(menu).visibility !== "hidden";
-      });
-      if (menus.length === 0) return null;
-      if (anchorRect === undefined) return menus.at(-1) ?? null;
-      return menus.sort((left, right) => {
-        const leftRect = left.getBoundingClientRect();
-        const rightRect = right.getBoundingClientRect();
-        const leftDistance = Math.abs(leftRect.left - anchorRect.left) + Math.abs(leftRect.top - anchorRect.top);
-        const rightDistance = Math.abs(rightRect.left - anchorRect.left) + Math.abs(rightRect.top - anchorRect.top);
-        return leftDistance - rightDistance;
-      })[0] ?? null;
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        if (getComputedStyle(menu).visibility === "hidden") continue;
+        const distance = boxDistance(rect, anchorRect);
+        if (distance > MENU_ANCHOR_GAP_PX || distance >= closestDistance) continue;
+        closest = menu;
+        closestDistance = distance;
+      }
+      return closest;
     }
 
     function menuContentTarget(menu) {
@@ -343,6 +391,12 @@ window.__ModuleLoader__.load({
             const activeSession = activeMenuSessionRef.current;
             const openMenu = activeMenuRowRef.current === null ? null : openMenuForRow(activeMenuRowRef.current);
             const contentTarget = menuContentTarget(openMenu);
+            /* A remembered row whose menu is gone must not be reused: the next menu
+               to open anywhere in the page would otherwise be mistaken for it. */
+            if (contentTarget === null) {
+              activeMenuRowRef.current = null;
+              activeMenuSessionRef.current = null;
+            }
             const nextMenuTarget = activeSession === null || contentTarget === null
               ? null
               : { host: contentTarget, id: activeSession.id, title: activeSession.title };
@@ -411,7 +465,7 @@ window.__ModuleLoader__.load({
               if (nextSessionId !== undefined && typeof sessions?.open === "function") sessions.open(nextSessionId);
               else if (typeof sessions?.clear === "function") sessions.clear();
             }
-            if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
+            await refreshSessionList(sessions);
           } catch (reason) {
             setBusy(false);
             setError(messageOf(reason));
@@ -447,7 +501,7 @@ window.__ModuleLoader__.load({
               if (nextSessionId !== undefined && typeof sessions?.open === "function") sessions.open(nextSessionId);
               else if (typeof sessions?.clear === "function") sessions.clear();
             }
-            if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
+            await refreshSessionList(sessions);
           } catch (reason) {
             setMenuDeleteBusy(false);
             setMenuDeleteError(messageOf(reason));
@@ -653,7 +707,7 @@ window.__ModuleLoader__.load({
         try {
           await requestDelete(props.sessionId);
           if (nextSessionId !== undefined) props.sessions.open(nextSessionId);
-          if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
+          await refreshSessionList(props.sessions);
         } catch (reason) {
           setError(messageOf(reason));
           setBusy(false);
@@ -747,6 +801,15 @@ window.__ModuleLoader__.load({
 
     exports.apply = apply;
     exports.inject = inject;
+    /* Pure helpers the Node test suite exercises directly; the browser half
+       reads only `apply` and `inject` from these exports. */
+    exports.__test = {
+      MENU_ANCHOR_GAP_PX,
+      boxDistance,
+      menuContentTarget,
+      openMenuForRow,
+      refreshSessionList,
+    };
     return module.exports;
   },
 });
