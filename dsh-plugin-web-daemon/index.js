@@ -30,6 +30,7 @@ import { dirname, join, resolve } from "node:path";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { installRecoveryApiGate } from "./lib/recovery-gate.js";
+import { persistedHeadersFromList, readStoredSession } from "./lib/stored-sessions.js";
 
 export const name = "web-daemon";
 export const inject = ["webServer", "settings"];
@@ -688,26 +689,24 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
       }
 
       const headers = await persistence.list();
-      const persisted = new Map(headers.map((header) => [String(header.id), header]));
+      const persisted = persistedHeadersFromList(headers);
       const restore = async ([sessionId, record]) => {
         try {
           let header = persisted.get(sessionId);
           if (header === undefined) {
             // The listing is backend-owned and can miss a session that the backend
-            // still resolves: 0.1.5 moved the concrete backend behind
-            // `sessionPersistence` (e.g. dsh-session-persistence-jsonl), and after
-            // that upgrade `list()` no longer surfaced live sessions while
-            // `inspect()` kept working. A record whose session is resolvable must
-            // never be pruned, so ask the backend directly before believing the
-            // listing.
+            // still resolves: `list()` returns snapshots and may skip a live
+            // session, while `stat(id)` keeps resolving it. A record whose session
+            // is resolvable must never be pruned, so ask the backend directly
+            // before believing the listing.
             try {
-              const probed = await persistence.inspect(sessionId);
-              if (probed !== undefined && probed.meta !== undefined) {
-                header = { id: sessionId, origin: probed.meta.origin, cwd: probed.meta.cwd };
-                ctx.logger?.warn?.("web-daemon: session %s was absent from persistence.list() but inspect() resolved it; resuming", sessionId);
+              const probed = await readStoredSession(persistence, sessionId);
+              if (probed !== undefined) {
+                header = probed.meta;
+                ctx.logger?.warn?.("web-daemon: session %s was absent from persistence.list() but stat() resolved it; resuming", sessionId);
               }
             } catch (error) {
-              ctx.logger?.warn?.("web-daemon: persistence.inspect(%s) failed: %s", sessionId, error);
+              ctx.logger?.warn?.("web-daemon: sessionPersistence.stat(%s) failed: %s", sessionId, error);
             }
           }
           if (header === undefined || header.origin === "subagent") {
@@ -734,7 +733,13 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
           // request/header is the single source of truth for the model the
           // session was actually using before the restart. Inspect every
           // resumable session and fold that header into the record.
-          const inspected = await persistence.inspect(sessionId);
+          const inspected = await readStoredSession(persistence, sessionId);
+          if (inspected === undefined) {
+            diag.entries.push({ sessionId, decision: "removed-not-persisted" });
+            records.delete(sessionId);
+            dirty = true;
+            return;
+          }
           if (inspected.meta.origin === "subagent") {
             diag.entries.push({ sessionId, decision: "removed-subagent" });
             records.delete(sessionId);

@@ -1,6 +1,6 @@
 {
   "name": "@yiln-dsh/dsh-plugin-web-daemon",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "publishConfig": {
     "access": "public"
   },
@@ -31,6 +31,7 @@
     "index.js",
     "lib/client.js",
     "lib/recovery-gate.js",
+    "lib/stored-sessions.js",
     "cordis.patch.yml",
     "README.md"
   ],

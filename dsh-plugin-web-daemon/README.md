@@ -59,7 +59,7 @@ A record is only discarded when its session is genuinely gone: if the persistenc
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.7.3`.
+The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.7.4`.
 
 ### npm package
 
@@ -133,6 +133,12 @@ Recorded state is the single source of truth:
   catch `GoalError` with a plain `try`/`catch`). A deferred `GoalError` is also
   kept handled, because an unhandled rejection makes the Harness's fail-loud
   handler exit the daemon and stop every hosted session.
+- Stored sessions are resolved through the RC1 `sessionPersistence` vocabulary:
+  `list()` returns snapshots (`{ header, revision, sizeBytes }`), `stat(id)`
+  resolves one, and the event log comes from `open(id, 'read')`.
+  `lib/stored-sessions.js` normalizes those shapes in one place, because reading
+  a snapshot as a header yields `id === undefined` for every session and prunes
+  every record as "removed-not-persisted" — a restart would then resume nothing.
 
 Each boot writes `recovery-diagnostics.json` next to the registry, recording
 the lock result, every session's decision (`resumed` / `skipped-already-live` /
@@ -149,5 +155,6 @@ journalctl -u dsh-web.service -f   # look for "resumed session …"
 | --- | --- |
 | `index.js` | Host half: systemd unit generation, session registry and resume lifecycle, CPU/memory/network/filesystem metrics sampling, settings namespace, JSON API, and headless workspace-open protection. |
 | `lib/recovery-gate.js` | The recovery barrier: defers session and goal calls until resume finishes, then restores each service's own synchronous calling convention. |
+| `lib/stored-sessions.js` | RC1 `sessionPersistence` adapter: normalizes `list()` snapshots and reads one stored session's header plus event log for recovery. |
 | `lib/client.js` | Browser half: server status panel above New Session plus the Settings plugin-configuration card. |
 | `cordis.patch.yml` | Adds the host row and default configuration to the composed profile. |
