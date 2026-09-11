@@ -5,12 +5,13 @@ import { readFileSync } from "node:fs";
 const HOST_SOURCE = readFileSync(new URL("../index.js", import.meta.url), "utf8");
 const CLIENT_SOURCE = readFileSync(new URL("../lib/client.js", import.meta.url), "utf8");
 const PATCH_SOURCE = readFileSync(new URL("../cordis.patch.yml", import.meta.url), "utf8");
+const GATE_SOURCE = readFileSync(new URL("../lib/recovery-gate.js", import.meta.url), "utf8");
 
 test("uses RC1 settings and recovery controller names", () => {
   assert.match(HOST_SOURCE, /const NS = "web-daemon"/u);
-  assert.match(HOST_SOURCE, /sessionController: \[/u);
-  assert.match(HOST_SOURCE, /agentPresets: \["remoteExportList", "select"\]/u);
-  assert.match(HOST_SOURCE, /subagents: \["listChildren", "prompt", "interruptByParent"\]/u);
+  assert.match(GATE_SOURCE, /sessionController: \[/u);
+  assert.match(GATE_SOURCE, /agentPresets: \["remoteExportList", "select"\]/u);
+  assert.match(GATE_SOURCE, /subagents: \["listChildren", "prompt", "interruptByParent"\]/u);
   assert.match(HOST_SOURCE, /session\.snapshotEvents\(\)/u);
   assert.doesNotMatch(HOST_SOURCE, /import .*settingsNamespace/u);
   assert.doesNotMatch(HOST_SOURCE, /import .*resolveSessionPreset/u);
@@ -24,7 +25,13 @@ test("registers the server status panel through the official sidebar footer slot
 });
 
 test("gates session history streams during recovery", () => {
-  assert.match(HOST_SOURCE, /sessionController: \[[^\]]*"follow"/u);
-  assert.match(HOST_SOURCE, /sessions: \[[^\]]*"follow"/u);
-  assert.match(HOST_SOURCE, /async function\* \(\.\.\.args\)/u);
+  assert.match(GATE_SOURCE, /sessionController: \[[^\]]*"follow"/u);
+  assert.match(GATE_SOURCE, /sessions: \[[^\]]*"follow"/u);
+  assert.match(GATE_SOURCE, /async function\* \(\.\.\.args\)/u);
 });
+
+test("loads the recovery gate from its own module", () => {
+  assert.match(HOST_SOURCE, /import \{ installRecoveryApiGate \} from "\.\/lib\/recovery-gate\.js"/u);
+  assert.doesNotMatch(HOST_SOURCE, /function installRecoveryApiGate/u);
+});
+

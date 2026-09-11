@@ -29,6 +29,7 @@ import { cpus, freemem, homedir, loadavg, release, totalmem } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
+import { installRecoveryApiGate } from "./lib/recovery-gate.js";
 
 export const name = "web-daemon";
 export const inject = ["webServer", "settings"];
@@ -44,19 +45,6 @@ const SESSION_REGISTRY_VERSION = 1;
 const SESSION_REGISTRY_STALE_MS = 30000;
 const RESUME_PLUGIN_SOURCE = "dsh-plugin-web-daemon";
 const INTERRUPTED_RESUME_TEXT = "The daemon restarted while this session was running. Continue the task from the recovered conversation. Before repeating any operation, verify the outcome of tool calls marked as unknown.";
-const RECOVERY_GATED_API_METHODS = {
-  sessionController: ["list", "search", "create", "page", "follow", "modelCatalog", "selectModel", "rename", "prompt", "fork", "attachment", "updateQueue", "cancel"],
-  goals: ["create", "edit", "pause", "resume", "complete", "clear"],
-  agentPresets: ["remoteExportList", "select"],
-  subagents: ["listChildren", "prompt", "interruptByParent"],
-};
-
-const LEGACY_RECOVERY_GATED_API_METHODS = {
-  sessions: ["list", "search", "create", "history", "models", "follow", "selectModel", "rename", "prompt", "fork", "attachment", "updateQueue", "cancel"],
-  goals: ["create", "edit", "pause", "resume", "complete", "clear"],
-  agentPresets: ["list", "select"],
-  subagents: ["list", "history", "prompt", "interrupt"],
-};
 
 function isHeadlessHost() {
   if (process.platform !== "linux") return false;
@@ -703,7 +691,25 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
       const persisted = new Map(headers.map((header) => [String(header.id), header]));
       const restore = async ([sessionId, record]) => {
         try {
-          const header = persisted.get(sessionId);
+          let header = persisted.get(sessionId);
+          if (header === undefined) {
+            // The listing is backend-owned and can miss a session that the backend
+            // still resolves: 0.1.5 moved the concrete backend behind
+            // `sessionPersistence` (e.g. dsh-session-persistence-jsonl), and after
+            // that upgrade `list()` no longer surfaced live sessions while
+            // `inspect()` kept working. A record whose session is resolvable must
+            // never be pruned, so ask the backend directly before believing the
+            // listing.
+            try {
+              const probed = await persistence.inspect(sessionId);
+              if (probed !== undefined && probed.meta !== undefined) {
+                header = { id: sessionId, origin: probed.meta.origin, cwd: probed.meta.cwd };
+                ctx.logger?.warn?.("web-daemon: session %s was absent from persistence.list() but inspect() resolved it; resuming", sessionId);
+              }
+            } catch (error) {
+              ctx.logger?.warn?.("web-daemon: persistence.inspect(%s) failed: %s", sessionId, error);
+            }
+          }
           if (header === undefined || header.origin === "subagent") {
             diag.entries.push({ sessionId, decision: "removed-not-persisted" });
             records.delete(sessionId);
@@ -1467,43 +1473,6 @@ function createWebDaemonManager(ctx, settings, config) {
     applyConfig,
     rememberRevision,
   };
-}
-
-function installRecoveryApiGate(ctx, services, recoveryReady, diag) {
-  const legacy = services.apiProxy !== undefined;
-  const methodMap = legacy ? LEGACY_RECOVERY_GATED_API_METHODS : RECOVERY_GATED_API_METHODS;
-  const restorers = [];
-  for (const [domainName, methodNames] of Object.entries(methodMap)) {
-    const domain = legacy ? services.apiProxy?.[domainName] : services[domainName];
-    if (domain === undefined || domain === null) continue;
-    for (const methodName of methodNames) {
-      const original = domain[methodName];
-      if (typeof original !== "function") continue;
-      const gated = methodName === "follow"
-        ? async function* (...args) {
-          diag.gatedCalls.push(`${domainName}.${methodName}`);
-          await recoveryReady;
-          yield* original.apply(domain, args);
-        }
-        : function (...args) {
-          diag.gatedCalls.push(`${domainName}.${methodName}`);
-          return Promise.resolve(recoveryReady).then(() => original.apply(domain, args));
-        };
-      try {
-        domain[methodName] = gated;
-      } catch {
-        ctx.logger?.warn?.("web-daemon: could not gate %s.%s during recovery", domainName, methodName);
-        continue;
-      }
-      restorers.push(() => {
-        if (domain[methodName] === gated) domain[methodName] = original;
-      });
-    }
-  }
-  if (restorers.length === 0) return;
-  ctx.effect(() => () => {
-    for (let index = restorers.length - 1; index >= 0; index -= 1) restorers[index]();
-  }, "web-daemon: api recovery gate");
 }
 
 async function apply(ctx, config = {}) {

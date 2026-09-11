@@ -37,7 +37,9 @@ disposed session is removed.
   rail.
 - Exposes daemon state through `/_dsh/web-daemon/*` JSON routes and server metrics through `/_dsh/web-daemon/metrics`.
 - Disk metrics list local block-backed filesystems visible to the worker and mounted in its namespace; virtual, network, overlay, loop, and zram filesystems are omitted. Unmounted disks cannot report filesystem occupancy. Byte counters are returned as decimal strings for large-volume precision.
-- Records top-level sessions and their live status in `$DSH_HOME/plugins/dsh-plugin-web-daemon/active-sessions.json`. Only sessions recorded with `running: true` are resumed; idle sessions are not started just because they have a transcript. Persisted sessions that were deleted are pruned; subagent sessions are intentionally excluded.
+- Records top-level sessions and their live status in `$DSH_HOME/plugins/dsh-plugin-web-daemon/active-sessions.json`. Only sessions recorded with `running: true` are resumed; idle sessions are not started just because they have a transcript.
+
+A record is only discarded when its session is genuinely gone: if the persistence listing does not surface a recorded session, the plugin asks the backend directly (`sessionPersistence.inspect`) before pruning, so a session that exists on disk is resumed even when the listing omits it (as happened after the DSH 0.1.5 upgrade, where the concrete persistence backend moved). Persisted sessions that were deleted are pruned; subagent sessions are intentionally excluded.
 - A resumed session restores its transcript and Agent. If the previous process stopped while the session was marked running, the plugin queues one internal recovery notice to continue it. Tool calls marked as unknown are explicitly left for the model to verify before retrying.
 - Registers the `web-daemon` settings namespace in the Host settings service
   (the card is keyed by that namespace on `settings.plugin.item`).
@@ -57,7 +59,7 @@ disposed session is removed.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.7.1`.
+The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.7.3`.
 
 ### npm package
 
@@ -121,9 +123,16 @@ Recorded state is the single source of truth:
 - A foreground owner sharing `DSH_HOME` never resumes; `active-sessions.lock`
   (pid + boot identity + token) prevents two workers from racing.
 - While recovery is in progress, Host calls that would create or wake an Agent
-  (`session.prompt`, `session.page`, `session.follow`, `session.modelCatalog`, …) wait behind the
+  (`session.prompt`, `session.page`, `session.follow`, `session.modelCatalog`, …) and every
+  goal mutation (`create`, `edit`, `pause`, `resume`, `complete`, `clear`) wait behind the
   same barrier, so an auto-reconnecting browser cannot claim a session before
   resume.
+- The barrier only defers calls until recovery settles; afterwards each wrapped
+  method is called straight through, so the synchronous goal service keeps
+  throwing synchronously for its callers (the goal tools and slash commands
+  catch `GoalError` with a plain `try`/`catch`). A deferred `GoalError` is also
+  kept handled, because an unhandled rejection makes the Harness's fail-loud
+  handler exit the daemon and stop every hosted session.
 
 Each boot writes `recovery-diagnostics.json` next to the registry, recording
 the lock result, every session's decision (`resumed` / `skipped-already-live` /
@@ -138,6 +147,7 @@ journalctl -u dsh-web.service -f   # look for "resumed session …"
 
 | File | Content |
 | --- | --- |
-| `index.js` | Host half: systemd unit generation, session registry and resume lifecycle, CPU/memory/network/filesystem metrics sampling, settings namespace, JSON API, RC1 Remote recovery gates, and headless workspace-open protection. |
+| `index.js` | Host half: systemd unit generation, session registry and resume lifecycle, CPU/memory/network/filesystem metrics sampling, settings namespace, JSON API, and headless workspace-open protection. |
+| `lib/recovery-gate.js` | The recovery barrier: defers session and goal calls until resume finishes, then restores each service's own synchronous calling convention. |
 | `lib/client.js` | Browser half: server status panel above New Session plus the Settings plugin-configuration card. |
 | `cordis.patch.yml` | Adds the host row and default configuration to the composed profile. |
