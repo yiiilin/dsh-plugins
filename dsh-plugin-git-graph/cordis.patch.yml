@@ -1,0 +1,11 @@
+# dsh-plugin-git-graph bundle patch.
+#
+# Adds the host row that serves the browser bundle's read-only git API (/_dsh/git-graph).
+# The client half is declared by dsh.client and loaded with the web profile.
+
+- insert:
+    - id: dsh-git-graph
+      name: '@yiln-dsh/dsh-plugin-git-graph'
+      inject:
+        - webServer
+      config: {}
