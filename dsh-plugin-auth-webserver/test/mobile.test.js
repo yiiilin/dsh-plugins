@@ -203,3 +203,14 @@ test("closes the drawer when the panel's own collapse control is used", () => {
   const { script } = mobileLayoutPayload();
   assert.ok(script.includes('button.hasAttribute("data-sidebar-right-toggle")'));
 });
+
+test("hides the header's own panel control behind the floating launcher", () => {
+  const { style } = mobileLayoutPayload();
+  // Two identical panel glyphs a finger apart: the header's own expand control
+  // sits inside the padding reserved for the floating launcher, which performs
+  // the same action at touch size.
+  assert.match(
+    style,
+    /html\[data-dsh-auth-mobile\] \[data-dsh-mobile-center\] header \[data-sidebar-right-expand\]\s*\{[\s\S]*?display: none !important/u,
+  );
+});

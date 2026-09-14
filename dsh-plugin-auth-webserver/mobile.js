@@ -359,6 +359,17 @@ html[data-dsh-auth-mobile] [data-dsh-mobile-center] header [class*='_sessionLogB
   display: none !important;
 }
 
+/* The floating right-panel launcher stands in for the header's own expand
+   control on a phone: one action, one glyph, and the floating one is the
+   touch-sized affordance. Keeping both put two identical panel glyphs a finger
+   apart — the header's sitting inside the padding reserved for the floating
+   one — so the header copy goes. Clicking the launcher still asks the header
+   control to expand whenever the panel is collapsed, so the action survives
+   this rule. */
+html[data-dsh-auth-mobile] [data-dsh-mobile-center] header [data-sidebar-right-expand] {
+  display: none !important;
+}
+
 html[data-dsh-auth-mobile] [data-dsh-mobile-details] > * {
   padding-bottom: env(safe-area-inset-bottom);
 }
