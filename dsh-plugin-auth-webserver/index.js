@@ -294,8 +294,23 @@ export const Config = z.object({
   allowInsecureSettingsEditor: z.boolean().default(false),
   /** User-visible WebAuthn relying-party name. */
   passkeyRpName: z.string().min(1).max(64).default(DEFAULT_PASSKEY_RP_NAME),
-  /** Optional stable WebAuthn relying-party ID; empty uses the request hostname. */
+  /** Optional stable WebAuthn relying-party ID; empty follows the effective origin. */
   passkeyRpId: z.string().default(""),
+  /**
+   * The origin the browser actually uses, for a deployment whose proxy reaches
+   * this gateway over plain HTTP or rewrites the Host header (for example
+   * `https://dsh.yiln.de`). WebAuthn compares this against the origin in the
+   * signed client data, so it must be the address in the browser's address bar.
+   */
+  passkeyOrigin: z.string().default(""),
+  /**
+   * Serve passkey options even when this gateway cannot verify TLS on the
+   * request. WebAuthn still refuses to run in an insecure *browser* context, so
+   * this only helps when the browser is on HTTPS and the last hop is not (a
+   * reverse proxy or tunnel); the configured `passkeyOrigin` is trusted in place
+   * of the request.
+   */
+  passkeyAllowInsecure: z.boolean().default(false),
   /** Absolute lifetime of a browser session. */
   sessionMaxAgeSeconds: z.natural().min(300).max(30 * 24 * 3600).default(DEFAULT_SESSION_MAX_AGE_SECONDS),
   /** Idle lifetime of a browser session; zero disables the idle check. */
@@ -426,7 +441,7 @@ function pickAddresses(config) {
 
 
 
-function sendUnauthorized(req, res, realm, rawPath, twoFactorEnabled = false, secure = false, passkeyAvailable = false) {
+function sendUnauthorized(req, res, realm, rawPath, twoFactorEnabled = false, secure = false, passkeyAvailable = false, passkeyInsecure = false) {
   const locale = selectLoginLocale(req);
   const limited = req[RATE_LIMITED_REQUEST] === true;
   if (limited) {
@@ -450,7 +465,7 @@ function sendUnauthorized(req, res, realm, rawPath, twoFactorEnabled = false, se
       "Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; worker-src 'self'; base-uri 'none'; frame-ancestors 'none'",
     });
     const requestHost = parseRequestHost(req.headers.host);
-    const passkeyForPage = passkeyAvailable && (secure || requestHost?.hostname === "localhost");
+    const passkeyForPage = passkeyAvailable && (secure || passkeyInsecure || requestHost?.hostname === "localhost");
     res.end(renderLoginPage(realm, twoFactorEnabled, locale, req.url, passkeyForPage));
     return;
   }
@@ -491,6 +506,8 @@ export async function apply(ctx, config) {
     allowInsecureSettingsEditor: config?.allowInsecureSettingsEditor ?? false,
     passkeyRpName: config?.passkeyRpName ?? DEFAULT_PASSKEY_RP_NAME,
     passkeyRpId: config?.passkeyRpId ?? "",
+    passkeyOrigin: config?.passkeyOrigin ?? "",
+    passkeyAllowInsecure: config?.passkeyAllowInsecure ?? false,
     sessionMaxAgeSeconds: config?.sessionMaxAgeSeconds ?? DEFAULT_SESSION_MAX_AGE_SECONDS,
     sessionIdleTimeoutSeconds: config?.sessionIdleTimeoutSeconds ?? DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS,
     loginMaxAttempts: config?.loginMaxAttempts ?? DEFAULT_LOGIN_MAX_ATTEMPTS,
@@ -632,6 +649,14 @@ export async function apply(ctx, config) {
   const envRequireHttps = parseBooleanEnv(process.env.DSH_AUTH_REQUIRE_HTTPS ?? process.env.AUTH_REQUIRE_HTTPS, "AUTH_REQUIRE_HTTPS");
   const envPasskeyRpId = process.env.DSH_AUTH_PASSKEY_RP_ID || process.env.AUTH_PASSKEY_RP_ID;
   const envPasskeyRpName = process.env.DSH_AUTH_PASSKEY_RP_NAME || process.env.AUTH_PASSKEY_RP_NAME;
+  const envPasskeyOrigin = process.env.DSH_AUTH_PASSKEY_ORIGIN || process.env.AUTH_PASSKEY_ORIGIN;
+  const envPasskeyAllowInsecure = parseBooleanEnv(
+    process.env.DSH_AUTH_PASSKEY_ALLOW_INSECURE ?? process.env.AUTH_PASSKEY_ALLOW_INSECURE,
+    "AUTH_PASSKEY_ALLOW_INSECURE",
+  );
+  const passkeyOriginConfig = String(envPasskeyOrigin || config.passkeyOrigin || "").trim();
+  const passkeyOrigin = passkeyOriginConfig === "" ? "" : parseAllowedOrigin(passkeyOriginConfig, 0);
+  const passkeyAllowInsecure = envPasskeyAllowInsecure ?? config.passkeyAllowInsecure;
   const allowedOriginValues = envAllowedOrigins ?? config.allowedOrigins;
   const allowedOrigins = allowedOriginValues.map((value, index) => parseAllowedOrigin(value, index));
   const derivedAllowedHosts = allowedOriginValues.map((value, index) => parseAllowedOriginHost(value, index));
@@ -686,9 +711,17 @@ export async function apply(ctx, config) {
     if (host === undefined) throw new Error("A valid Host is required for Passkeys");
     const localDevelopmentHost = host.hostname === "localhost";
     const secure = isSecureRequest(req) || localDevelopmentHost;
-    if (!secure) throw new Error("Passkeys require HTTPS (except localhost)");
-    const origin = new URL(`${isSecureRequest(req) ? "https" : "http"}://${host.host}`).origin;
-    const rpId = String(envPasskeyRpId || config.passkeyRpId || host.hostname).trim();
+    if (!secure && !passkeyAllowInsecure) {
+      throw new Error("Passkeys require HTTPS: this request arrived without TLS and no trusted proxy asserted X-Forwarded-Proto: https");
+    }
+    // WebAuthn binds a credential to the origin the browser shows. A proxy that
+    // reaches this gateway over plain HTTP, or rewrites the Host header, would
+    // otherwise hand out an origin the browser never sees — so the configured
+    // origin wins, and the RP ID follows it rather than the request host.
+    const origin = passkeyOrigin !== ""
+      ? passkeyOrigin
+      : new URL(`${isSecureRequest(req) ? "https" : "http"}://${host.host}`).origin;
+    const rpId = String(envPasskeyRpId || config.passkeyRpId || new URL(origin).hostname).trim();
     const rpName = String(envPasskeyRpName || config.passkeyRpName || DEFAULT_PASSKEY_RP_NAME).trim().slice(0, 64);
     if (rpId === "" || rpName === "") throw new Error("Passkey RP configuration is invalid");
     return { origin, rpId, rpName };
@@ -1299,7 +1332,7 @@ export async function apply(ctx, config) {
     }
     const current = credentials();
     sendUnauthorized(req, res, current.realm, rawPath, current.twoFactorEnabled,
-      isSecureRequest(req), passkeyStore.hasAny());
+      isSecureRequest(req), passkeyStore.hasAny(), passkeyAllowInsecure);
     return null;
   };
   const handleSettingsEditorDocument = async (req, res, rawPath) => {
@@ -2108,7 +2141,7 @@ export async function apply(ctx, config) {
           rawPath === "/_dsh/auth-webserver/sessions/revoke") {
           const auth = checkAuth(req);
           if (!auth) {
-            sendUnauthorized(req, res, credentials().realm, rawPath, credentials().twoFactorEnabled, isSecureRequest(req), passkeyStore.hasAny());
+            sendUnauthorized(req, res, credentials().realm, rawPath, credentials().twoFactorEnabled, isSecureRequest(req), passkeyStore.hasAny(), passkeyAllowInsecure);
             return;
           }
           if (rawPath === "/_dsh/auth-webserver/state") return handleState(req, res, auth);
@@ -2123,7 +2156,7 @@ export async function apply(ctx, config) {
         }
         const publicPwaRequest = isPublicPwaRequest(req, rawPath);
         if (!publicPwaRequest && !checkAuth(req)) {
-          sendUnauthorized(req, res, credentials().realm, rawPath, credentials().twoFactorEnabled, isSecureRequest(req), passkeyStore.hasAny());
+          sendUnauthorized(req, res, credentials().realm, rawPath, credentials().twoFactorEnabled, isSecureRequest(req), passkeyStore.hasAny(), passkeyAllowInsecure);
           return;
         }
         return proxyRequest(req, res, rawPath);

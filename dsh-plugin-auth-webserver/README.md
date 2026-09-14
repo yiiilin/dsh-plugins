@@ -45,7 +45,7 @@ authentication.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.7.9`.
+The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.8.0`.
 
 The plugin is plain JavaScript source; there is no build step.
 
@@ -67,7 +67,7 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.7.9.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.8.0.tgz
 ```
 
 The tarball already contains the runnable source. A user can also unpack it,
@@ -89,7 +89,7 @@ dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@latest
 Pin a version if you want reproducible installs:
 
 ```bash
-dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.7.9
+dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.8.0
 ```
 
 ### Direct GitHub
@@ -114,7 +114,7 @@ The plugin version is defined by the `version` field in `package.json`:
 ```json
 {
   "name": "@yiln-dsh/dsh-plugin-auth-webserver",
-  "version": "0.7.9"
+  "version": "0.8.0"
 }
 ```
 
@@ -126,8 +126,8 @@ Semantic versioning is recommended:
 
 The selected version is used for:
 
-- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.7.9`
-- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.7.9.tgz`
+- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.8.0`
+- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.8.0.tgz`
 - the metadata inside the tarball/npm package
 
 A `file:` source install uses the version that is currently in the source tree;
@@ -364,6 +364,14 @@ Edit `$DSH_HOME/profiles/web/cordis.patch.yml` after installing:
     allowInsecureSettingsEditor: false
     passkeyRpName: 'DeepSeek Harness'
     passkeyRpId: 'dsh.yiln.de'
+    # The origin the browser shows, when a proxy reaches this gateway over plain
+    # HTTP or rewrites Host. WebAuthn signs this origin into the credential, so
+    # it must be the public address, not the internal one.
+    passkeyOrigin: 'https://dsh.yiln.de'
+    # Serve passkey options even though this gateway cannot verify TLS on the
+    # request. The browser still needs a secure context, so this is for the
+    # HTTPS-proxy / tunnel hop, never for a plain-HTTP LAN address.
+    passkeyAllowInsecure: false
     sessionMaxAgeSeconds: 86400
     sessionIdleTimeoutSeconds: 43200
     loginMaxAttempts: 10
@@ -390,13 +398,27 @@ keeping the GUI usable over plain HTTP on LAN addresses.
 
 Passkeys additionally need a secure context the *gateway* can see: a request that
 arrived without TLS and without a trusted-proxy `X-Forwarded-Proto: https` is
-refused with "Passkeys require HTTPS (except localhost)", so passkey enrollment
-cannot succeed over a plain-HTTP LAN or VPN address even though the rest of the
-GUI works there. The refusal is logged at warn level with its transport facts
-(`tls`, `peer`, `trustedProxy`, `x-forwarded-proto`, `host`), and the Settings
-card now names the cause — insecure transport, rejected step-up credentials, or a
-cancelled prompt — instead of one generic retry line. The card also lists online
-clients below the passkey and two-factor sections.
+refused with a message naming the missing header, so by default passkey
+enrollment needs either TLS on the hop or a proxy that asserts it. The refusal is
+logged at warn level with its transport facts (`tls`, `peer`, `trustedProxy`,
+`x-forwarded-proto`, `host`), and the Settings card names the cause — insecure
+transport, rejected step-up credentials, or a cancelled prompt — instead of one
+generic retry line. The card also lists online clients below the passkey and
+two-factor sections.
+
+Two configuration fields lift the transport requirement for a deployment whose
+browser is on HTTPS but whose last hop is not:
+
+```yaml
+passkeyOrigin: 'https://dsh.yiln.de'   # what the browser shows, signed by WebAuthn
+passkeyAllowInsecure: true             # trust that origin instead of the request
+```
+
+`passkeyAllowInsecure` only relaxes what *this gateway* verifies. The browser
+still refuses to run WebAuthn in an insecure context, so a plain-HTTP LAN or VPN
+address cannot enroll a passkey however this is configured; opening the same page
+through the public HTTPS name can. The RP ID defaults to the effective origin's
+hostname, so a proxy that rewrites `Host` no longer poisons the credential.
 
 TOTP protects against password-only compromise; it does not encrypt the LAN
 connection. Put the gateway behind HTTPS or a trusted VPN/tunnel before using
