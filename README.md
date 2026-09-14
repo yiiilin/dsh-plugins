@@ -70,7 +70,7 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 
 | Package | Version |
 | --- | --- |
-| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.8.0` |
+| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.8.1` |
 | `@yiln-dsh/dsh-plugin-delete-session` | `0.4.2` |
 | `@yiln-dsh/dsh-plugin-file-message` | `0.3.3` |
 | `@yiln-dsh/dsh-plugin-git-graph` | `0.2.0` |

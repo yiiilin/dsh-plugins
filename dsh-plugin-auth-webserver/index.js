@@ -1465,8 +1465,12 @@ export async function apply(ctx, config) {
         address: clientAddress(req),
       });
       sendPasskeyJson(res, 200, { ok: true, challenge: options.challenge, options }, { "Content-Language": locale });
-    } catch {
-      sendPasskeyJson(res, 400, { ok: false, error: "Passkeys require HTTPS (except localhost)" }, { "Content-Language": locale });
+    } catch (error) {
+      reportPasskeyTransport(req, "login options", error);
+      sendPasskeyJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : "Passkey transport rejected",
+      }, { "Content-Language": locale });
     }
   };
 
@@ -1488,6 +1492,12 @@ export async function apply(ctx, config) {
       ? passkeyStore.credential(credentialId)
       : null;
     if (credential === null) {
+      ctx.logger?.warn?.(
+        "auth-webserver: passkey login sent an unknown credential id %s; stored ids differ (rpId=%s origin=%s)",
+        typeof credentialId === "string" ? credentialId.slice(0, 12) : typeof credentialId,
+        pending.rpId,
+        pending.origin,
+      );
       noteLoginFailure(req, "passkey");
       sendPasskeyJson(res, 401, { ok: false, error: "Passkey verification failed" }, { "Content-Language": locale });
       return;
@@ -1502,10 +1512,26 @@ export async function apply(ctx, config) {
         credential,
         requireUserVerification: true,
       });
-    } catch {
+    } catch (error) {
+      // The browser only learns "verification failed"; name the reason in the
+      // log, because a mismatched origin/RP and a stale counter are fixed in
+      // completely different places.
+      ctx.logger?.warn?.(
+        "auth-webserver: passkey login verification threw for credential %s (origin=%s rpId=%s): %s",
+        credentialId,
+        pending.origin,
+        pending.rpId,
+        error instanceof Error ? error.message : String(error),
+      );
       verification = { verified: false };
     }
     if (!verification.verified) {
+      ctx.logger?.warn?.(
+        "auth-webserver: passkey login refused for credential %s (origin=%s rpId=%s, userVerification required); the authenticator answered but the assertion did not verify",
+        credentialId,
+        pending.origin,
+        pending.rpId,
+      );
       noteLoginFailure(req, "passkey");
       sendPasskeyJson(res, 401, { ok: false, error: "Passkey verification failed" }, { "Content-Language": locale });
       return;

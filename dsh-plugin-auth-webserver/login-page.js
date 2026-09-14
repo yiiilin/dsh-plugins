@@ -21,7 +21,7 @@ const LOGIN_TEXT = Object.freeze({
     passkey: "Use a passkey",
     passkeyBusy: "Waiting for passkey...",
     passkeyUnsupported: "Passkeys require a supported browser and HTTPS.",
-    passkeyCancelled: "Passkey sign-in was cancelled.",
+    passkeyCancelled: "Passkey sign-in did not complete: this browser or device offered no passkey for this site, or the prompt was dismissed or timed out.",
     passkeyError: "Unable to sign in with a passkey. Please try again.",  }),
   zh: Object.freeze({
     htmlLang: "zh-CN",
@@ -43,7 +43,7 @@ const LOGIN_TEXT = Object.freeze({
     passkey: "使用通行密钥",
     passkeyBusy: "正在等待通行密钥...",
     passkeyUnsupported: "通行密钥需要支持的浏览器和 HTTPS。",
-    passkeyCancelled: "通行密钥登录已取消。",
+    passkeyCancelled: "通行密钥登录未完成：该浏览器/设备没有可用的通行密钥（或提示被取消、超时）。请确认通行密钥就存在这台设备或已同步到此，再重试。",
     passkeyError: "通行密钥登录失败，请重试。",  }),
 });
 
