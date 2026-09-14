@@ -78,8 +78,16 @@ latency for a trivial list.
 
 ## Install
 
+The published package is `@yiln-dsh/dsh-plugin-session-list-cache@0.1.1`.
+
 ```bash
-dsh plugin --profile web add /path/to/dsh-plugin-session-list-cache
+dsh plugin --profile web add @yiln-dsh/dsh-plugin-session-list-cache@latest
+```
+
+To install this working tree instead, point at it with a `file:` spec:
+
+```bash
+dsh plugin --profile web add file:/path/to/dsh-plugin-session-list-cache
 ```
 
 The running daemon loads plugins only at startup, so restart it afterwards.
