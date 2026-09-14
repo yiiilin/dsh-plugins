@@ -37,16 +37,12 @@ window.__ModuleLoader__.load({
 
     const LOCALE_NS = 'voice-input';
     const ZH_DICT = {
-      'button.idle': '语音输入',
       'button.record': '开始语音输入',
-      'button.stop': '结束并矫正',
       'button.starting': '正在准备语音识别',
       'button.downloading': '正在下载语音模型 {percent}%',
       'button.recording': '正在识别，点击结束并矫正',
       'button.correcting': '正在用非实时模型矫正',
-      'button.retry': '重试语音输入',
       'notice.download.start': '首次使用需要下载本地语音模型（约 400 MB），正在后台下载…',
-      'notice.download.progress': '正在下载本地语音模型 {percent}%',
       'notice.download.failed': '语音模型下载失败：{message}',
       'notice.ready': '语音模型已就绪',
       'notice.insecure': '当前地址（{origin}）不是安全上下文，浏览器不提供麦克风。请改用 HTTPS 或 http://localhost 打开。',
@@ -64,16 +60,12 @@ window.__ModuleLoader__.load({
       'notice.cancelled': '已取消本次语音输入。',
     };
     const EN_DICT = {
-      'button.idle': 'Voice input',
       'button.record': 'Start voice input',
-      'button.stop': 'Stop and correct',
       'button.starting': 'Preparing speech recognition',
       'button.downloading': 'Downloading speech models {percent}%',
       'button.recording': 'Listening — click to stop and correct',
       'button.correcting': 'Correcting with the non-realtime model',
-      'button.retry': 'Retry voice input',
       'notice.download.start': 'First use downloads the local speech models (~400 MB) in the background…',
-      'notice.download.progress': 'Downloading local speech models {percent}%',
       'notice.download.failed': 'Speech model download failed: {message}',
       'notice.ready': 'Speech models are ready',
       'notice.insecure': 'This address ({origin}) is not a secure context, so the browser exposes no microphone. Open the GUI over HTTPS or from http://localhost.',
