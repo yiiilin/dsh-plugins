@@ -45,7 +45,7 @@ authentication.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.7.6`.
+The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.7.7`.
 
 The plugin is plain JavaScript source; there is no build step.
 
@@ -67,7 +67,7 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.7.6.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.7.7.tgz
 ```
 
 The tarball already contains the runnable source. A user can also unpack it,
@@ -89,7 +89,7 @@ dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@latest
 Pin a version if you want reproducible installs:
 
 ```bash
-dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.7.6
+dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.7.7
 ```
 
 ### Direct GitHub
@@ -114,7 +114,7 @@ The plugin version is defined by the `version` field in `package.json`:
 ```json
 {
   "name": "@yiln-dsh/dsh-plugin-auth-webserver",
-  "version": "0.7.6"
+  "version": "0.7.7"
 }
 ```
 
@@ -126,8 +126,8 @@ Semantic versioning is recommended:
 
 The selected version is used for:
 
-- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.7.6`
-- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.7.6.tgz`
+- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.7.7`
+- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.7.7.tgz`
 - the metadata inside the tarball/npm package
 
 A `file:` source install uses the version that is currently in the source tree;
@@ -204,9 +204,12 @@ conversation to the full viewport, and exposes the existing sidebar and details
 controls as touch-friendly drawers (280px drawer matching the official expanded
 sidebar width; the drawer uses horizontal translation only, so opening mobile
 mode does not scale the page; the floating nav button hides while a drawer is
-open; the top-right panel button opens the right-side panel as a right drawer;
-a single session click selects the session and closes the left drawer; backdrop
-and nav follow the dark theme). The API and WebSocket URLs are unchanged.
+open; the top-right panel button mirrors the official right-panel control — its
+glyph and its localized name — and opens the right-side panel as a right drawer,
+expanding the panel when it is collapsed and closing the drawer again from the
+panel's own collapse control; a single session click selects the session and
+closes the left drawer; backdrop and nav follow the dark theme). The API and
+WebSocket URLs are unchanged.
 Set `mobileMode: off` in the row config to leave presentation entirely to the
 upstream frontend, or use `?dsh_mode=mobile` / `?dsh_mode=desktop` to override
 the automatic choice for one page load. `mobileBreakpoint` controls the

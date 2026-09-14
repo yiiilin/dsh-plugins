@@ -5,7 +5,11 @@ export const REMOTE_SETTINGS_MARKER = "dsh-auth-remote-settings";
 export const REMOTE_SETTINGS_GLOBAL = "__DSH_AUTH_REMOTE_SETTINGS__";
 export const REMOTE_SETTINGS_HTTP_GLOBAL = "__DSH_AUTH_REMOTE_SETTINGS_HTTP__";
 const PATCH_MARKER = "dsh-plugin-auth-webserver remote settings patch";
-const PERSISTENCE_ANCHOR = 'const persistence = ctx.remote.$host.isLoopback ? "host" : "memory";';
+// A loose pattern rather than a literal: the bundle is minified, so a reformat,
+// a quote-style change, or extra spacing must not silently disable this patch.
+// It still pins the exact expression, so a real upstream change fails the match
+// (and is reported at error level) instead of corrupting the bundle.
+const PERSISTENCE_ANCHOR = /const persistence\s*=\s*ctx\.remote\.\$host\.isLoopback\s*\?\s*(["'])host\1\s*:\s*(["'])memory\2\s*;/;
 
 /** Add the authenticated gateway marker to an index document once. */
 export function injectRemoteSettingsMarker(html, enabled, allowHttp = false) {
@@ -20,7 +24,7 @@ export function injectRemoteSettingsMarker(html, enabled, allowHttp = false) {
 export function patchSettingsClient(source) {
   if (typeof source !== "string") return null;
   if (source.includes(PATCH_MARKER)) return source;
-  if (!source.includes(PERSISTENCE_ANCHOR)) return null;
+  if (!PERSISTENCE_ANCHOR.test(source)) return null;
   const replacement = `const persistence = ctx.remote.$host.isLoopback || (typeof location !== "undefined" && globalThis.${REMOTE_SETTINGS_GLOBAL} === true && (location.protocol === "https:" || (location.protocol === "http:" && globalThis.${REMOTE_SETTINGS_HTTP_GLOBAL} === true))) ? "host" : "memory";\n\t\t/* ${PATCH_MARKER} */`;
   return source.replace(PERSISTENCE_ANCHOR, replacement);
 }
@@ -49,7 +53,15 @@ export function registerRemoteSettingsClientPatch(ctx) {
     return false;
   }
   if (body === null) {
-    ctx.logger?.warn?.("auth-webserver: settings client bundle shape changed");
+    // Remote settings exist only inside this patch, so a shape change silently
+    // disables Settings editing from every non-loopback origin. Report at error
+    // level and name the artifact to re-check; a warning here is what let this
+    // degrade without an actionable symptom before.
+    ctx.logger?.error?.(
+      "auth-webserver: the shipped Settings client no longer matches the anchor this patch rewrites, so Host-backed settings are NOT enabled for remote origins on this run. Re-check PERSISTENCE_ANCHOR in settings-client-patch.js against %s, which was read from %s",
+      SETTINGS_CLIENT_PACKAGE,
+      clientPath,
+    );
     return false;
   }
   const ownsPatch = body !== original;

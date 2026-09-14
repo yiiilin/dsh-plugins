@@ -470,6 +470,7 @@ const MOBILE_LAYOUT_SCRIPT = String.raw`(function () {
   var backdrop;
   var lastFrame;
   var lastNavLabel;
+  var lastRightSource;
   var lastRightLabel;
   var interactionSidebar;
   var interactionDetails;
@@ -506,20 +507,74 @@ const MOBILE_LAYOUT_SCRIPT = String.raw`(function () {
       || details.querySelector("button[aria-label*='收起']");
   }
 
-  function rightPanelSource(frame) {
-    var details = frame ? frame.querySelector("[data-dsh-mobile-details]") : null;
-    if (!details) return null;
-    return details.querySelector("button[aria-label*='Expand right panel' i]")
-      || details.querySelector("button[aria-label*='展开右侧面板']")
-      || details.querySelector("button[class*='dsh-rp-rail-button']")
-      || details.querySelector("[role='tablist'] button");
+  function rightPanelColumn(frame) {
+    return frame ? frame.querySelector("[data-dsh-mobile-details]") : null;
   }
 
-  function rightPanelExpandSource(frame) {
-    var details = frame ? frame.querySelector("[data-dsh-mobile-details]") : null;
+  /* The right Sidebar's own markers, newest first: the product panel root, the
+     expand control it mounts only while collapsed, and the Chrome collapse
+     control that rides the dock's tab strip. The legacy "dsh-rp-*" hooks are the
+     adapter's own previous right panel and stay last for older builds. */
+  function rightPanelRoot(frame) {
+    var details = rightPanelColumn(frame);
     if (!details) return null;
-    return details.querySelector("button[aria-label*='Expand right panel' i]")
+    return details.querySelector("[data-sidebar-right-panel]")
+      || rightPanelSource(frame);
+  }
+
+  /**
+   * The panel's own control the floating launcher mirrors for its glyph — the
+   * expand control while the panel is collapsed, the collapse control while it
+   * is expanded (the same panel glyph, mirrored onto the right edge). Never a
+   * content button: an empty pane's first [role='tablist'] button is the
+   * dock's add-tab control, and cloning that is how this launcher grew a "+"
+   * that opened the panel instead of adding a tab.
+   */
+  function rightPanelSource(frame) {
+    var details = rightPanelColumn(frame);
+    if (!details) return null;
+    return details.querySelector("button[data-sidebar-right-expand]")
+      || details.querySelector("button[data-sidebar-right-toggle]")
+      || details.querySelector("button[aria-label*='Open right sidebar' i]")
+      || details.querySelector("button[aria-label*='打开右侧边栏']")
+      || details.querySelector("button[aria-label*='Collapse right sidebar' i]")
+      || details.querySelector("button[aria-label*='收起右侧边栏']")
+      || details.querySelector("button[aria-label*='Expand right panel' i]")
+      || details.querySelector("button[aria-label*='展开右侧面板']")
+      || details.querySelector("button[class*='dsh-rp-rail-button']");
+  }
+
+  /**
+   * The control the launcher stands in for to make the panel reachable. The
+   * product mounts its expand control only while the panel is collapsed and a
+   * conversation header exists to carry it, so the panel's own strip toggle —
+   * the same action, one click — backs it up where no header does (the blank
+   * Session's Hero), guarded to the collapsed panel so it can never close one.
+   * @returns the button to click, or null while the panel is already open.
+   */
+  function rightPanelExpandSource(frame) {
+    var details = rightPanelColumn(frame);
+    if (!details) return null;
+    var expand = details.querySelector("button[data-sidebar-right-expand]")
+      || details.querySelector("button[aria-label*='Open right sidebar' i]")
+      || details.querySelector("button[aria-label*='打开右侧边栏']")
+      || details.querySelector("button[aria-label*='Expand right panel' i]")
       || details.querySelector("button[aria-label*='展开右侧面板']");
+    if (expand) return expand;
+    var panel = details.querySelector("[data-sidebar-right-panel]");
+    if (!panel || panel.hasAttribute("data-sidebar-right-open")) return null;
+    return details.querySelector("button[data-sidebar-right-toggle]");
+  }
+
+  /**
+   * The launcher's accessible name. This adapter is a plain page script outside
+   * the client locale registry, so it follows the language the client locale
+   * service keeps on <html lang> — the same language the product's own header
+   * controls render in — and names the one action the button performs.
+   */
+  function rightPanelLabel() {
+    var language = String(document.documentElement.lang || navigator.language || "");
+    return /^zh\b/i.test(language) ? "打开右侧边栏" : "Open right sidebar";
   }
 
   function panelSessionRow(target, sidebar) {
@@ -644,11 +699,20 @@ const MOBILE_LAYOUT_SCRIPT = String.raw`(function () {
     if (interactionDetails) interactionDetails.addEventListener("click", onDetailsClick, true);
   }
 
+  /* The drawer is only the mobile presentation of the right Sidebar column: a
+     control that collapses the panel itself has to close the drawer too, or the
+     column stays revealed around a panel that slid away. The same control opens
+     a collapsed panel — the launcher leans on that — so only a panel that is
+     open before the click counts as closing it. */
   function onDetailsClick(event) {
     var button = event.target && typeof event.target.closest === "function"
       ? event.target.closest("button")
       : null;
-    if (!button || !button.classList.contains("dsh-rp-icon-button")) return;
+    if (!button) return;
+    if (!button.classList.contains("dsh-rp-icon-button") && !button.hasAttribute("data-sidebar-right-toggle")) return;
+    var column = rightPanelColumn(frameOf());
+    var panel = column ? column.querySelector("[data-sidebar-right-panel]") : null;
+    if (panel && !panel.hasAttribute("data-sidebar-right-open")) return;
     window.setTimeout(function () {
       if (!isMobile()) return;
       mobileDetailsOpen = false;
@@ -670,10 +734,7 @@ const MOBILE_LAYOUT_SCRIPT = String.raw`(function () {
   }
 
   function openRightPanel(frame) {
-    var details = frame ? frame.querySelector("[data-dsh-mobile-details]") : null;
-    if (!details) return;
-    var source = rightPanelSource(frame);
-    if (!source) return;
+    if (!rightPanelRoot(frame)) return;
     mobileDetailsOpen = true;
     var expand = rightPanelExpandSource(frame);
     if (expand && typeof expand.click === "function") expand.click();
@@ -682,6 +743,7 @@ const MOBILE_LAYOUT_SCRIPT = String.raw`(function () {
 
   function copyRightIcon(source) {
     while (rightNav.firstChild) rightNav.removeChild(rightNav.firstChild);
+    if (!source) return;
     var icon = source.querySelector("svg") || source;
     if (icon && icon.tagName && icon.tagName.toLowerCase() === "svg") rightNav.appendChild(icon.cloneNode(true));
   }
@@ -790,6 +852,7 @@ const MOBILE_LAYOUT_SCRIPT = String.raw`(function () {
       if (rightNav) rightNav.hidden = true;
       if (backdrop) backdrop.hidden = true;
       lastRightLabel = null;
+      lastRightSource = null;
       return;
     }
 
@@ -826,18 +889,17 @@ const MOBILE_LAYOUT_SCRIPT = String.raw`(function () {
     nav.hidden = source === null;
 
     var rightSource = rightPanelSource(frame);
-    var rightLabel = rightSource ? rightSource.getAttribute("aria-label") : null;
-    if (rightSource && rightLabel !== lastRightLabel) {
+    if (rightSource !== lastRightSource) {
       copyRightIcon(rightSource);
+      lastRightSource = rightSource;
+    }
+    var rightLabel = rightPanelRoot(frame) === null ? null : rightPanelLabel();
+    if (rightLabel !== lastRightLabel) {
       if (rightLabel) rightNav.setAttribute("aria-label", rightLabel);
       else rightNav.removeAttribute("aria-label");
       lastRightLabel = rightLabel;
-    } else if (!rightSource) {
-      while (rightNav.firstChild) rightNav.removeChild(rightNav.firstChild);
-      rightNav.removeAttribute("aria-label");
-      lastRightLabel = null;
     }
-    rightNav.hidden = rightSource === null || sideOpen || detailsOpen;
+    rightNav.hidden = rightLabel === null || sideOpen || detailsOpen;
     backdrop.hidden = !sideOpen && !detailsOpen;
   }
 

@@ -162,3 +162,44 @@ test("copies only the official panel icon into the floating mobile button", () =
   assert.ok(script.includes('svg[class*="panelIcon"]'));
   assert.ok(!script.includes("Array.prototype.forEach.call(source.childNodes"));
 });
+
+test("mirrors the right Sidebar's own control, never a tab-strip button", () => {
+  const { script } = mobileLayoutPayload();
+  const code = script.replace(/\/\*[\s\S]*?\*\//gu, "");
+  // An empty pane's first [role='tablist'] button is the dock's add-tab "+":
+  // cloning it gave the launcher a "+" that opened the panel instead of a tab.
+  assert.ok(!code.includes("[role='tablist'] button"));
+  assert.ok(code.includes("button[data-sidebar-right-expand]"));
+  assert.ok(code.includes("button[data-sidebar-right-toggle]"));
+  assert.ok(code.includes('"[data-sidebar-right-panel]"'));
+});
+
+test("names the right-panel launcher from the document language", () => {
+  const { script } = mobileLayoutPayload();
+  assert.ok(script.includes("document.documentElement.lang"));
+  assert.ok(script.includes("打开右侧边栏"));
+  assert.ok(script.includes("Open right sidebar"));
+});
+
+test("keeps the launcher while the panel's expand control is unmounted", () => {
+  const { script } = mobileLayoutPayload();
+  // The product mounts its expand control only while the panel is collapsed,
+  // so the panel root — not that control — decides whether the launcher exists.
+  assert.ok(script.includes("function rightPanelRoot"));
+  assert.ok(script.includes("rightNav.hidden = rightLabel === null || sideOpen || detailsOpen"));
+});
+
+test("expands a collapsed panel the drawer reveals", () => {
+  const { script } = mobileLayoutPayload();
+  const code = script.replace(/\/\*[\s\S]*?\*\//gu, "");
+  // Without a conversation header the expand control never mounts, so the
+  // panel's own strip toggle is the way back into the collapsed panel — and
+  // only ever while it is collapsed.
+  assert.ok(code.includes('panel.hasAttribute("data-sidebar-right-open")'));
+  assert.ok(code.includes('details.querySelector("button[data-sidebar-right-toggle]")'));
+});
+
+test("closes the drawer when the panel's own collapse control is used", () => {
+  const { script } = mobileLayoutPayload();
+  assert.ok(script.includes('button.hasAttribute("data-sidebar-right-toggle")'));
+});
