@@ -29,13 +29,11 @@ window.__ModuleLoader__.load({
       "loading.metadata": "正在恢复文件消息…",
       "loading.preview": "加载图片预览…",
       "loading.markdown": "正在加载 Markdown 预览…",
-      "markdown.previewFailed": "Markdown 预览不可用",
       "markdown.preview": "Markdown 预览",
       "send.failed": "发送失败",
       "meta.unavailable": "文件消息元数据不可用",
       "view.original": "查看原图",
       "download.withName": "下载 {name}",
-      "preparing.withName": "准备下载 {name}",
       sending: "正在发送 {name}…",
     };
     const EN_DICT = {
@@ -46,13 +44,11 @@ window.__ModuleLoader__.load({
       "loading.preview": "Loading image preview…",
       "loading.metadata": "Restoring file message…",
       "loading.markdown": "Loading markdown preview…",
-      "markdown.previewFailed": "Markdown preview unavailable",
       "markdown.preview": "Markdown preview",
       "send.failed": "Failed to send",
       "meta.unavailable": "File message metadata unavailable",
       "view.original": "View original",
       "download.withName": "Download {name}",
-      "preparing.withName": "Preparing {name}",
       sending: "Sending {name}…",
     };
 
