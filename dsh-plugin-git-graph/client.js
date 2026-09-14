@@ -24,68 +24,18 @@ window.__ModuleLoader__.load({
 
 		const LOCALE_NS = "git-graph";
 		/** Tab-system identity for each contributed page kind (unique across registrations). */
-		const FILES_TAB_ID = "@yiln-dsh/dsh-plugin-file-explorer/files";
 		const GIT_TAB_ID = "@yiln-dsh/dsh-plugin-file-explorer/git";
 		/** Page kinds opened through `ctx.sidebarRight.openTab`. */
 		const FILES_TAB_KIND = "files";   // the product's Files page kind: an extension takes it over
 		const GIT_TAB_KIND = "file-explorer.git";
 		const ZH_DICT = {
-			"files.title": "文件",
+			"error.http": "Git 图谱服务返回 HTTP {status}。",
 			"git.title": "Git 图谱",
-			"workspace": "工作区",
 			"noSession": "当前没有打开的会话",
-			"guide.files.description": "浏览工作区文件并预览内容",
 			"guide.git.description": "查看提交图谱与文件改动",
 			"files.refresh": "刷新",
-			"files.refreshList": "刷新文件列表",
 			"git.refreshGraph": "刷新图谱",
-			"files.up": "上一级",
-			"files.goUp": "返回上级目录",
-			"files.delete": "删除",
-			"files.deleteFile": "删除 {name}",
-			"files.confirmDelete": "确认删除 {name}",
-			"files.clickAgain": "再次点击确认删除",
-			"files.deleteFailed": "删除失败",
-			"files.view": "查看",
-			"files.viewFile": "查看 {name}",
-			"files.download": "下载",
-			"files.downloadFile": "下载 {name}",
-			"files.downloadFailed": "下载失败",
-			"files.closePreview": "关闭预览",
-			"files.preview": "预览",
-			"files.fullscreen": "全屏",
-			"files.enterFullscreen": "进入全屏",
-			"files.exitFullscreen": "退出全屏",
-			"files.imageControls": "图片控制",
-			"files.zoomIn": "放大",
-			"files.zoomOut": "缩小",
-			"files.resetZoom": "重置缩放",
-			"files.resetImageZoom": "重置图片缩放",
-			"files.imagePreview": "图片预览",
-			"files.previewDialog": "文件预览",
-			"files.workspaceRoot": "工作区根目录",
-			"files.loading": "加载中…",
 			"git.loading": "加载中…",
-			"files.empty": "空文件夹",
-			"files.listFailed": "文件列表加载失败",
-			"files.readFailed": "文件读取失败",
-			"files.imageMeta": "图片 / {size}",
-			"files.binary": "二进制文件",
-			"files.fileTooLarge": "文件过大，无法在此预览",
-			"files.imageTooLarge": "图片过大，无法在此预览",
-			"files.noPreview": "（无预览）",
-			"files.binaryNoPreview": "二进制文件无法预览",
-			"files.edit": "编辑",
-			"files.editFile": "编辑 {name}",
-			"files.save": "保存",
-			"files.saving": "保存中…",
-			"files.saved": "已保存",
-			"files.saveFailed": "保存失败",
-			"files.dirty": "有未保存的更改",
-			"files.markdownRender": "渲染预览",
-			"files.markdownSource": "源代码",
-			"files.markdownRenderFailed": "Markdown 渲染失败",
-			"files.discardConfirm": "有未保存的更改，确定放弃并关闭吗？",
 			"files.editorLoadFailed": "编辑器加载失败",
 			"git.logFailed": "Git 提交记录加载失败",
 			"git.commitFailed": "提交详情加载失败",
@@ -122,62 +72,13 @@ window.__ModuleLoader__.load({
 			"time.yearsAgo": "{n} 年前",
 		};
 		const EN_DICT = {
-			"files.title": "Files",
+			"error.http": "The git-graph service answered HTTP {status}.",
 			"git.title": "Git Graph",
-			"workspace": "Workspace",
 			"noSession": "No session is open",
-			"guide.files.description": "Browse workspace files and preview their contents",
 			"guide.git.description": "Inspect the commit graph and per-file changes",
 			"files.refresh": "Refresh",
-			"files.refreshList": "Refresh file list",
 			"git.refreshGraph": "Refresh graph",
-			"files.up": "Up",
-			"files.goUp": "Go to parent directory",
-			"files.delete": "Delete",
-			"files.deleteFile": "Delete {name}",
-			"files.confirmDelete": "Confirm deleting {name}",
-			"files.clickAgain": "Click again to delete",
-			"files.deleteFailed": "Delete failed",
-			"files.view": "View",
-			"files.viewFile": "View {name}",
-			"files.download": "Download",
-			"files.downloadFile": "Download {name}",
-			"files.downloadFailed": "Download failed",
-			"files.closePreview": "Close preview",
-			"files.preview": "Preview",
-			"files.fullscreen": "Fullscreen",
-			"files.enterFullscreen": "Enter fullscreen",
-			"files.exitFullscreen": "Exit fullscreen",
-			"files.imageControls": "Image controls",
-			"files.zoomIn": "Zoom in",
-			"files.zoomOut": "Zoom out",
-			"files.resetZoom": "Reset zoom",
-			"files.resetImageZoom": "Reset image zoom",
-			"files.imagePreview": "Image preview",
-			"files.previewDialog": "File preview",
-			"files.workspaceRoot": "workspace root",
-			"files.loading": "Loading...",
 			"git.loading": "Loading…",
-			"files.empty": "Empty folder",
-			"files.listFailed": "Failed to list files",
-			"files.readFailed": "Failed to read file",
-			"files.imageMeta": "Image / {size}",
-			"files.binary": "Binary",
-			"files.fileTooLarge": "File is too large to preview here",
-			"files.imageTooLarge": "Image is too large to preview here",
-			"files.noPreview": "(No preview)",
-			"files.binaryNoPreview": "Binary file cannot be previewed",
-			"files.edit": "Edit",
-			"files.editFile": "Edit {name}",
-			"files.save": "Save",
-			"files.saving": "Saving…",
-			"files.saved": "Saved",
-			"files.saveFailed": "Save failed",
-			"files.dirty": "Unsaved changes",
-			"files.markdownRender": "Rendered preview",
-			"files.markdownSource": "Source",
-			"files.markdownRenderFailed": "Failed to render markdown",
-			"files.discardConfirm": "You have unsaved changes. Discard them and close?",
 			"files.editorLoadFailed": "Editor failed to load",
 			"git.logFailed": "Failed to load git log",
 			"git.commitFailed": "Failed to load commit",
@@ -1122,12 +1023,26 @@ window.__ModuleLoader__.load({
 				try {
 					data = await response.json();
 				} catch {
-					throw new Error(`file explorer API returned HTTP ${response.status}`);
+					data = undefined;
 				}
-				if (!response.ok || data.ok === false) {
-					throw new Error(data.error || `file explorer API returned HTTP ${response.status}`);
+				if (!response.ok || data?.ok === false) {
+					// Carry the facts, not a rendered sentence: this helper has no
+					// locale in scope, and the status line is the only place that
+					// knows which language the user is reading. The server's own
+					// message goes to the console for diagnosis.
+					const error = new Error(`git-graph API ${method} returned HTTP ${response.status}`);
+					error.dshStatus = response.status;
+					error.dshServerError = typeof data?.error === "string" ? data.error : undefined;
+					if (error.dshServerError !== undefined) console.warn("git-graph:", error.message, error.dshServerError);
+					throw error;
 				}
 				return data;
+			}
+
+			/** Render a thrown value for a status line, localizing a transport status. */
+			function errorText(error, t) {
+				if (error && typeof error.dshStatus === 'number') return t('error.http', { status: error.dshStatus });
+				return error && typeof error.message === 'string' ? error.message : String(error);
 			}
 
 			// --- monaco editor loading --------------------------------------------
@@ -1276,7 +1191,7 @@ window.__ModuleLoader__.load({
 							if (!disposed) {
 								const el = hostRef.current
 								if (el) {
-									el.textContent = t('files.editorLoadFailed') + ': ' + (error && typeof error.message === 'string' ? error.message : String(error))
+									el.textContent = t('files.editorLoadFailed') + ': ' + errorText(error, t)
 									el.style.display = 'flex'
 									el.style.alignItems = 'center'
 									el.style.justifyContent = 'center'
@@ -1697,7 +1612,7 @@ window.__ModuleLoader__.load({
 							}
 						})
 						.catch((err) => {
-							if (!cancelled) setError(err && typeof err.message === 'string' ? err.message : String(err))
+							if (!cancelled) setError(errorText(err, t))
 						})
 						.finally(() => {
 							if (!cancelled) setLoading(false)
@@ -1723,7 +1638,7 @@ window.__ModuleLoader__.load({
 							}
 						})
 						.catch((err) => {
-							if (!cancelled) setDetails((prev) => ({ ...prev, [selected]: { error: err && typeof err.message === 'string' ? err.message : String(err) } }))
+							if (!cancelled) setDetails((prev) => ({ ...prev, [selected]: { error: errorText(err, t) } }))
 						})
 					return () => { cancelled = true }
 				}, [selected, cwd])
@@ -1745,7 +1660,7 @@ window.__ModuleLoader__.load({
 							}
 						})
 						.catch((err) => {
-							setDiff({ title: file.path, hash, loading: false, text: null, error: err && typeof err.message === 'string' ? err.message : String(err) })
+							setDiff({ title: file.path, hash, loading: false, text: null, error: errorText(err, t) })
 						})
 				}
 
