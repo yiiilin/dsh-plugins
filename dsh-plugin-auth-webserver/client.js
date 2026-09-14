@@ -174,6 +174,8 @@ window.__ModuleLoader__.load({
 			"passkeys.error": "通行密钥操作失败，请重试。",
 			"passkeys.cancelled": "通行密钥操作已取消。",
 			"passkeys.unsupported": "当前浏览器或连接不支持通行密钥。",
+			"passkeys.insecure": "通行密钥需要 HTTPS 连接（localhost 除外）。请改用 https:// 地址打开本页面后重试。",
+			"passkeys.credentials": "当前密码或动态验证码不正确，通行密钥操作已被拒绝。",
 			"passkeys.name": "名称",
 			"passkeys.namePlaceholder": "例如：我的 iPhone",
 			"passkeys.add": "添加通行密钥",
@@ -270,6 +272,8 @@ window.__ModuleLoader__.load({
 			"passkeys.error": "Passkey operation failed. Please try again.",
 			"passkeys.cancelled": "Passkey operation was cancelled.",
 			"passkeys.unsupported": "This browser or connection does not support passkeys.",
+			"passkeys.insecure": "Passkeys need an HTTPS connection (localhost excepted). Reopen this page over https:// and try again.",
+			"passkeys.credentials": "The current password or authenticator code was rejected, so the passkey operation was refused.",
 			"passkeys.name": "Name",
 			"passkeys.namePlaceholder": "For example: My iPhone",
 			"passkeys.add": "Add passkey",
@@ -308,6 +312,34 @@ window.__ModuleLoader__.load({
 			return template.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match);
 		}
 
+		/**
+		 * A failed gateway call carrying its status and the server's own message.
+		 * Callers have the locale in scope and the rendered sentence is theirs to
+		 * choose, so the transport carries facts and the server text stays a
+		 * console diagnostic rather than a line in the card.
+		 */
+		function httpFailure(status, serverError) {
+			const error = new Error(serverError || `auth webserver API returned HTTP ${status}`);
+			error.dshStatus = status;
+			error.dshServerError = typeof serverError === "string" ? serverError : undefined;
+			if (error.dshServerError !== undefined) console.warn("auth-webserver:", error.message);
+			return error;
+		}
+
+		/**
+		 * Name a failed passkey operation for the user: a cancelled prompt, a
+		 * transport the browser or the gateway refuses, wrong step-up credentials,
+		 * or anything else.
+		 */
+		function passkeyFailureMessage(cause, t) {
+			if (cause?.name === "NotAllowedError" || cause?.message === "cancelled") return t("passkeys.cancelled");
+			const server = typeof cause?.dshServerError === "string" ? cause.dshServerError : "";
+			if (cause?.dshStatus === 403) return t("passkeys.credentials");
+			if (cause?.dshStatus === 400 && /https|host|rp |rp configuration/i.test(server)) return t("passkeys.insecure");
+			if (cause?.name === "SecurityError") return t("passkeys.insecure");
+			return t("passkeys.error");
+		}
+
 		async function api(path, payload) {
 			const headers = { "content-type": "application/json" };
 			const csrf = document.cookie.split(";").map((part) => part.trim()).find((part) =>
@@ -330,10 +362,10 @@ window.__ModuleLoader__.load({
 			try {
 				data = await response.json();
 			} catch {
-				throw new Error(`auth webserver API returned HTTP ${response.status}`);
+				throw httpFailure(response.status, undefined);
 			}
 			if (!response.ok || data.ok === false) {
-				throw new Error(data.error || `auth webserver API returned HTTP ${response.status}`);
+				throw httpFailure(response.status, typeof data.error === "string" ? data.error : undefined);
 			}
 			return data;
 		}
@@ -783,8 +815,8 @@ window.__ModuleLoader__.load({
 					setCurrentPassword("");
 					setCurrentOtp("");
 					setNotice(t("notice.passkeyRevoked"));
-				} catch {
-					setError(t("passkeys.error"));
+				} catch (cause) {
+					setError(passkeyFailureMessage(cause, t));
 				} finally {
 					setPasskeyBusy(false);
 				}
@@ -792,6 +824,13 @@ window.__ModuleLoader__.load({
 
 			const registerPasskey = async () => {
 				if (passkeyBusy || disabled || passkeyName.trim() === "") return;
+				// WebAuthn only exists in a secure context, and a passkey created
+				// over plain HTTP could never be used again: name that transport
+				// before the gateway has to refuse it with a generic status.
+				if (window.isSecureContext === false) {
+					setError(t("passkeys.insecure"));
+					return;
+				}
 				if (typeof window.PublicKeyCredential !== "function" || !navigator.credentials?.create) {
 					setError(t("passkeys.unsupported"));
 					return;
@@ -814,9 +853,7 @@ window.__ModuleLoader__.load({
 					setCurrentOtp("");
 					setNotice(t("notice.passkeyRegistered"));
 				} catch (cause) {
-					setError(cause?.name === "NotAllowedError" || cause?.message === "cancelled"
-						? t("passkeys.cancelled")
-						: t("passkeys.error"));
+					setError(passkeyFailureMessage(cause, t));
 				} finally {
 					setPasskeyBusy(false);
 				}
@@ -1098,38 +1135,6 @@ window.__ModuleLoader__.load({
 									React.createElement("span", { className: "daw-hint" }, t("realm.hint")),
 								),
 							),
-							React.createElement(
-								"section",
-								{ className: "daw-clients", "aria-label": t("clients.title") },
-								React.createElement(
-									"div",
-									{ className: "daw-clientsHeader" },
-									React.createElement("div", { className: "daw-clientsTitle" }, t("clients.title")),
-									React.createElement("button", {
-										type: "button",
-										className: "daw-btn ghost",
-										disabled: disabled || clientsLoading || clientActionId !== null,
-										onClick: () => void refreshClients(),
-									}, t("clients.refresh")),
-								),
-								clientsLoading
-									? React.createElement("div", { className: "daw-clientState" }, t("clients.loading"))
-									: clientsError
-										? React.createElement(
-											"div",
-											{ className: "daw-actions" },
-											React.createElement("div", { className: "daw-clientState" }, t("clients.error")),
-											React.createElement("button", {
-												type: "button",
-												className: "daw-btn ghost",
-												disabled: disabled || clientActionId !== null,
-												onClick: () => void refreshClients(),
-											}, t("clients.retry")),
-										)
-										: clients.length === 0
-											? React.createElement("div", { className: "daw-clientState" }, t("clients.empty"))
-											: React.createElement("div", { className: "daw-clientList" }, clients.map(renderClient)),
-							),
 								React.createElement(
 									"section",
 									{ className: "daw-passkeys", "aria-label": t("passkeys.title") },
@@ -1223,6 +1228,38 @@ window.__ModuleLoader__.load({
 											React.createElement("button", { type: "button", className: "daw-btn ghost", disabled: disabled || twoFactorLocked || currentPassword === "" || currentOtp === "", onClick: () => void disableTwoFactor() }, t("twoFactor.disableButton")),
 										)
 										: React.createElement("button", { type: "button", className: "daw-btn primary", disabled: disabled || twoFactorLocked || !meta?.hasPassword, onClick: () => void startTwoFactor() }, t("twoFactor.setupButton")),
+							),
+							React.createElement(
+								"section",
+								{ className: "daw-clients", "aria-label": t("clients.title") },
+								React.createElement(
+									"div",
+									{ className: "daw-clientsHeader" },
+									React.createElement("div", { className: "daw-clientsTitle" }, t("clients.title")),
+									React.createElement("button", {
+										type: "button",
+										className: "daw-btn ghost",
+										disabled: disabled || clientsLoading || clientActionId !== null,
+										onClick: () => void refreshClients(),
+									}, t("clients.refresh")),
+								),
+								clientsLoading
+									? React.createElement("div", { className: "daw-clientState" }, t("clients.loading"))
+									: clientsError
+										? React.createElement(
+											"div",
+											{ className: "daw-actions" },
+											React.createElement("div", { className: "daw-clientState" }, t("clients.error")),
+											React.createElement("button", {
+												type: "button",
+												className: "daw-btn ghost",
+												disabled: disabled || clientActionId !== null,
+												onClick: () => void refreshClients(),
+											}, t("clients.retry")),
+										)
+										: clients.length === 0
+											? React.createElement("div", { className: "daw-clientState" }, t("clients.empty"))
+											: React.createElement("div", { className: "daw-clientList" }, clients.map(renderClient)),
 							),
 							error ? React.createElement("div", { className: "daw-error" }, error) : null,
 							notice ? React.createElement("div", { className: "daw-notice" }, notice) : null,

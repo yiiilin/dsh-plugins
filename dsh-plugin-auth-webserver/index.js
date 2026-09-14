@@ -694,6 +694,25 @@ export async function apply(ctx, config) {
     return { origin, rpId, rpName };
   };
 
+  /**
+   * Report why a passkey request was refused before WebAuthn could run. The
+   * browser only sees the HTTP status, so the transport facts — TLS, peer,
+   * trusted-proxy verdict, forwarded proto — are recorded here to be read from
+   * the log instead of guessed at.
+   */
+  const reportPasskeyTransport = (req, stage, error) => {
+    ctx.logger?.warn?.(
+      "auth-webserver: passkey %s refused: %s (tls=%s peer=%s trustedProxy=%s x-forwarded-proto=%s host=%s)",
+      stage,
+      error instanceof Error ? error.message : String(error),
+      req.socket?.encrypted === true,
+      normalizeRemoteAddress(req.socket?.remoteAddress),
+      isTrustedProxy(req),
+      req.headers["x-forwarded-proto"],
+      req.headers.host,
+    );
+  };
+
   const resolved = () => {
     const value = settingsScope?.get() ?? {
       username: config.username,
@@ -1491,6 +1510,12 @@ export async function apply(ctx, config) {
     let webauthn;
     try {
       webauthn = passkeyContext(req);
+    } catch (error) {
+      reportPasskeyTransport(req, "registration options", error);
+      sendPasskeyJson(res, 400, { ok: false, error: error instanceof Error ? error.message : "Passkey transport rejected" });
+      return;
+    }
+    try {
       const options = await generateRegistrationOptions({
         rpName: webauthn.rpName,
         rpID: webauthn.rpId,
@@ -1514,8 +1539,9 @@ export async function apply(ctx, config) {
         address: clientAddress(req),
       });
       sendPasskeyJson(res, 200, { ok: true, challenge: options.challenge, options });
-    } catch {
-      sendPasskeyJson(res, 400, { ok: false, error: "Passkeys require HTTPS (except localhost)" });
+    } catch (error) {
+      ctx.logger?.error?.("auth-webserver: passkey registration options could not be generated", error);
+      sendPasskeyJson(res, 500, { ok: false, error: "Passkey registration options could not be generated" });
     }
   };
 

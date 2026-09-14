@@ -129,3 +129,25 @@ test("renders passkey enrollment and metadata through localized keys", () => {
     assert.ok(CLIENT_SOURCE.includes(`t("${key}"`), `${key} must be read through the locale helper`);
   }
 });
+
+test("lists online clients below the passkey and two-factor sections", () => {
+  const clients = CLIENT_SOURCE.indexOf('{ className: "daw-clients"');
+  const passkeys = CLIENT_SOURCE.indexOf('{ className: "daw-passkeys"');
+  const twoFactor = CLIENT_SOURCE.indexOf('{ className: "daw-twoFactor"');
+  const footer = CLIENT_SOURCE.indexOf('{ className: "daw-cardFooter" }');
+  assert.notEqual(clients, -1, "the clients section must exist");
+  assert.notEqual(passkeys, -1, "the passkeys section must exist");
+  assert.ok(passkeys < clients, "passkeys render above the client list");
+  assert.ok(twoFactor < clients, "two-factor renders above the client list");
+  assert.ok(clients < footer, "the client list stays above the card footer");
+});
+
+test("names the cause of a failed passkey operation", () => {
+  // A transport the browser or the gateway refuses, and wrong step-up
+  // credentials, all used to collapse into the generic retry line.
+  assert.ok(CLIENT_SOURCE.includes("window.isSecureContext === false"));
+  assert.ok(CLIENT_SOURCE.includes('t("passkeys.insecure")'));
+  assert.ok(CLIENT_SOURCE.includes('t("passkeys.credentials")'));
+  assert.ok(CLIENT_SOURCE.includes("function passkeyFailureMessage"));
+  assert.ok(CLIENT_SOURCE.includes("function httpFailure"));
+});
