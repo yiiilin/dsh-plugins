@@ -1,9 +1,15 @@
 //#region lib/types/invariant.js
 /**
-* Package-owned invariant companion for `@deepseek-ai/dsh-llm-pi-ai`.
-* @module @deepseek-ai/dsh-llm-pi-ai/invariant
+* Package-owned invariant companion for `@yiln-dsh/dsh-plugin-llm-adapter`.
+*
+* This package serves the routes the shipped `@deepseek-ai/dsh-llm-pi-ai` row
+* would serve (that row is disabled by this package's bundle patch), but it is
+* a distinct installed package, so it reserves its own name rather than the
+* upstream one. Reserving the upstream name here would claim ownership of a
+* package this fork does not install.
+* @module @yiln-dsh/dsh-plugin-llm-adapter/invariant
 */
-const PACKAGE_NAME = "@deepseek-ai/dsh-llm-pi-ai";
+const PACKAGE_NAME = "@yiln-dsh/dsh-plugin-llm-adapter";
 /** Cordis companion plugin name. */
 const name = "llm-pi-ai-invariant";
 /** Service required before the companion can reserve package ownership. */

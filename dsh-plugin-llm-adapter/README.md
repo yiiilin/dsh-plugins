@@ -68,6 +68,24 @@ The third rule covers the loop a syntax-only fix leaves behind: a session alread
 
 The flag is off by default and belongs on the model that has the habit, not on the route.
 
+## Catalog and Settings editor resilience
+
+Two behaviours changed in 0.5.0:
+
+- A provider whose stored catalog disagrees with the installed one — a
+  `modelOverrides` entry naming a model the catalog no longer describes, or a
+  compatibility field the provider cannot offer — no longer fails the whole
+  route. Every model that still resolves is served, and the unserviceable ones
+  are reported per model with their reason, so the configuration can be repaired
+  instead of disappearing behind one route-level error.
+- The Settings → Models patch now anchors on patterns rather than on literal
+  minified text. An upstream rename, quote-style change, or reformat is reported
+  as a failed match instead of silently disabling the model editor fields, while
+  a genuine redesign still refuses to patch rather than corrupting the bundle.
+
+The adapter also reserves its own package name for invariant ownership rather
+than the upstream `@deepseek-ai/dsh-llm-pi-ai` row it replaces.
+
 ## Install locally
 
 ```bash
@@ -79,4 +97,4 @@ The Host bundle patch replaces the stock `llm-pi-ai` row by id and injects the m
 
 `priority` only has an effect when the upstream gateway implements the OpenAI Responses `service_tier` field. The adapter cannot create priority capacity that the gateway does not provide.
 
-The published package is `@yiln-dsh/dsh-plugin-llm-adapter@0.4.0`.
+The published package is `@yiln-dsh/dsh-plugin-llm-adapter@0.5.0`.

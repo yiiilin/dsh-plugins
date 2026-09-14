@@ -6,21 +6,26 @@ const PATCH_MARKER = "dsh-plugin-llm-adapter settings patch";
 /** Patch the shipped Models editor without replacing its page or provider rows. */
 export function patchModelsSettingsClient(source) {
   if (source.includes(PATCH_MARKER)) return source;
-  const englishAnchor = 'maxTokensPlaceholder: "Uses the provider default",';
-  const chineseAnchor = 'maxTokensPlaceholder: "使用提供方默认值",';
-  const modelEditorAnchor = "function ModelListEditor(props) {";
-  const modelDestructureAnchor = /const \{ models, onChange, probe, (api|operations), t, disabled \} = props;/;
-  const advancedAnchor = /className: ModelsSection_module_css_default\["modelAdvanced"\],\s*children: \[/;
-  const catalogPropsAnchor = /const catalogProps = \{\s*models,\s*overridden: modelsOverridden,/;
+  // Every anchor stays a loose pattern rather than a literal: the bundle is a
+  // minified artifact, so a renamed CSS-module binding, a changed quote style,
+  // or a reformat must not silently disable this patch. Each pattern still pins
+  // the surrounding structure, so a real upstream redesign fails the match (and
+  // is reported) instead of corrupting the bundle.
+  const englishAnchor = /maxTokensPlaceholder:\s*(["'])Uses the provider default\1\s*,/;
+  const chineseAnchor = /maxTokensPlaceholder:\s*(["'])使用提供方默认值\1\s*,/;
+  const modelEditorAnchor = /function ModelListEditor\s*\(\s*props\s*\)\s*\{/;
+  const modelDestructureAnchor = /const\s*\{\s*models,\s*onChange,\s*probe,\s*(api|operations),\s*t,\s*disabled\s*\}\s*=\s*props;/;
+  const advancedAnchor = /className:\s*[A-Za-z0-9_$]*\["modelAdvanced"\],\s*children:\s*\[/;
+  const catalogPropsAnchor = /const catalogProps\s*=\s*\{\s*models,\s*overridden:\s*modelsOverridden,/;
   const modelDestructureMatch = modelDestructureAnchor.exec(source);
-  if (!source.includes(englishAnchor)
-    || !source.includes(chineseAnchor)
-    || !source.includes(modelEditorAnchor)
+  if (!englishAnchor.test(source)
+    || !chineseAnchor.test(source)
+    || !modelEditorAnchor.test(source)
     || modelDestructureMatch === null
     || !advancedAnchor.test(source)
     || !catalogPropsAnchor.test(source)) return null;
 
-  let patched = source.replace(englishAnchor, `${englishAnchor}
+  let patched = source.replace(englishAnchor, (match) => `${match}
 \t\t\tfastServiceTier: "Service tier",
 \t\t\tfastReasoningEffort: "Default reasoning effort",
 \t\t\t\t\t\tfastTierDefault: "Default",
@@ -34,7 +39,7 @@ export function patchModelsSettingsClient(source) {
 \t\t\tfastReasoningXhigh: "Xhigh",
 \t\t\tfastReasoningMax: "Max",
 			`);
-  patched = patched.replace(chineseAnchor, `${chineseAnchor}
+  patched = patched.replace(chineseAnchor, (match) => `${match}
 \t\t\tfastServiceTier: "服务等级",
 \t\t\tfastReasoningEffort: "默认推理等级",
 \t\t\t\t\t\tfastTierDefault: "默认",
@@ -96,7 +101,7 @@ export function patchModelsSettingsClient(source) {
 }
 /* ${PATCH_MARKER} */
 `;
-  patched = patched.replace(modelEditorAnchor, `${component}${modelEditorAnchor}`);
+  patched = patched.replace(modelEditorAnchor, (match) => `${component}${match}`);
   patched = patched.replace(
     modelDestructureAnchor,
     `const { models, onChange, probe, ${modelDestructureMatch[1]}, t, disabled, defaultReasoning, defaultServiceTier } = props;`,
@@ -110,7 +115,7 @@ export function patchModelsSettingsClient(source) {
 \t\t\t\t\tdefaultServiceTier: stringAt(fallback, "serviceTier") ?? "",`,
   );
 
-  const modelEditorStart = patched.indexOf(modelEditorAnchor);
+  const modelEditorStart = patched.search(modelEditorAnchor);
   if (modelEditorStart < 0) return null;
   const modelEditorBody = patched.slice(modelEditorStart);
   const advancedMatch = advancedAnchor.exec(modelEditorBody);
@@ -158,7 +163,15 @@ export function registerModelsSettingsPatch(ctx) {
     return;
   }
   if (body === null) {
-    ctx.logger?.warn?.("llm-pi-ai-adapter: settings models client bundle shape changed");
+    // The per-model serviceTier / reasoning controls exist only inside this
+    // patch, so a shape change removes them with no other symptom. Report at
+    // error level and name both the artifact and the anchors to re-check —
+    // a warning here is what let this degrade unnoticed before.
+    ctx.logger?.error?.(
+      "llm-pi-ai-adapter: the shipped Models editor no longer matches the anchors this patch rewrites, so the per-model service-tier and reasoning controls are NOT installed for this run. Re-check lib/settings-patch.js against %s, which was read from %s",
+      SETTINGS_MODELS_CLIENT_PACKAGE,
+      clientPath,
+    );
     return;
   }
   const ownsPatch = body !== original;
