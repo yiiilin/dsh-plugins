@@ -1,1 +1,14 @@
 node_modules/
+# `pnpm pack` writes its tarball beside the plugin directory it packs, and the
+# README tells users to run it from inside a plugin directory.
+*.tgz
+# Editor and tooling debris.
+.DS_Store
+*.log
+# LoopX local control-plane state: registry and active goal state are local
+# private evidence and must never be committed.
+.loopx/
+# DSH-native state path for this repo; the Codex-default location is still
+# listed defensively in case a tool falls back to it.
+.dsh/goals/
+.codex/goals/
