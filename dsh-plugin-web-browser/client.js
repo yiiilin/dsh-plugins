@@ -401,28 +401,11 @@ window.__ModuleLoader__.load({
       const activeLoading = active !== null && loadingTabId === activeId;
       const addressIsSecure = /^https:\/\//i.test(address);
 
-      // Hide the DSH composer whenever this view is mounted, so the frame fills
-      // the whole conversation area even before any browser tab exists.
-      // NOTE: the view now renders in the right Sidebar, which is a sibling
-      // column of the conversation rather than a descendant of
-      // [data-conversation-scroll], so this closest() currently matches nothing
-      // and the hiding does not happen. test/view-width.test.js still asserts
-      // the contract, so the behaviour is restored rather than deleted —
-      // resolving it needs a layout decision, not a cleanup.
+      // Removed in 0.1.5: the conversation-view era effect that hid the DSH
+      // composer while this view was active. The view renders in the right
+      // Sidebar, a sibling column of the conversation, so it never covers the
+      // composer and the effect matched nothing after the page-tab migration.
       const viewRef = React.useRef(null);
-      React.useEffect(() => {
-        const view = viewRef.current;
-        const scrollBody = view && view.closest('[data-conversation-scroll]');
-        if (!scrollBody) return undefined;
-        const previousHeight = scrollBody.style.getPropertyValue('--dsh-composer-height');
-        scrollBody.setAttribute('data-dsh-terminal-active', 'true');
-        scrollBody.style.setProperty('--dsh-composer-height', '0px');
-        return () => {
-          scrollBody.removeAttribute('data-dsh-terminal-active');
-          if (previousHeight === '') scrollBody.style.removeProperty('--dsh-composer-height');
-          else scrollBody.style.setProperty('--dsh-composer-height', previousHeight);
-        };
-      }, []);
 
       // Touch devices: a hidden keyboard host that summons the mobile keyboard
       // and forwards typed text into the server-side page (the screencast
@@ -439,7 +422,6 @@ window.__ModuleLoader__.load({
         if (!isCoarse) return undefined;
         const shell = viewRef.current;
         if (shell === null) return undefined;
-        const scrollBody = shell.closest('[data-conversation-scroll]');
         const apply = () => {
           const vv = window.visualViewport;
           const open = vv !== null && typeof vv === 'object'
@@ -448,20 +430,12 @@ window.__ModuleLoader__.load({
           if (open !== keyboardOpenRef.current) {
             keyboardOpenRef.current = open;
             if (open) {
-              // Shrink both the scroll body (the DSH layout root) and the
-              // shell to the visible height so the frame sits exactly on top
-              // of the keyboard.
-              if (scrollBody !== null) {
-                scrollBody.style.height = `${vv.height}px`;
-                scrollBody.style.maxHeight = `${vv.height}px`;
-              }
+              // Shrink the shell to the visible height so the frame sits exactly
+              // on top of the keyboard. The conversation's own layout root is
+              // not this view's ancestor any more, so it is left alone.
               shell.style.height = `${vv.height}px`;
               shell.style.maxHeight = `${vv.height}px`;
             } else {
-              if (scrollBody !== null) {
-                scrollBody.style.height = '';
-                scrollBody.style.maxHeight = '';
-              }
               shell.style.height = '';
               shell.style.maxHeight = '';
             }
@@ -757,7 +731,6 @@ window.__ModuleLoader__.load({
       style.id = STYLE_ID;
       style.setAttribute('data-plugin', 'dsh-plugin-web-browser');
       style.textContent = `
-[data-conversation-scroll][data-dsh-terminal-active] ~ [data-width-handle]{display:none!important}
 .dsh-wb-shell{position:relative;width:100%;height:100%;min-width:0;min-height:0;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;background:var(--dsw-alias-bg-base,#f4f6f8);color:var(--dsw-alias-label-primary,#202124);--dwb-chrome-bg:var(--dsw-alias-bg-layer-1,#f4f6f8);--dwb-strip-bg:var(--dsw-alias-bg-layer-2,#e9edf1);--dwb-surface:var(--dsw-alias-bg-base,#fff);--dwb-border:var(--dsw-alias-border-l2,rgba(15,23,42,.14));--dwb-muted:var(--dsw-alias-label-secondary,#68707a);--dwb-accent:var(--dsw-alias-brand-primary,#4169e1)}
 .dsh-wb-tabs-row{flex:0 0 38px;display:flex;align-items:flex-end;gap:6px;min-width:0;box-sizing:border-box;padding:4px 10px 0;border-bottom:1px solid var(--dwb-border);background:var(--dwb-strip-bg)}
 .dsh-wb-nav-row{flex:0 0 48px;display:flex;align-items:center;gap:6px;min-width:0;box-sizing:border-box;padding:7px 12px;border-bottom:1px solid var(--dwb-border);background:var(--dwb-chrome-bg)}

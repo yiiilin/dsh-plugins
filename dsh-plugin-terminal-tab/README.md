@@ -6,10 +6,7 @@ conversation session.
 - Shows a `+` button inside the terminal tab bar for creating another terminal.
 - Automatically names new terminals as `终端 1`, `终端 2`, and so on; double-click an existing tab to rename it.
 - Shows a closing spinner and filters stale list responses while a terminal is being closed, so a fast click cannot resurrect the tab.
-- Hides the conversation composer while the terminal view is active and restores
-  it when the user returns to 对话 or 轨迹.
-- Hides the conversation width handles while the terminal view is active, so the terminal keeps a stable full-width surface.
-- Contributes the terminal as a **page tab in the DSH Web right Sidebar** (`ctx.sidebarRightTabs` + the `sidebar.right.pane.tab` seat), so the conversation keeps only its own 对话 / 轨迹 tabs.
+- Contributes the terminal as a **page tab in the DSH Web right Sidebar** (`ctx.sidebarRightTabs` + the `sidebar.right.pane.tab` seat), so the conversation keeps only its own 对话 / 轨迹 tabs. Because the pane is a sibling column of the conversation rather than a view inside it, the plugin no longer touches the conversation composer or its width handles.
 - Renders multiple shell tabs inside the terminal view with the actual
   `@xterm/xterm` terminal emulator. xterm.js owns ANSI rendering, scrollback,
   cursor, keyboard input and composition; there is no separate input bar.
@@ -31,7 +28,7 @@ conversation session.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-terminal-tab@0.1.10`.
+The published package is `@yiln-dsh/dsh-plugin-terminal-tab@0.1.11`.
 
 Local source directory:
 

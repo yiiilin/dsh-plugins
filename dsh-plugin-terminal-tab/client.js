@@ -192,28 +192,11 @@ window.__ModuleLoader__.load({
         if (runtime.terminal) runtime.terminal.dispose();
       };
 
-      // Hide the DSH composer while this view is active, so the terminal fills
-      // the workspace instead of sharing it with a composer that cannot reach
-      // it. NOTE: the view now renders in the right Sidebar, which is a sibling
-      // column of the conversation rather than a descendant of
-      // [data-conversation-scroll], so this closest() currently matches nothing
-      // and the hiding does not happen. test/view-width.test.js still asserts
-      // the contract, so the behaviour is restored rather than deleted —
-      // resolving it needs a layout decision, not a cleanup.
-      React.useEffect(() => {
-        const view = viewRef.current;
-        const scrollBody = view && view.closest('[data-conversation-scroll]');
-        if (!scrollBody) return undefined;
-        const previousHeight = scrollBody.style.getPropertyValue('--dsh-composer-height');
-        scrollBody.setAttribute('data-dsh-terminal-active', 'true');
-        scrollBody.style.setProperty('--dsh-composer-height', '0px');
-        return () => {
-          scrollBody.removeAttribute('data-dsh-terminal-active');
-          if (previousHeight === '') scrollBody.style.removeProperty('--dsh-composer-height');
-          else scrollBody.style.setProperty('--dsh-composer-height', previousHeight);
-        };
-      }, [sessionId]);
-
+      // Removed in 0.1.11: the conversation-view era effect that hid the DSH
+      // composer and width handles while this view was active. The view renders
+      // in the right Sidebar, a sibling column of the conversation, so it never
+      // shares space with the composer and the effect matched nothing after the
+      // page-tab migration.
       React.useEffect(() => {
         let alive = true;
         let loading = false;
@@ -459,8 +442,6 @@ window.__ModuleLoader__.load({
 .dtt-new-terminal{appearance:none;width:28px;height:26px;flex:0 0 auto;padding:0;border:1px solid #33424e;border-radius:4px;background:#151c23;color:#b9c7d0;font:18px/1 inherit;cursor:pointer}
 .dtt-new-terminal:hover:not(:disabled){background:#26323c;color:#fff}
 .dtt-new-terminal:disabled{opacity:.55;cursor:default}
-[data-conversation-scroll][data-dsh-terminal-active] > [data-composer-seat]{display:none!important}
-[data-conversation-scroll][data-dsh-terminal-active] ~ [data-width-handle]{display:none!important}
 .dtt-name-overlay{position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.52)}
 .dtt-name-dialog{width:min(340px,calc(100% - 32px));box-sizing:border-box;padding:16px;border:1px solid #33424e;border-radius:8px;background:#151c23;color:#d6f5d6;box-shadow:0 16px 48px rgba(0,0,0,.4);font:13px/1.4 sans-serif}
 .dtt-name-title{margin:0 0 14px;font-size:14px;font-weight:600}

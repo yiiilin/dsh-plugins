@@ -76,8 +76,8 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 | `@yiln-dsh/dsh-plugin-git-graph` | `0.2.0` |
 | `@yiln-dsh/dsh-plugin-llm-adapter` | `0.5.0` |
 | `@yiln-dsh/dsh-plugin-web-daemon` | `0.8.0` |
-| `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.10` |
-| `@yiln-dsh/dsh-plugin-web-browser` | `0.1.4` |
+| `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.11` |
+| `@yiln-dsh/dsh-plugin-web-browser` | `0.1.5` |
 | `@yiln-dsh/dsh-plugin-session-list-cache` | `0.1.1` |
 | `@yiln-dsh/dsh-plugin-voice-input` | `0.1.3` |
 
