@@ -17,7 +17,7 @@ const XTERM_SCRIPT = readFileSync(xtermEntry, 'utf8')
 const XTERM_CSS = readFileSync(join(dirname(dirname(xtermEntry)), 'css', 'xterm.css'), 'utf8')
 
 export const name = 'terminal-tab'
-export const inject = ['webServer', 'agents']
+export const inject = ['webServer', 'agents', 'sandboxPolicy']
 
 const API_PREFIX = '/_dsh/terminal-tab'
 const WS_PATH = `${API_PREFIX}/ws`
@@ -89,11 +89,31 @@ function ownerFor(agents, args) {
   return owner
 }
 
-function subprocessFor(owner, rootSubprocess) {
-  const scoped = owner.ctx && typeof owner.ctx.get === 'function' ? owner.ctx.get('subprocess') : undefined
-  const service = scoped || rootSubprocess
-  if (service === undefined) throw new Error('subprocess service is unavailable for this session')
-  return service
+const BASE_SHELL_ARGV = ['/bin/bash', '--noprofile', '--norc', '-i']
+
+/**
+ * The argv one PTY starts from, confined by the session's sandbox policy.
+ *
+ * The native `terminal-bash` backend does exactly this at its own spawn, and
+ * skipping it would hand an unconfined interactive shell to a session whose
+ * policy says otherwise — a sandbox escape by construction, not a feature gap.
+ * `danger-full-access` passes the argv through unchanged (the native backend
+ * does the same); every other mode requires a sandbox provider, because a
+ * missing one means the confinement the policy asked for cannot be applied.
+ * @param ctx - the plugin context, for the sandbox services.
+ * @param owner - the live session that will own the terminal.
+ * @returns the argv to spawn.
+ */
+function confinedShellArgv(ctx, owner) {
+  const sandboxPolicy = ctx.get('sandboxPolicy')
+  if (sandboxPolicy === undefined || typeof sandboxPolicy.resolve !== 'function') return BASE_SHELL_ARGV
+  const policy = sandboxPolicy.resolve({ session: owner.session })
+  if (policy.mode === 'danger-full-access') return BASE_SHELL_ARGV
+  const sandbox = ctx.get('sandbox')
+  if (sandbox === undefined || typeof sandbox.confine !== 'function') {
+    throw new Error(`terminal-tab: sandbox mode "${policy.mode}" requires a sandbox provider in this execution world`)
+  }
+  return sandbox.confine(BASE_SHELL_ARGV, { ...policy, mode: policy.mode }).argv
 }
 
 function terminalId(args) {
@@ -149,8 +169,12 @@ function rejectUpgrade(socket, status, reason) {
 export function apply(ctx) {
   const webServer = ctx.get('webServer')
   const agents = ctx.get('agents')
-  const rootSubprocess = ctx.get('subprocess')
+  // `subprocess` is a host-plane singleton, so one lookup serves every session;
+  // there is no per-agent scope to prefer, and asking the agent context for one
+  // only ever fell back to this same instance.
+  const subprocess = ctx.get('subprocess')
   if (webServer === undefined || agents === undefined) return
+  if (subprocess === undefined) throw new Error('terminal-tab: the subprocess service is unavailable')
 
   const records = []
   const closing = []
@@ -215,8 +239,8 @@ export function apply(ctx) {
   }
 
   const spawnRecord = async (owner, name) => {
-    const handle = await subprocessFor(owner, rootSubprocess).spawnTerminal({
-      argv: ['/bin/bash', '--noprofile', '--norc', '-i'],
+    const handle = await subprocess.spawnTerminal({
+      argv: confinedShellArgv(ctx, owner),
       cwd: sessionCwd(owner),
       rows: 40,
       cols: 160,

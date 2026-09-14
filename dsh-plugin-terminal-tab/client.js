@@ -37,6 +37,9 @@ window.__ModuleLoader__.load({
       'terminal.error': '终端操作失败',
       'terminal.connection.failed': '终端连接失败',
       'terminal.socket.failed': '终端 WebSocket 连接失败',
+      'terminal.socket.closed': '终端连接已断开',
+      'terminal.http.failed': '终端服务返回 HTTP {status}',
+      'terminal.xterm.failed': '终端渲染库加载失败',
       'terminal.guide': '在工作区里跑持久终端',
       'terminal.new': '新建终端',
       'terminal.empty': '暂无终端',
@@ -58,6 +61,9 @@ window.__ModuleLoader__.load({
       'terminal.error': 'Terminal operation failed',
       'terminal.connection.failed': 'Terminal connection failed',
       'terminal.socket.failed': 'Terminal WebSocket connection failed',
+      'terminal.socket.closed': 'Terminal connection closed',
+      'terminal.http.failed': 'The terminal service answered HTTP {status}',
+      'terminal.xterm.failed': 'Could not load the terminal renderer',
       'terminal.guide': 'Run persistent terminals in this workspace',
       'terminal.new': 'New terminal',
       'terminal.empty': 'No terminals',
@@ -78,9 +84,19 @@ window.__ModuleLoader__.load({
       try {
         value = await response.json();
       } catch (error) {
-        throw new Error(`terminal API returned HTTP ${response.status}`);
+        value = undefined;
       }
-      if (!response.ok || value.ok === false) throw new Error(value.error || `terminal API returned HTTP ${response.status}`);
+      if (!response.ok || value?.ok === false) {
+        // Carry the facts, not a rendered sentence: this helper has no locale
+        // in scope, and the render boundary is the only place that knows which
+        // language the user is reading. The server's own message is kept for
+        // the console, where it stays useful for diagnosis.
+        const error = new Error(`terminal API ${method} returned HTTP ${response.status}`);
+        error.dshStatus = response.status;
+        error.dshServerError = typeof value?.error === 'string' ? value.error : undefined;
+        if (error.dshServerError !== undefined) console.warn('terminal-tab:', error.message, error.dshServerError);
+        throw error;
+      }
       return value;
     }
 
@@ -98,8 +114,8 @@ window.__ModuleLoader__.load({
         const script = document.createElement('script');
         script.src = `${API_PREFIX}/xterm.js`;
         script.async = true;
-        script.onload = () => window.Terminal ? resolve(window.Terminal) : reject(new Error('xterm.js did not expose Terminal'));
-        script.onerror = () => reject(new Error('could not load xterm.js'));
+        script.onload = () => window.Terminal ? resolve(window.Terminal) : reject(Object.assign(new Error('xterm.js did not expose Terminal'), { dshCode: 'xterm' }));
+        script.onerror = () => reject(Object.assign(new Error('could not load xterm.js'), { dshCode: 'xterm' }));
         document.head.appendChild(script);
       });
       return xtermPromise;
@@ -146,7 +162,11 @@ window.__ModuleLoader__.load({
 
     function createTerminalView(t) {
       const TerminalTabs = createTerminalTabs(t);
-      const errorText = (error) => error && typeof error.message === 'string' ? error.message : t('terminal.error');
+      const errorText = (error) => {
+        if (error && typeof error.dshStatus === 'number') return t('terminal.http.failed', { status: error.dshStatus });
+        if (error && error.dshCode === 'xterm') return t('terminal.xterm.failed');
+        return error && typeof error.message === 'string' ? error.message : t('terminal.error');
+      };
 
       return function TerminalView({ sessionId }) {
       const [sessions, setSessions] = React.useState([]);
@@ -168,11 +188,18 @@ window.__ModuleLoader__.load({
         if (runtime === null) return;
         runtimeRef.current = null;
         if (runtime.dataDisposable) runtime.dataDisposable.dispose();
-        if (runtime.resizeDisposable) runtime.resizeDisposable.dispose();
         if (runtime.socket) runtime.socket.close();
         if (runtime.terminal) runtime.terminal.dispose();
       };
 
+      // Hide the DSH composer while this view is active, so the terminal fills
+      // the workspace instead of sharing it with a composer that cannot reach
+      // it. NOTE: the view now renders in the right Sidebar, which is a sibling
+      // column of the conversation rather than a descendant of
+      // [data-conversation-scroll], so this closest() currently matches nothing
+      // and the hiding does not happen. test/view-width.test.js still asserts
+      // the contract, so the behaviour is restored rather than deleted —
+      // resolving it needs a layout decision, not a cleanup.
       React.useEffect(() => {
         const view = viewRef.current;
         const scrollBody = view && view.closest('[data-conversation-scroll]');
@@ -253,7 +280,7 @@ window.__ModuleLoader__.load({
           const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
           const query = `sessionId=${encodeURIComponent(sessionId)}&terminalId=${encodeURIComponent(activeId)}`;
           const socket = new WebSocket(`${protocol}//${window.location.host}${WS_PATH}?${query}`);
-          runtime = { terminal, socket, dataDisposable: null, resizeDisposable: null };
+          runtime = { terminal, socket, dataDisposable: null };
           runtimeRef.current = runtime;
           socket.addEventListener('open', () => terminal.focus());
           socket.addEventListener('message', (event) => {
@@ -270,14 +297,14 @@ window.__ModuleLoader__.load({
           });
           socket.addEventListener('error', () => setError(t('terminal.socket.failed')));
           socket.addEventListener('close', () => {
-            if (alive && runtimeRef.current === runtime && terminal !== undefined) terminal.write('\r\n\x1b[90m[WebSocket closed]\x1b[0m\r\n');
+            if (alive && runtimeRef.current === runtime && terminal !== undefined) terminal.write(`\r\n\x1b[90m[${t('terminal.socket.closed')}]\x1b[0m\r\n`);
           });
           runtime.dataDisposable = terminal.onData((data) => {
             if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'input', data }));
           });
-          runtime.resizeDisposable = terminal.onResize(({ cols, rows }) => {
-            if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'resize', cols, rows }));
-          });
+          // No resize channel: the Host PTY has no resize primitive and the
+          // session keeps the geometry it was spawned with, so sending one would
+          // be a message nothing can act on.
         }).catch((cause) => {
           if (alive) setError(errorText(cause));
         });
@@ -511,9 +538,6 @@ window.__ModuleLoader__.load({
         key: TERMINAL_TAB_ID,
         locale: LOCALE_NS,
       }, TerminalView)), 'terminal-tab: right sidebar body');
-      exports.openTerminal = () => {
-        try { sidebarRight.openTab(TERMINAL_TAB_KIND); } catch (error) { /* no live session surface */ }
-      };
     }
 
     exports.apply = apply;
