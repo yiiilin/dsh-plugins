@@ -25,6 +25,7 @@ window.__ModuleLoader__.load({
     const LOCALE_NS = "delete-session";
     const ZH_DICT = {
       cancel: "取消",
+      "error.http": "删除服务返回 HTTP {status}。",
       "confirm.title": "删除会话",
       "menu.delete": "删除会话",
       "confirm.body": "确定要删除“{name}”吗？",
@@ -38,6 +39,7 @@ window.__ModuleLoader__.load({
     };
     const EN_DICT = {
       cancel: "Cancel",
+      "error.http": "The delete service answered HTTP {status}.",
       "confirm.title": "Delete session",
       "menu.delete": "Delete session",
       "confirm.body": "Delete “{name}”?",
@@ -107,7 +109,24 @@ window.__ModuleLoader__.load({
       return () => style.remove();
     }
 
-    function messageOf(error) {
+    /**
+     * A failed HTTP call, carrying the status rather than a rendered sentence.
+     * This helper has no locale in scope and the alert box is the only place
+     * that knows which language the user is reading; the server's own message
+     * goes to the console, where it stays useful for diagnosis.
+     */
+    function httpFailure(status, serverError) {
+      const error = new Error(`delete-session API returned HTTP ${status}`);
+      error.dshStatus = status;
+      error.dshServerError = typeof serverError === "string" ? serverError : undefined;
+      if (error.dshServerError !== undefined) console.warn("delete-session:", error.message, error.dshServerError);
+      return error;
+    }
+
+    function messageOf(error, t) {
+      if (error && typeof error.dshStatus === "number" && typeof t === "function") {
+        return t("error.http", { status: error.dshStatus });
+      }
       return error instanceof Error ? error.message : String(error);
     }
 
@@ -121,10 +140,10 @@ window.__ModuleLoader__.load({
       try {
         result = await response.json();
       } catch {
-        throw new Error(`delete-session API returned HTTP ${response.status}`);
+        result = undefined;
       }
       if (!response.ok || result?.ok !== true) {
-        throw new Error(result?.error || `delete-session API returned HTTP ${response.status}`);
+        throw httpFailure(response.status, result?.error);
       }
       return result;
     }
@@ -139,10 +158,10 @@ window.__ModuleLoader__.load({
       try {
         result = await response.json();
       } catch {
-        throw new Error(`delete-session API returned HTTP ${response.status}`);
+        result = undefined;
       }
       if (!response.ok || result?.ok !== true) {
-        throw new Error(result?.error || `delete-session API returned HTTP ${response.status}`);
+        throw httpFailure(response.status, result?.error);
       }
       return result;
     }
@@ -468,7 +487,7 @@ window.__ModuleLoader__.load({
             await refreshSessionList(sessions);
           } catch (reason) {
             setBusy(false);
-            setError(messageOf(reason));
+            setError(messageOf(reason, t));
           }
         };
 
@@ -504,7 +523,7 @@ window.__ModuleLoader__.load({
             await refreshSessionList(sessions);
           } catch (reason) {
             setMenuDeleteBusy(false);
-            setMenuDeleteError(messageOf(reason));
+            setMenuDeleteError(messageOf(reason, t));
           }
         };
 
@@ -673,7 +692,7 @@ window.__ModuleLoader__.load({
       };
     }
 
-    function createDeleteSessionAction(t) {
+    function createDeleteSessionAction(t, sessions) {
       return function DeleteSessionAction(props) {
       const [confirming, setConfirming] = React.useState(false);
       const [busy, setBusy] = React.useState(false);
@@ -706,10 +725,13 @@ window.__ModuleLoader__.load({
         setError(null);
         try {
           await requestDelete(props.sessionId);
-          if (nextSessionId !== undefined) props.sessions.open(nextSessionId);
-          await refreshSessionList(props.sessions);
+          // The slot's own props carry no `sessions` seat, so the service is the
+          // one closed over at registration — the same one the batch action uses.
+          if (nextSessionId !== undefined && typeof sessions?.open === "function") sessions.open(nextSessionId);
+          else if (typeof sessions?.clear === "function") sessions.clear();
+          await refreshSessionList(sessions);
         } catch (reason) {
-          setError(messageOf(reason));
+          setError(messageOf(reason, t));
           setBusy(false);
         }
       };
@@ -783,7 +805,7 @@ window.__ModuleLoader__.load({
       const t = locale !== undefined
         ? locale.bind(LOCALE_NS)
         : (key, params) => applyParams(ZH_DICT[key] ?? EN_DICT[key] ?? key, params);
-      const DeleteSessionAction = createDeleteSessionAction(t);
+      const DeleteSessionAction = createDeleteSessionAction(t, ctx.sessions);
       ctx.effect(() => installStyle(), "delete-session: stylesheet");
       ctx.slots.inject("sidebar.footer.action", () => ctx.slots.register({
         name: "sidebar.footer.action",

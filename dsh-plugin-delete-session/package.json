@@ -1,6 +1,6 @@
 {
   "name": "@yiln-dsh/dsh-plugin-delete-session",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "publishConfig": {
     "access": "public"
   },
@@ -23,7 +23,8 @@
       "inject": [
         "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-ui-primitives",
-        "@deepseek-ai/dsh-client-ui-sidebar"
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-workspace"
       ],
       "platform": "web"
     }
@@ -36,9 +37,10 @@
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
-    "@deepseek-ai/dsh-client-ui-conversation": ">=0.1.2-rc.1",
-    "@deepseek-ai/dsh-client-ui-primitives": ">=0.1.2-rc.1",
-    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.1.2-rc.1"
+    "@deepseek-ai/dsh-client-ui-conversation": ">=0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-primitives": ">=0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-workspace": ">=0.1.5-rc.1"
   },
   "engines": {
     "node": ">=22"
