@@ -77,6 +77,7 @@ window.__ModuleLoader__.load({
 			"notice.stop": "守护进程已停止。",
 			"notice.restart": "已请求重启守护进程。",
 			"notice.reset": "已重置守护进程启动次数限制。",
+			"error.http": "守护进程服务返回 HTTP {status}。",
 			"notice.restarting": "已请求重启——正在等待服务恢复…",
 		};
 		const EN_DICT = {
@@ -137,6 +138,7 @@ window.__ModuleLoader__.load({
 			"notice.stop": "Daemon stopped.",
 			"notice.restart": "Daemon restart requested.",
 			"notice.reset": "Daemon start limit reset.",
+			"error.http": "The daemon service answered HTTP {status}.",
 			"notice.restarting": "Restart requested — waiting for the service to come back...",
 		};
 
@@ -244,10 +246,18 @@ window.__ModuleLoader__.load({
 			try {
 				data = await response.json();
 			} catch {
-				throw new Error(`daemon API returned HTTP ${response.status}`);
+				data = undefined;
 			}
-			if (!response.ok || data.ok === false) {
-				throw new Error(data.error || `daemon API returned HTTP ${response.status}`);
+			if (!response.ok || data?.ok === false) {
+				// Carry the facts rather than a rendered sentence: this helper has
+				// no locale in scope, and the alert box is the only place that knows
+				// which language the user is reading. The server's own message goes
+				// to the console, where it stays useful for diagnosis.
+				const error = new Error(`daemon API ${path} returned HTTP ${response.status}`);
+				error.dshStatus = response.status;
+				error.dshServerError = typeof data?.error === "string" ? data.error : undefined;
+				if (error.dshServerError !== undefined) console.warn("web-daemon:", error.message, error.dshServerError);
+				throw error;
 			}
 			return data;
 		}
@@ -488,7 +498,9 @@ window.__ModuleLoader__.load({
 						if (action === "reset") setNotice(t("notice.reset"));
 					}
 				} catch (err) {
-					setError(err && err.message ? err.message : String(err));
+					setError(err && typeof err.dshStatus === "number"
+						? t("error.http", { status: err.dshStatus })
+						: (err && err.message ? err.message : String(err)));
 				} finally {
 					setBusy(false);
 				}

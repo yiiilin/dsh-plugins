@@ -35,3 +35,37 @@ test("loads the recovery gate from its own module", () => {
   assert.doesNotMatch(HOST_SOURCE, /function installRecoveryApiGate/u);
 });
 
+test("loads the subagent recovery helpers from their own module", () => {
+  assert.match(HOST_SOURCE, /import \{[\s\S]*?\} from "\.\/lib\/subagent-recovery\.js"/u);
+  assert.match(HOST_SOURCE, /childContinuationRequest/u);
+  assert.doesNotMatch(HOST_SOURCE, /function childSessionRecord/u);
+});
+
+test("captures the ungated prompt before the recovery gate replaces it", () => {
+  // Recovery is what the gate waits for: a gated `prompt` call inside recovery
+  // would wait on itself and never settle.
+  const capture = HOST_SOURCE.indexOf("const deliverChildPrompt");
+  const gate = HOST_SOURCE.indexOf("installRecoveryApiGate(ctx, recoveryServices");
+  assert.ok(capture > 0, "deliverChildPrompt is captured");
+  assert.ok(gate > 0, "the recovery gate is installed");
+  assert.ok(capture < gate, "the ungated prompt is captured before the gate is installed");
+});
+
+test("delivers child continuations with a real abort signal", () => {
+  // The subagent manager calls `signal.throwIfAborted()` on the cold-resume
+  // path, so an absent signal fails the delivery instead of restoring a child.
+  assert.match(HOST_SOURCE, /new AbortController\(\)\.signal/u);
+  assert.doesNotMatch(HOST_SOURCE, /\}\), undefined\);/u);
+});
+
+test("snapshots children as well as roots", () => {
+  // `roots()` excludes resident children, so a roots-only walk never records a
+  // running subagent and recovery has nothing to re-attach.
+  assert.match(HOST_SOURCE, /function liveAgentsOf\(agents\)/u);
+  assert.match(HOST_SOURCE, /agents\.list\(\)/u);
+  assert.match(HOST_SOURCE, /await restoreChildren\(\);/u);
+  const roots = HOST_SOURCE.indexOf("await Promise.all([...records.entries()].map(restore));");
+  const children = HOST_SOURCE.indexOf("await restoreChildren();");
+  assert.ok(roots < children, "children are re-attached after the top-level sessions");
+});
+

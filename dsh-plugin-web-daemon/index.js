@@ -31,6 +31,13 @@ import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { installRecoveryApiGate } from "./lib/recovery-gate.js";
 import { persistedHeadersFromList, readStoredSession } from "./lib/stored-sessions.js";
+import {
+  CHILD_ORIGIN,
+  childContinuationRequest,
+  childRefusal,
+  childSessionRecord,
+  storedChildRecord,
+} from "./lib/subagent-recovery.js";
 
 export const name = "web-daemon";
 export const inject = ["webServer", "settings"];
@@ -248,12 +255,30 @@ function isTopLevelAgent(agent, agents) {
     || agents.roots().some((candidate) => candidate === agent);
 }
 
+/**
+ * Every live Agent, children included.
+ *
+ * `roots()` is top-level only, and a resident continuable child is registered
+ * under its parent, so `list()` is the only view that shows the children
+ * recovery has to re-attach.
+ */
+function liveAgentsOf(agents) {
+  if (typeof agents?.list === "function") return agents.list();
+  if (typeof agents?.roots === "function") return agents.roots();
+  return [];
+}
+
 function activeSessionRecordOf(agent, agents, includePreset = false) {
   const session = agent?.session;
   const sessionId = agent?.id;
-  if (!isTopLevelAgent(agent, agents)) return undefined;
   if (!isRegistrySessionId(sessionId) || session === undefined || session === null) return undefined;
-  if (session.header?.origin === "subagent" || agent.status !== "running") return undefined;
+  if (agent.status !== "running") return undefined;
+
+  // A running subagent child is recorded by lineage alone: recovery re-attaches
+  // it to its parent through `subagents.prompt`, never as a top-level session.
+  const child = childSessionRecord(agent);
+  if (child !== undefined) return child;
+  if (!isTopLevelAgent(agent, agents)) return undefined;
 
   const record = { sessionId: String(sessionId), running: true };
   if (isRegistryString(session.header?.cwd)) record.cwd = session.header.cwd;
@@ -268,6 +293,12 @@ function activeSessionRecordOf(agent, agents, includePreset = false) {
 
 function storedSessionRecordOf(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+
+  // Child records carry the parent they must be re-attached to. An older plugin
+  // reading this file drops them and keeps its top-level-only recovery, so the
+  // added records stay backward compatible.
+  const child = storedChildRecord(value);
+  if (child !== undefined) return child;
   if (!isRegistrySessionId(value.sessionId) || value.origin === "subagent") return undefined;
   if (value.running !== undefined && typeof value.running !== "boolean") return undefined;
 
@@ -504,7 +535,19 @@ async function writeRecoveryDiagnostics(diag) {
   }
 }
 
-async function createSessionRecovery(ctx, agents, persistence, agentPresets, diag) {
+/**
+ * Restore the sessions that were running before the daemon restarted.
+ *
+ * Two phases, because a child cannot be restored without its parent: the
+ * recorded top-level sessions are resumed first, then every recorded subagent
+ * child is re-attached to its now-live parent through `subagents.prompt`. The
+ * child records and their decisions are owned by `./lib/subagent-recovery.js`.
+ *
+ * @param deliverChildPrompt - the ungated `subagents.prompt`, captured before
+ *   the recovery gate replaced it with its deferred wrapper. Recovery is what
+ *   the gate waits for, so a gated call here would deadlock against itself.
+ */
+async function createSessionRecovery(ctx, agents, persistence, agentPresets, diag, deliverChildPrompt) {
   diag.pid = process.pid;
   diag.lock = null;
   diag.lockError = null;
@@ -605,18 +648,21 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
     const record = activeSessionRecordOf(agent, agents);
     if (record === undefined) return false;
     const previous = records.get(record.sessionId);
-    const cachedPreset = presetCache.get(record.sessionId);
-    if (cachedPreset !== undefined) record.agentPreset = cachedPreset;
-    else if (previous?.agentPreset !== undefined) record.agentPreset = previous.agentPreset;
+    // A preset belongs to a top-level session: a child inherits its composition
+    // and is rebuilt from its own descriptor instead.
+    if (record.origin !== CHILD_ORIGIN) {
+      const cachedPreset = presetCache.get(record.sessionId);
+      if (cachedPreset !== undefined) record.agentPreset = cachedPreset;
+      else if (previous?.agentPreset !== undefined) record.agentPreset = previous.agentPreset;
+    }
     if (previous !== undefined && JSON.stringify(previous) === JSON.stringify(record)) return false;
     records.set(record.sessionId, record);
     return true;
   };
 
   const snapshotRunningAgents = () => {
-    const roots = typeof agents.roots === "function" ? agents.roots() : agents.list();
     const runningIds = new Set();
-    for (const agent of roots) {
+    for (const agent of liveAgentsOf(agents)) {
       if (agent?.status !== "running") continue;
       rememberPreset(agent);
       const record = activeSessionRecordOf(agent, agents);
@@ -682,8 +728,7 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
       }
 
       let dirty = false;
-      const roots = typeof agents.roots === "function" ? agents.roots() : agents.list();
-      for (const agent of roots) {
+      for (const agent of liveAgentsOf(agents)) {
         rememberPreset(agent);
         if (rememberAgent(agent)) dirty = true;
       }
@@ -691,8 +736,15 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
       const headers = await persistence.list();
       const persisted = persistedHeadersFromList(headers);
       const restore = async ([sessionId, record]) => {
+        // Children are not top-level sessions: they are re-attached in the
+        // second phase, after every parent they name has been resumed.
+        if (record.origin === CHILD_ORIGIN) return;
         try {
           let header = persisted.get(sessionId);
+          // Kept so a session resolved through the `stat()` probe below is not
+          // read a second time when its log is inspected further down: that read
+          // is the whole stored log, not a header.
+          let probed;
           if (header === undefined) {
             // The listing is backend-owned and can miss a session that the backend
             // still resolves: `list()` returns snapshots and may skip a live
@@ -700,7 +752,7 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
             // is resolvable must never be pruned, so ask the backend directly
             // before believing the listing.
             try {
-              const probed = await readStoredSession(persistence, sessionId);
+              probed = await readStoredSession(persistence, sessionId);
               if (probed !== undefined) {
                 header = probed.meta;
                 ctx.logger?.warn?.("web-daemon: session %s was absent from persistence.list() but stat() resolved it; resuming", sessionId);
@@ -733,7 +785,7 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
           // request/header is the single source of truth for the model the
           // session was actually using before the restart. Inspect every
           // resumable session and fold that header into the record.
-          const inspected = await readStoredSession(persistence, sessionId);
+          const inspected = probed ?? await readStoredSession(persistence, sessionId);
           if (inspected === undefined) {
             diag.entries.push({ sessionId, decision: "removed-not-persisted" });
             records.delete(sessionId);
@@ -826,7 +878,148 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
         }
       };
 
+      /**
+       * Make one recorded child's parent live.
+       *
+       * A background child can outlive its parent's turn — the parent goes idle
+       * while the child keeps running — so the parent can be absent even though
+       * nothing recorded it. Delivery requires an exact live parent.
+       *
+       * The parent is resumed without a continuation notice: it was not
+       * interrupted mid-turn, and the child's settlement notice is what should
+       * wake it — the same exchange the restart interrupted.
+       */
+      const resumeRecordedParent = async (parentSessionId) => {
+        if (agents.get(parentSessionId) !== undefined) return;
+        try {
+          const inspected = await readStoredSession(persistence, parentSessionId);
+          if (inspected === undefined) {
+            diag.entries.push({ sessionId: parentSessionId, decision: "skipped-parent-unavailable" });
+            return;
+          }
+          // A nested parent is not this step's business: the depth rounds below
+          // re-attach it first when it was recorded running, and report its
+          // children as unreachable when it was not.
+          if (inspected.meta.origin === CHILD_ORIGIN) return;
+          const preset = sessionPreset({
+            meta: inspected.meta,
+            events: inspected.events,
+          });
+          if (preset !== undefined
+            && (agentPresets === undefined || typeof agentPresets.mount !== "function")) {
+            throw new Error("agent preset service is unavailable");
+          }
+          const setup = preset === undefined || agentPresets === undefined
+            ? undefined
+            : async (agentCtx) => {
+              await agentPresets.mount(agentCtx, preset);
+            };
+          await agents.resume({
+            resumeSessionId: parentSessionId,
+            agentOptions: loggedAgentOptions(inspected.events) ?? {},
+            setup,
+          });
+          diag.entries.push({ sessionId: parentSessionId, decision: "resumed-parent" });
+          ctx.logger?.info?.("web-daemon: resumed %s to re-attach its running subagent(s)", parentSessionId);
+        } catch (error) {
+          diag.entries.push({
+            sessionId: parentSessionId,
+            decision: "failed-parent",
+            error: error instanceof Error ? error.message : String(error),
+          });
+          ctx.logger?.warn?.("web-daemon: could not resume parent session %s: %s", parentSessionId, error);
+        }
+      };
+
+      /**
+       * Re-attach one recorded child to its live parent.
+       *
+       * `subagents.prompt` is the only supported way back: it cold-resumes an
+       * absent direct child from the child's own persisted descriptor under an
+       * exact live parent. Creating the Agent here instead would leave it live
+       * but unreachable, because the subagent manager's resident map — which
+       * owns inbox admission and parent/child routing — would not know it.
+       */
+      const restoreChild = async (sessionId, record) => {
+        try {
+          if (agents.get(sessionId) !== undefined) {
+            diag.entries.push({ sessionId, decision: "skipped-already-live" });
+            return;
+          }
+          const inspected = await readStoredSession(persistence, sessionId);
+          if (inspected === undefined || inspected.meta.origin !== CHILD_ORIGIN) {
+            diag.entries.push({ sessionId, decision: "removed-not-persisted" });
+            records.delete(sessionId);
+            dirty = true;
+            return;
+          }
+          await deliverChildPrompt(childContinuationRequest({
+            parentSessionId: record.parentSession,
+            childSessionId: sessionId,
+            requestId: randomUUID(),
+            text: INTERRUPTED_RESUME_TEXT,
+          }), new AbortController().signal);
+          diag.entries.push({ sessionId, decision: "resumed-child", parentSession: record.parentSession });
+          ctx.logger?.info?.("web-daemon: re-attached running subagent %s under %s", sessionId, record.parentSession);
+        } catch (error) {
+          const refusal = childRefusal(error);
+          if (refusal !== undefined) {
+            diag.entries.push({ sessionId, decision: refusal.decision, retry: refusal.retry });
+            // A transient refusal keeps the record for the next restart; a
+            // permanent one can never succeed, so its record goes away.
+            if (!refusal.retry) {
+              records.delete(sessionId);
+              dirty = true;
+            }
+            return;
+          }
+          diag.entries.push({
+            sessionId,
+            decision: "failed",
+            error: error instanceof Error ? error.message : String(error),
+          });
+          ctx.logger?.warn?.("web-daemon: could not re-attach subagent %s: %s", sessionId, error);
+        }
+      };
+
+      /**
+       * Re-attach every subagent child that was running when the process died.
+       *
+       * One generation at a time: a nested child becomes deliverable only after
+       * its own parent has been re-attached in the previous round.
+       */
+      const restoreChildren = async () => {
+        let pending = [...records.entries()].filter(([, record]) => record.origin === CHILD_ORIGIN);
+        if (pending.length === 0) return;
+        if (deliverChildPrompt === undefined) {
+          // No subagent service in this composition: nothing can deliver to a
+          // child, so the records survive for a deployment that can.
+          for (const [sessionId] of pending) {
+            diag.entries.push({ sessionId, decision: "skipped-subagents-unavailable" });
+          }
+          return;
+        }
+
+        for (const parentSessionId of new Set(pending.map(([, record]) => record.parentSession))) {
+          await resumeRecordedParent(parentSessionId);
+        }
+
+        while (pending.length > 0) {
+          const ready = pending.filter(([, record]) => agents.get(record.parentSession) !== undefined);
+          if (ready.length === 0) break;
+          await Promise.all(ready.map(([sessionId, record]) => restoreChild(sessionId, record)));
+          const delivered = new Set(ready.map(([sessionId]) => sessionId));
+          pending = pending.filter(([sessionId]) => !delivered.has(sessionId));
+        }
+        for (const [sessionId] of pending) {
+          diag.entries.push({ sessionId, decision: "skipped-parent-unavailable" });
+          records.delete(sessionId);
+          dirty = true;
+        }
+      };
+
       await Promise.all([...records.entries()].map(restore));
+      await restoreChildren();
       if (active && (dirty || !loaded.present)) await persist();
       ctx.logger?.info?.("web-daemon: session registry ready (%d session(s)): %s", records.size, path);
     } finally {
@@ -1313,12 +1506,39 @@ function renderSystemdUnit(cfg) {
   return lines.join("\n") + "\n";
 }
 
+/**
+ * Write the unit, skipping both the write and the `daemon-reload` when the file
+ * already holds exactly this content.
+ *
+ * The rendered `ExecStart` embeds the absolute interpreter path this process
+ * runs under, which on an nvm install carries the node version. A node upgrade
+ * moves that path out from under the unit and systemd then fails the start with
+ * `203/EXEC`; re-deriving on every boot is what repairs it. Doing nothing on a
+ * match keeps an unchanged unit from being rewritten (and reloaded) needlessly.
+ * @param cfg - the effective plugin configuration.
+ * @returns the unit path and the previous `ExecStart`, when the file changed.
+ */
 function writeSystemdUnit(cfg) {
   const target = systemUnitPathFor(cfg);
+  const rendered = renderSystemdUnit(cfg);
+  let previous;
+  try {
+    previous = readFileSync(target, "utf8");
+  } catch {
+    previous = undefined;
+  }
+  if (previous === rendered) return { target, changed: false };
   mkdirSync(resolve(target, ".."), { recursive: true });
-  writeFileSync(target, renderSystemdUnit(cfg), "utf8");
+  writeFileSync(target, rendered, "utf8");
   runSystemctl(cfg, ["daemon-reload"]);
-  return target;
+  return { target, changed: true, previousExecStart: execStartOf(previous) };
+}
+
+/** The `ExecStart=` value of one rendered unit, for drift reporting. */
+function execStartOf(source) {
+  if (typeof source !== "string") return undefined;
+  const line = source.split("\n").find((entry) => entry.startsWith("ExecStart="));
+  return line === undefined ? undefined : line.slice("ExecStart=".length);
 }
 
 function createWebDaemonManager(ctx, settings, config) {
@@ -1376,7 +1596,18 @@ function createWebDaemonManager(ctx, settings, config) {
   };
 
   const ensureUnit = (cfg) => {
-    const target = writeSystemdUnit(cfg);
+    const written = writeSystemdUnit(cfg);
+    const target = written.target;
+    if (written.changed) {
+      const now = execStartOf(readFileSync(target, "utf8"));
+      if (written.previousExecStart !== undefined && written.previousExecStart !== now) {
+        // The usual cause is a node/nvm upgrade: the unit remembered the old
+        // interpreter, so systemd could not start it at all until this rewrite.
+        ctx.logger?.warn?.(
+          `web-daemon: refreshed ${target}; ExecStart moved from ${written.previousExecStart} to ${now}`,
+        );
+      }
+    }
     if (cfg.enabled) runSystemctl(cfg, ["enable", systemdUnitName(cfg)]);
     else {
       try {
@@ -1477,6 +1708,7 @@ function createWebDaemonManager(ctx, settings, config) {
     resetFailed,
     applyConfig,
     rememberRevision,
+    refreshUnit: ensureUnit,
   };
 }
 
@@ -1488,7 +1720,28 @@ async function apply(ctx, config = {}) {
 
   const settings = ctx.get("settings");
   const manager = createWebDaemonManager(ctx, settings, config);
+  // Re-derive the unit on every boot. Its ExecStart embeds the absolute
+  // interpreter path this process is running under, which on an nvm install
+  // carries the node version — so a node upgrade leaves a stale path that
+  // systemd rejects with 203/EXEC and the unit never starts again on its own.
+  // One start of this process by other means repairs it, which is precisely
+  // the situation this covers. Failures stay non-fatal: an unwritable unit
+  // path must not stop the daemon from serving the page that reports it.
+  try {
+    manager.refreshUnit(manager.getSnapshot().config);
+  } catch (error) {
+    ctx.logger?.warn?.("web-daemon: could not refresh the systemd unit on boot: %s", error);
+  }
   const agents = ctx.get("agents");
+  const subagents = ctx.get("subagents");
+  // Re-attaching a running subagent child goes through `subagents.prompt`, and
+  // the API gate installed below is what defers that method until recovery
+  // settles — but recovery is the thing that settles it. Hold the ungated
+  // method now, before the gate replaces the property, or recovery would wait
+  // on itself.
+  const deliverChildPrompt = typeof subagents?.prompt === "function"
+    ? subagents.prompt.bind(subagents)
+    : undefined;
   installHeadlessSessionOpenGuard(ctx, ctx.get("sessionController"));
   const isWorker = process.env[WORKER_FLAG] === "1";
   const diag = { pid: process.pid, lock: null, lockError: null, entries: [], gatedCalls: [] };
@@ -1502,14 +1755,14 @@ async function apply(ctx, config = {}) {
       const persistence = recoveryCtx.get("sessionPersistence");
       if (persistence === undefined) return;
       const agentPresets = recoveryCtx.get("agentPresets");
-      return createSessionRecovery(recoveryCtx, agents, persistence, agentPresets, diag);
+      return createSessionRecovery(recoveryCtx, agents, persistence, agentPresets, diag, deliverChildPrompt);
     });
     const recoveryServices = {
       apiProxy: ctx.get("apiProxy"),
       sessionController: ctx.get("sessionController"),
       goals: ctx.get("goals"),
       agentPresets: ctx.get("agentPresets"),
-      subagents: ctx.get("subagents"),
+      subagents,
     };
     installRecoveryApiGate(ctx, recoveryServices, recoveryReady, diag);
   }

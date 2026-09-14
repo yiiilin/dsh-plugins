@@ -41,15 +41,22 @@ function installRecoveryApiGate(ctx, services, recoveryReady, diag) {
   const legacy = services.apiProxy !== undefined;
   const methodMap = legacy ? LEGACY_RECOVERY_GATED_API_METHODS : RECOVERY_GATED_API_METHODS;
   const restorers = [];
+  const uncovered = [];
   let recovered = false;
   const markRecovered = () => { recovered = true; };
   void Promise.resolve(recoveryReady).then(markRecovered, markRecovered);
   for (const [domainName, methodNames] of Object.entries(methodMap)) {
     const domain = legacy ? services.apiProxy?.[domainName] : services[domainName];
-    if (domain === undefined || domain === null) continue;
+    if (domain === undefined || domain === null) {
+      uncovered.push(`${domainName}.*`);
+      continue;
+    }
     for (const methodName of methodNames) {
       const original = domain[methodName];
-      if (typeof original !== "function") continue;
+      if (typeof original !== "function") {
+        uncovered.push(`${domainName}.${methodName}`);
+        continue;
+      }
       const gated = methodName === "follow"
         ? async function* (...args) {
           if (!recovered) diag.gatedCalls.push(`${domainName}.${methodName}`);
@@ -78,6 +85,15 @@ function installRecoveryApiGate(ctx, services, recoveryReady, diag) {
         if (domain[methodName] === gated) domain[methodName] = original;
       });
     }
+  }
+  if (uncovered.length > 0) {
+    // Not fatal — the remaining members still gate — but a name the service no
+    // longer exposes narrows the gate silently, so a renamed API would stop
+    // being deferred with no other symptom. Report the whole list once, at
+    // start, so a DSH rename is visible instead of latent.
+    ctx.logger?.warn?.(
+      `web-daemon: the recovery gate covers no such API member(s), so calls to them may race session recovery: ${uncovered.join(", ")}`,
+    );
   }
   if (restorers.length === 0) return;
   ctx.effect(() => () => {
