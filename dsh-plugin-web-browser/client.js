@@ -43,7 +43,6 @@ window.__ModuleLoader__.load({
       'browser.connection.failed': '浏览器连接失败',
       'browser.connecting': '连接中…',
       'browser.empty': '输入网址开始浏览',
-      'browser.launch.failed': '浏览器启动失败',
       'browser.loading': '加载中…',
       'browser.error': '操作失败',
       'browser.newTabDefault': '新标签页',
@@ -64,7 +63,6 @@ window.__ModuleLoader__.load({
       'browser.connection.failed': 'Browser connection failed',
       'browser.connecting': 'Connecting…',
       'browser.empty': 'Enter a URL to start browsing',
-      'browser.launch.failed': 'Browser launch failed',
       'browser.loading': 'Loading…',
       'browser.error': 'Operation failed',
       'browser.newTabDefault': 'New tab',
@@ -403,9 +401,14 @@ window.__ModuleLoader__.load({
       const activeLoading = active !== null && loadingTabId === activeId;
       const addressIsSecure = /^https:\/\//i.test(address);
 
-      // Hide the DSH composer whenever this view is mounted (being mounted
-      // means it is the active conversation view), so the frame fills the
-      // whole conversation area even before any browser tab exists.
+      // Hide the DSH composer whenever this view is mounted, so the frame fills
+      // the whole conversation area even before any browser tab exists.
+      // NOTE: the view now renders in the right Sidebar, which is a sibling
+      // column of the conversation rather than a descendant of
+      // [data-conversation-scroll], so this closest() currently matches nothing
+      // and the hiding does not happen. test/view-width.test.js still asserts
+      // the contract, so the behaviour is restored rather than deleted —
+      // resolving it needs a layout decision, not a cleanup.
       const viewRef = React.useRef(null);
       React.useEffect(() => {
         const view = viewRef.current;

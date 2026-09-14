@@ -10,7 +10,7 @@ can see. This plugin opens pages inside the DSH host's network, captures
 frames via CDP `Page.startScreencast`, streams JPEG frames over a WebSocket to
 the GUI, and injects mouse / wheel / keyboard events back into the real page.
 
-- Registers a **浏览器 (Browser)** view in the `conversation.view` tab row, next to 对话 / 轨迹 / 终端, so it sits right beside the terminal.
+- Registers a **浏览器 (Browser)** page tab in the DSH Web right Sidebar, next to the terminal tab, so it sits right beside it.
 - Hides the conversation width handles while a non-chat view is active, keeping the browser surface stable beside the conversation navigation.
 - Opening the Browser view automatically creates one `about:blank` tab and shows a clean blank new-tab canvas; navigation is done from the top address bar. Closing the last tab returns to the empty state.
 - Address bar with back / forward / reload, and a tab strip with up to 12 tabs.
@@ -47,7 +47,7 @@ Local source directory:
 dsh plugin --profile web add file:/path/to/dsh-plugin-web-browser
 ```
 
-The view appears in the conversation tab row (对话 / 轨迹 / 终端 / 浏览器).
+The view appears in the right Sidebar's page-tab row, beside 终端.
 Restart `dsh web` after installing.
 
 ## Config
@@ -82,4 +82,4 @@ Restart `dsh web` after installing.
 - `dsh-deeptutor` renders answers to self-contained HTML files (`html` parameter, `html-doc` skill). With `allowFile: true`, those files can be opened directly in this panel.
 - `dsh-plugin-browser-use` drives its own headless Chromium for agent tool calls. Sharing a single browser session between the agent's tools and this visible panel is planned (both speak CDP); in this release they are independent.
 
-The published package is `@yiln-dsh/dsh-plugin-web-browser@0.1.3`.
+The published package is `@yiln-dsh/dsh-plugin-web-browser@0.1.4`.
