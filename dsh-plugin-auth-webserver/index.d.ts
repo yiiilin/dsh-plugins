@@ -24,7 +24,9 @@ export function apply(ctx: any, config?: Partial<{
   allowInsecureSettingsEditor: boolean;
   passkeyRpName: string;
   passkeyRpId: string;
+  /** Ceiling on a browser session that activity cannot extend; 0 imposes none. */
   sessionMaxAgeSeconds: number;
+  /** Idle lifetime of a browser session; every accepted request slides it. */
   sessionIdleTimeoutSeconds: number;
   loginMaxAttempts: number;
   loginWindowSeconds: number;

@@ -5,6 +5,12 @@ import { join } from "node:path";
 export const SESSION_STORE_VERSION = 1;
 export const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/u;
 export const SESSION_PERSIST_INTERVAL_MS = 30_000;
+/** A browser cookie is re-issued once this fraction of its lifetime has passed. */
+export const SESSION_COOKIE_RENEW_DIVISOR = 3;
+/** Deadline of a session whose configuration disables every lifetime bound. */
+export const SESSION_NEVER_EXPIRES_AT = Number.MAX_SAFE_INTEGER;
+/** Browser-cookie lifetime advertised when the session itself is unbounded. */
+export const SESSION_FALLBACK_COOKIE_LIFETIME_MS = 30 * 24 * 3600 * 1000;
 
 function sanitizeUserAgent(value) {
   return String(value ?? "")
@@ -24,6 +30,10 @@ function normalizeSessionRecord(value) {
     issuedAt: value.issuedAt,
     lastSeenAt: Math.max(value.issuedAt, value.lastSeenAt),
     expiresAt: value.expiresAt,
+    // Records written before the cookie lifetime was refreshed on activity
+    // carry no `renewedAt`; treating them as never renewed re-issues their
+    // browser cookie on the next request.
+    renewedAt: Number.isSafeInteger(value.renewedAt) ? Math.max(value.issuedAt, value.renewedAt) : value.issuedAt,
     address: typeof value.address === "string" ? value.address.slice(0, 128) : "unknown",
     userAgent: sanitizeUserAgent(value.userAgent),
     secure: value.secure === true,
@@ -44,7 +54,14 @@ function publicSession(record, currentId) {
   };
 }
 
-/** Persistent registry for signed browser sessions; it stores no bearer token. */
+/**
+ * Persistent registry for signed browser sessions; it stores no bearer token.
+ *
+ * A record's deadline slides: every accepted request moves it to `lastSeenAt +
+ * idleTimeoutSeconds`, so a browser that keeps being used never has to log in
+ * again. `maxAgeSeconds` is an optional ceiling that activity cannot extend;
+ * zero leaves the idle window as the only bound.
+ */
 export class SessionStore {
   records = new Map();
   #directory;
@@ -64,6 +81,7 @@ export class SessionStore {
     this.#now = now;
     this.#logger = logger;
     this.#load();
+    this.#adoptConfiguredLifetime();
   }
 
   #load() {
@@ -80,6 +98,65 @@ export class SessionStore {
     } catch (error) {
       this.#logger?.warn?.("auth-webserver: persistent session store could not be read: %s", error);
     }
+  }
+
+  /**
+   * Re-evaluate persisted deadlines under the configuration in force now, so a
+   * deployment that lengthens its lifetime keeps the sessions its own recent
+   * activity already earned, and one that shortens it does not honour a
+   * deadline the stricter rule no longer grants.
+   */
+  #adoptConfiguredLifetime() {
+    let changed = false;
+    for (const record of this.records.values()) {
+      const deadline = this.#deadline(record.issuedAt, record.lastSeenAt);
+      if (deadline === record.expiresAt) continue;
+      record.expiresAt = deadline;
+      changed = true;
+    }
+    if (changed) this.persist();
+  }
+
+  /** Deadline earned by one record: the earliest configured bound, or none. */
+  #deadline(issuedAt, lastSeenAt) {
+    const bounds = [];
+    if (this.#idleTimeoutMs > 0) bounds.push(lastSeenAt + this.#idleTimeoutMs);
+    if (this.#maxAgeMs > 0) bounds.push(issuedAt + this.#maxAgeMs);
+    return bounds.length === 0 ? SESSION_NEVER_EXPIRES_AT : Math.min(...bounds);
+  }
+
+  /**
+   * Lifetime to advertise to the browser for one record. A cookie is always
+   * finite — a browser that never expires it would keep presenting a bearer
+   * value long after the server stopped accepting it.
+   */
+  #advertisedLifetimeMs(record, now) {
+    const bounds = [];
+    if (this.#idleTimeoutMs > 0) bounds.push(this.#idleTimeoutMs);
+    if (this.#maxAgeMs > 0) bounds.push(this.#maxAgeMs);
+    if (record.expiresAt !== SESSION_NEVER_EXPIRES_AT) bounds.push(Math.max(0, record.expiresAt - now));
+    if (bounds.length === 0) return SESSION_FALLBACK_COOKIE_LIFETIME_MS;
+    return Math.max(1000, Math.min(...bounds));
+  }
+
+  /** Persist the browser-cookie lifetime this record should carry, in seconds. */
+  cookieLifetimeSeconds(record, now = this.#now()) {
+    if (record.expiresAt <= now) return 0;
+    // Rounded up: a lifetime measured a few milliseconds after it was granted
+    // must not advertise one second less than the window it stands for.
+    return Math.max(1, Math.ceil(this.#advertisedLifetimeMs(record, now) / 1000));
+  }
+
+  /** Whether the browser cookie is due to be re-issued so it outlives the session. */
+  cookieRenewalDue(record, now = this.#now()) {
+    if (record.expiresAt <= now) return false;
+    return now - record.renewedAt >= Math.floor(this.#advertisedLifetimeMs(record, now) / SESSION_COOKIE_RENEW_DIVISOR);
+  }
+
+  /** Record that the browser cookie was re-issued with a fresh lifetime. */
+  markCookieRenewed(record, now = this.#now()) {
+    record.renewedAt = now;
+    this.persist();
   }
 
   /** Atomically persist records with owner-only permissions. */
@@ -108,7 +185,7 @@ export class SessionStore {
   }
 
   #expired(record, now) {
-    return record.expiresAt <= now || (this.#idleTimeoutMs > 0 && record.lastSeenAt + this.#idleTimeoutMs <= now);
+    return record.expiresAt <= now;
   }
 
   prune(now = this.#now()) {
@@ -134,7 +211,8 @@ export class SessionStore {
       username: typeof username === "string" ? username.slice(0, 256) : "admin",
       issuedAt: now,
       lastSeenAt: now,
-      expiresAt: now + this.#maxAgeMs,
+      expiresAt: this.#deadline(now, now),
+      renewedAt: now,
       address: typeof address === "string" ? address.slice(0, 128) : "unknown",
       userAgent: sanitizeUserAgent(userAgent),
       secure: secure === true,
@@ -156,6 +234,7 @@ export class SessionStore {
       return null;
     }
     record.lastSeenAt = now;
+    record.expiresAt = this.#deadline(record.issuedAt, now);
     if (now - this.#lastPersistAt >= SESSION_PERSIST_INTERVAL_MS) this.persist();
     return record;
   }

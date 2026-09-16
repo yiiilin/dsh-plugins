@@ -23,7 +23,7 @@ function close(server) {
   return new Promise((resolve) => server.close(() => resolve()));
 }
 
-function httpRequest({ host, port, path, method = "GET", headers = {} }) {
+function httpRequest({ host, port, path, method = "GET", headers = {}, body }) {
   return new Promise((resolve, reject) => {
     const outgoing = request({ host, port, path, method, headers }, (response) => {
       const chunks = [];
@@ -35,7 +35,7 @@ function httpRequest({ host, port, path, method = "GET", headers = {} }) {
       }));
     });
     outgoing.once("error", reject);
-    outgoing.end();
+    outgoing.end(body);
   });
 }
 
@@ -229,6 +229,141 @@ test("bridges gateway-authenticated traffic to core after a stale public token",
     const closeGateway = effects.at(-1);
     if (typeof closeGateway === "function") await closeGateway();
     for (const socket of coreSockets) socket.destroy();
+    await close(core);
+    rmSync(home, { recursive: true, force: true });
+    if (savedHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = savedHome;
+    if (savedAuthUser === undefined) delete process.env.DSH_AUTH_USER;
+    else process.env.DSH_AUTH_USER = savedAuthUser;
+    if (savedAuthPass === undefined) delete process.env.DSH_AUTH_PASS;
+    else process.env.DSH_AUTH_PASS = savedAuthPass;
+    if (savedUser === undefined) delete process.env.AUTH_USER;
+    else process.env.AUTH_USER = savedUser;
+    if (savedPass === undefined) delete process.env.AUTH_PASS;
+    else process.env.AUTH_PASS = savedPass;
+  }
+});
+
+test("re-issues the browser cookie so a session in use never returns to the login form", async () => {
+  const home = mkdtempSync(join(tmpdir(), "dsh-auth-webserver-renewal-"));
+  const savedHome = process.env.DSH_HOME;
+  const savedAuthUser = process.env.DSH_AUTH_USER;
+  const savedAuthPass = process.env.DSH_AUTH_PASS;
+  const savedUser = process.env.AUTH_USER;
+  const savedPass = process.env.AUTH_PASS;
+  delete process.env.DSH_AUTH_USER;
+  delete process.env.DSH_AUTH_PASS;
+  delete process.env.AUTH_USER;
+  delete process.env.AUTH_PASS;
+  process.env.DSH_HOME = home;
+
+  const core = createServer((req, res) => {
+    if (req.url?.startsWith("/?token=core-process-token") === true) {
+      res.writeHead(303, {
+        location: "/",
+        "set-cookie": ["dsh-auth-current=v1.body.signature; Max-Age=60; Path=/; HttpOnly"],
+      });
+      res.end();
+      return;
+    }
+    if (req.headers.cookie !== "dsh-auth-current=v1.body.signature") {
+      res.writeHead(401);
+      res.end("core unauthorized");
+      return;
+    }
+    res.writeHead(200, {
+      "content-type": "text/plain; charset=utf-8",
+      "set-cookie": "app=visible; Path=/",
+    });
+    res.end(req.url ?? "");
+  });
+  const corePort = await listen(core);
+  const gatewayProbe = createServer();
+  const gatewayPort = await listen(gatewayProbe, "127.0.0.2");
+  await close(gatewayProbe);
+
+  const effects = [];
+  const settingsScope = {
+    get: () => ({ username: "admin", password: "gateway-pass", realm: "Test", twoFactorEnabled: false, twoFactorSecret: "", authEpoch: 0 }),
+    watch: () => () => {},
+  };
+  const settings = {
+    writable: false,
+    register: () => settingsScope,
+    describe: () => [],
+    update: async () => {},
+  };
+  const ctx = {
+    connection: {
+      authenticatedUrl(baseUrl) {
+        return `${baseUrl}/?token=core-process-token`;
+      },
+    },
+    logger: { warn() {}, info() {} },
+    get(name) {
+      return name === "settings" ? settings : undefined;
+    },
+    effect(factory) {
+      const disposer = factory();
+      effects.push(disposer);
+      return disposer;
+    },
+  };
+
+  try {
+    await apply(ctx, {
+      port: gatewayPort,
+      targetHost: "127.0.0.1",
+      targetPort: corePort,
+      addresses: ["127.0.0.2"],
+      allowedOrigins: [`http://127.0.0.2:${gatewayPort}`],
+      username: "admin",
+      password: "gateway-pass",
+      // A three-second window keeps the test quick; the default is three days.
+      sessionIdleTimeoutSeconds: 3,
+    });
+
+    const publicOrigin = `http://127.0.0.2:${gatewayPort}`;
+    const submitted = JSON.stringify({ username: "admin", password: "gateway-pass" });
+    const login = await httpRequest({
+      host: "127.0.0.2",
+      port: gatewayPort,
+      path: "/api/auth.login",
+      method: "POST",
+      headers: {
+        origin: publicOrigin,
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(submitted)),
+      },
+      body: submitted,
+    });
+    assert.equal(login.statusCode, 200);
+    const issued = login.headers["set-cookie"].find((entry) => entry.startsWith("dsh_auth_token="));
+    assert.ok(issued?.endsWith("Max-Age=3"), `unexpected login cookie: ${String(issued)}`);
+    const cookie = issued.split(";", 1)[0];
+
+    // Each request arrives later than a third of the window: the cookie would
+    // lapse in the browser unless every response re-issued it, and the session
+    // would idle out altogether if a request did not slide its deadline.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const response = await httpRequest({
+        host: "127.0.0.2",
+        port: gatewayPort,
+        path: "/",
+        headers: { origin: publicOrigin, cookie },
+      });
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(
+        response.headers["set-cookie"].filter((entry) => entry.startsWith("dsh_auth_token=")),
+        [`${cookie}; Path=/; HttpOnly; SameSite=Strict; Max-Age=3`],
+      );
+      // The upstream's own cookie still rides the same response.
+      assert.ok(response.headers["set-cookie"].includes("app=visible; Path=/"));
+    }
+  } finally {
+    const closeGateway = effects.at(-1);
+    if (typeof closeGateway === "function") await closeGateway();
     await close(core);
     rmSync(home, { recursive: true, force: true });
     if (savedHome === undefined) delete process.env.DSH_HOME;

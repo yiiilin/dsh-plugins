@@ -72,8 +72,11 @@ const COOKIE_NAME = "dsh_auth_token";
 const CSRF_COOKIE_NAME = "dsh_auth_csrf";
 const SECURE_COOKIE_NAME = "__Host-dsh_auth_token";
 const SECURE_CSRF_COOKIE_NAME = "__Host-dsh_auth_csrf";
-const DEFAULT_SESSION_MAX_AGE_SECONDS = 24 * 3600;
-const DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS = 12 * 3600;
+// A browser session lives as long as it is used: the idle window slides on
+// every authenticated request, and the browser cookie is re-issued before it
+// lapses. No absolute lifetime is imposed unless the deployment configures one.
+const DEFAULT_SESSION_MAX_AGE_SECONDS = 0;
+const DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS = 3 * 24 * 3600;
 const DEFAULT_PASSKEY_RP_NAME = "DeepSeek Harness";
 const DEFAULT_LOGIN_WINDOW_SECONDS = 60;
 const DEFAULT_LOGIN_MAX_ATTEMPTS = 10;
@@ -86,6 +89,7 @@ const STATE_DIR_SEGMENTS = ["plugins", "dsh-plugin-auth-webserver"];
 const GATEWAY_REQUEST = Symbol("auth-webserver gateway request");
 const RATE_LIMITED_REQUEST = Symbol("auth-webserver rate limited request");
 const RATE_LIMIT_RETRY_AFTER = Symbol("auth-webserver rate limit retry after");
+const SESSION_COOKIE_RENEWAL = Symbol("auth-webserver session cookie renewal");
 
 // Immutable install metadata, icons, and the pass-through service worker stay
 // reachable before login; application HTML, APIs, and WebSocket upgrades remain gated.
@@ -311,9 +315,15 @@ export const Config = z.object({
    * of the request.
    */
   passkeyAllowInsecure: z.boolean().default(false),
-  /** Absolute lifetime of a browser session. */
-  sessionMaxAgeSeconds: z.natural().min(300).max(30 * 24 * 3600).default(DEFAULT_SESSION_MAX_AGE_SECONDS),
-  /** Idle lifetime of a browser session; zero disables the idle check. */
+  /**
+   * Ceiling on the lifetime of a browser session, which activity cannot
+   * extend. Zero imposes no ceiling, so the idle window alone ends a session.
+   */
+  sessionMaxAgeSeconds: z.natural().max(30 * 24 * 3600).default(DEFAULT_SESSION_MAX_AGE_SECONDS),
+  /**
+   * Idle lifetime of a browser session: any authenticated request moves the
+   * deadline this far out. Zero disables the idle check.
+   */
   sessionIdleTimeoutSeconds: z.natural().max(30 * 24 * 3600).default(DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS),
   /** Failed authentication attempts allowed per client/user window. */
   loginMaxAttempts: z.natural().min(1).max(1000).default(DEFAULT_LOGIN_MAX_ATTEMPTS),
@@ -520,6 +530,11 @@ export async function apply(ctx, config) {
   };
   const secret = loadOrCreateSecret();
   const activeSockets = new Map();
+  if (config.sessionIdleTimeoutSeconds <= 0 && config.sessionMaxAgeSeconds <= 0) {
+    ctx.logger?.warn?.(
+      "auth-webserver: session idle timeout and absolute lifetime are both zero; browser sessions never expire on their own",
+    );
+  }
   const sessionStore = new SessionStore({
     directory: stateDir(),
     maxAgeSeconds: config.sessionMaxAgeSeconds,
@@ -1134,7 +1149,7 @@ export async function apply(ctx, config) {
     const signature = createHmac("sha256", secret)
       .update(`${sessionId}\u0000${user}\u0000${pass}\u0000${authEpoch}\u0000${tokenFactor(twoFactorEnabled, twoFactorSecret)}\u0000${now}`)
       .digest("hex");
-    return `${sessionId}.${now}.${signature}`;
+    return { token: `${sessionId}.${now}.${signature}`, record };
   };
 
   const csrfForToken = (token) => createHmac("sha256", secret)
@@ -1150,7 +1165,9 @@ export async function apply(ctx, config) {
     if (!Number.isSafeInteger(timestamp)) return false;
     const age = Date.now() - timestamp;
     const maxAgeMs = config.sessionMaxAgeSeconds * 1000;
-    if (age < -60000 || age > maxAgeMs) return false;
+    // The sliding idle window is enforced against the persisted record; this
+    // only rejects a signature older than a configured ceiling.
+    if (age < -60000 || (maxAgeMs > 0 && age > maxAgeMs)) return false;
     const record = sessions.get(sessionId);
     if (record === undefined || record.issuedAt !== timestamp) return false;
     const expected = createHmac("sha256", secret)
@@ -1237,11 +1254,11 @@ export async function apply(ctx, config) {
   const cookieValue = (cookies, names, key) => cookies[names[key]];
   const cookieHeader = (name, value, secure, maxAge, httpOnly) =>
     `${name}=${value}; Path=/;${httpOnly ? " HttpOnly;" : ""} SameSite=Strict; Max-Age=${maxAge}${secure || name.startsWith("__Host-") ? "; Secure" : ""}`;
-  const loginCookieHeaders = (token, csrf, secure) => {
+  const loginCookieHeaders = (token, csrf, secure, maxAgeSeconds) => {
     const names = cookieNames(secure);
     return [
-      cookieHeader(names.token, token, secure, config.sessionMaxAgeSeconds, true),
-      cookieHeader(names.csrf, csrf, secure, config.sessionMaxAgeSeconds, false),
+      cookieHeader(names.token, token, secure, maxAgeSeconds, true),
+      cookieHeader(names.csrf, csrf, secure, maxAgeSeconds, false),
       cookieHeader(names.legacyToken, "", secure, 0, true),
       cookieHeader(names.legacyCsrf, "", secure, 0, false),
     ];
@@ -1252,6 +1269,28 @@ export async function apply(ctx, config) {
     cookieHeader(SECURE_COOKIE_NAME, "", true, 0, true),
     cookieHeader(SECURE_CSRF_COOKIE_NAME, "", true, 0, false),
   ];
+
+  /**
+   * Re-issue the browser cookie before it lapses, so a session that keeps being
+   * used never returns the browser to the login form. Only the lifetime the
+   * browser keeps changes: the signed value and its record stay as they are.
+   * The cookies ride the response header map rather than `setHeader`, because
+   * `writeHead` replaces a header an upstream response already carries.
+   */
+  const renewSessionCookie = (req, res, auth) => {
+    if (auth?.kind !== "cookie" || res.headersSent) return;
+    const record = sessions.get(auth.sessionId);
+    if (record === undefined || !sessionStore.cookieRenewalDue(record)) return;
+    req[SESSION_COOKIE_RENEWAL] = {
+      record,
+      headers: loginCookieHeaders(
+        auth.token,
+        auth.csrf,
+        isSecureRequest(req),
+        sessionStore.cookieLifetimeSeconds(record),
+      ),
+    };
+  };
 
   const authenticateRequest = (req) => {
     const { user, pass, twoFactorEnabled, twoFactorSecret, authEpoch } = credentials();
@@ -1420,12 +1459,12 @@ export async function apply(ctx, config) {
     transports: entry.transports,
   }));
   const issueLoginSession = (req, res, current, locale) => {
-    const token = generateToken(req, current.user, current.pass, current.authEpoch, current.twoFactorEnabled, current.twoFactorSecret);
+    const { token, record } = generateToken(req, current.user, current.pass, current.authEpoch, current.twoFactorEnabled, current.twoFactorSecret);
     const csrf = csrfForToken(token);
     const secure = isSecureRequest(req);
     sendJson(res, 200, { ok: true, username: current.user }, {
       "Content-Language": locale,
-      "Set-Cookie": loginCookieHeaders(token, csrf, secure),
+      "Set-Cookie": loginCookieHeaders(token, csrf, secure, sessionStore.cookieLifetimeSeconds(record)),
       ...securityHeaders({ secure }),
     });
   };
@@ -1804,6 +1843,15 @@ export async function apply(ctx, config) {
     }
     if (!publicPwaRequest) result["cache-control"] = "no-store";
     stripCoreSetCookies(result);
+    const renewal = req[SESSION_COOKIE_RENEWAL];
+    if (renewal !== undefined) {
+      const existing = result["set-cookie"];
+      const cookies = existing === undefined ? [] : [existing].flat();
+      result["set-cookie"] = [...cookies, ...renewal.headers];
+      // The browser only receives the fresh lifetime on this response, so the
+      // record is marked here, where the header is actually assembled.
+      sessionStore.markCookieRenewed(renewal.record);
+    }
     return result;
   };
 
@@ -2001,9 +2049,14 @@ export async function apply(ctx, config) {
         if (idleTimer !== undefined) clearTimeout(idleTimer);
         idleTimer = setTimeout(closePair, idleMs);
       };
-      const expiryDeadline = auth?.issuedAt + config.sessionMaxAgeSeconds * 1000;
+      // A WebSocket carries no Set-Cookie, so it can only be closed at the
+      // configured ceiling; without one, activity on either side keeps the
+      // session alive and the socket stays open.
+      const expiryDeadline = config.sessionMaxAgeSeconds > 0
+        ? auth?.issuedAt + config.sessionMaxAgeSeconds * 1000
+        : undefined;
       const armExpiry = () => {
-        if (!Number.isFinite(expiryDeadline) || pair.closed) return;
+        if (expiryDeadline === undefined || !Number.isFinite(expiryDeadline) || pair.closed) return;
         const remaining = expiryDeadline - Date.now();
         if (remaining <= 0) {
           closePair();
@@ -2181,10 +2234,12 @@ export async function apply(ctx, config) {
           return handleTwoFactorSetup(req, res);
         }
         const publicPwaRequest = isPublicPwaRequest(req, rawPath);
-        if (!publicPwaRequest && !checkAuth(req)) {
+        const auth = publicPwaRequest ? null : checkAuth(req);
+        if (!publicPwaRequest && auth === null) {
           sendUnauthorized(req, res, credentials().realm, rawPath, credentials().twoFactorEnabled, isSecureRequest(req), passkeyStore.hasAny(), passkeyAllowInsecure);
           return;
         }
+        renewSessionCookie(req, res, auth);
         return proxyRequest(req, res, rawPath);
       }).catch((error) => {
         ctx.logger?.warn?.("auth-webserver: request handler failed", error);

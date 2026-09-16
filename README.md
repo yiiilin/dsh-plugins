@@ -7,7 +7,7 @@ own directory.
 
 | Plugin | Purpose |
 | --- | --- |
-| [`@yiln-dsh/dsh-plugin-auth-webserver`](./dsh-plugin-auth-webserver) | Auth-gated reverse proxy with Host/Origin policy, HTTPS/TOTP, bounded sessions, WebSockets, and authenticated remote Settings/Models support. |
+| [`@yiln-dsh/dsh-plugin-auth-webserver`](./dsh-plugin-auth-webserver) | Auth-gated reverse proxy with Host/Origin policy, HTTPS/TOTP, sliding sessions, WebSockets, and authenticated remote Settings/Models support. |
 | [`@yiln-dsh/dsh-plugin-file-message`](./dsh-plugin-file-message) | Let the model send workspace-backed files and images into the conversation. |
 | [`@yiln-dsh/dsh-plugin-git-graph`](./dsh-plugin-git-graph) | Contribute a Git Graph page tab to the DSH Web right Sidebar: lane graph, commit and working-tree diffs, and uncommitted changes. |
 | [`@yiln-dsh/dsh-plugin-llm-adapter`](./dsh-plugin-llm-adapter) | Fork the DSH pi-ai adapter with per-model reasoning/tier controls, optional tool-argument filler cleanup, and reliable image request serialization. |
@@ -70,7 +70,7 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 
 | Package | Version |
 | --- | --- |
-| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.8.1` |
+| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.9.0` |
 | `@yiln-dsh/dsh-plugin-delete-session` | `0.4.2` |
 | `@yiln-dsh/dsh-plugin-file-message` | `0.3.3` |
 | `@yiln-dsh/dsh-plugin-git-graph` | `0.2.0` |

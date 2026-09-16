@@ -8,8 +8,8 @@ A DSH `dsh.bundle` that keeps the stock webserver untouched and adds an
   (e.g. `192.168.1.5:3080`);
 - it requires HTTP Basic Auth or an HMAC login cookie; TOTP can be required to disable Basic Auth;
 - configured Host/Origin policy, HTTPS enforcement, bounded authentication
-  rate limits, short absolute/idle sessions, and security response headers are
-  available for internet-facing deployments;
+  rate limits, sliding idle sessions with an optional absolute ceiling, and
+  security response headers are available for internet-facing deployments;
 - every accepted request — including WebSocket upgrades — is proxied to the
   stock `127.0.0.1:3080` server;
 - the gateway completes DSH core's rotating browser-session exchange internally
@@ -22,9 +22,9 @@ A DSH `dsh.bundle` that keeps the stock webserver untouched and adds an
   stays desktop-only so it cannot crowd the mobile header, and the composer
   toolbar stays on one line in sessions that carry a model label and the
   context meter;
-- the gateway maintains owner-only persistent browser-session records, so valid
-  Cookie sessions survive a daemon restart and can be revoked individually from
-  the settings card;
+- the gateway maintains owner-only persistent browser-session records with a
+  sliding deadline, so Cookie sessions survive a daemon restart, stay valid
+  while they are used, and can be revoked individually from the settings card;
 - the gateway supplies a complete PWA manifest, 180/192/512px PNG icons,
   iOS home-screen metadata, and a pass-through service worker;
 - optional WebAuthn Passkeys can replace password entry for enrolled devices,
@@ -45,7 +45,7 @@ authentication.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.8.1`.
+The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.9.0`.
 
 The plugin is plain JavaScript source; there is no build step.
 
@@ -67,7 +67,7 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.8.1.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.9.0.tgz
 ```
 
 The tarball already contains the runnable source. A user can also unpack it,
@@ -89,7 +89,7 @@ dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@latest
 Pin a version if you want reproducible installs:
 
 ```bash
-dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.8.1
+dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.9.0
 ```
 
 ### Direct GitHub
@@ -114,7 +114,7 @@ The plugin version is defined by the `version` field in `package.json`:
 ```json
 {
   "name": "@yiln-dsh/dsh-plugin-auth-webserver",
-  "version": "0.8.1"
+  "version": "0.9.0"
 }
 ```
 
@@ -126,8 +126,8 @@ Semantic versioning is recommended:
 
 The selected version is used for:
 
-- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.8.1`
-- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.8.1.tgz`
+- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.9.0`
+- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.9.0.tgz`
 - the metadata inside the tarball/npm package
 
 A `file:` source install uses the version that is currently in the source tree;
@@ -232,13 +232,18 @@ Or start it explicitly:
 DSH_AUTH_USER=admin DSH_AUTH_PASS='change-me' dsh web --no-open
 ```
 
-The browser login form sets a 24-hour `HttpOnly` session cookie plus a CSRF
-cookie by default. Over HTTPS it uses `__Host-` cookie names, `Secure`, and
+The browser login form sets an `HttpOnly` session cookie plus a CSRF cookie by
+default. Over HTTPS it uses `__Host-` cookie names, `Secure`, and
 `SameSite=Strict`; the legacy names remain only for plain-HTTP LAN
-compatibility. The session also expires after 12 hours of inactivity by default,
-and its server-side record survives a daemon restart until either timeout is
-reached. Normal logout revokes only the current browser session; changing the
-password or 2FA settings revokes every session and closes every active WebSocket.
+compatibility. A session lives as long as it is used: the default idle window is
+three days, every accepted request moves its deadline that far out again, and
+the gateway re-issues the browser cookie before it lapses — so a browser that
+keeps talking to the gateway never returns to the login form. Only three days
+without a single request ends the session. No absolute lifetime is imposed
+unless `sessionMaxAgeSeconds` sets one, and the server-side record survives a
+daemon restart until its deadline is reached. Normal logout revokes only the
+current browser session; changing the password or 2FA settings revokes every
+session and closes every active WebSocket.
 automation clients can use a standard Basic Auth header against a LAN address,
 but every failed Basic attempt is subject to the same bounded rate limiter as
 form login.
@@ -372,8 +377,12 @@ Edit `$DSH_HOME/profiles/web/cordis.patch.yml` after installing:
     # request. The browser still needs a secure context, so this is for the
     # HTTPS-proxy / tunnel hop, never for a plain-HTTP LAN address.
     passkeyAllowInsecure: false
-    sessionMaxAgeSeconds: 86400
-    sessionIdleTimeoutSeconds: 43200
+    # A browser session expires after this much inactivity; every accepted
+    # request slides the deadline. 259200 = 3 days.
+    sessionIdleTimeoutSeconds: 259200
+    # Optional ceiling that activity cannot extend. 0 means the idle window
+    # above is the only bound.
+    sessionMaxAgeSeconds: 0
     loginMaxAttempts: 10
     loginWindowSeconds: 60
     maxLoginAttemptEntries: 10000
