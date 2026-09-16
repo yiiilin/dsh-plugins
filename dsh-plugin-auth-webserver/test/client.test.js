@@ -151,3 +151,27 @@ test("names the cause of a failed passkey operation", () => {
   assert.ok(CLIENT_SOURCE.includes("function passkeyFailureMessage"));
   assert.ok(CLIENT_SOURCE.includes("function httpFailure"));
 });
+
+test("edits the session lifetimes through localized, step-up-required fields", () => {
+  for (const key of [
+    "sessionLifetime.title",
+    "sessionLifetime.description",
+    "sessionLifetime.idle",
+    "sessionLifetime.idleHint",
+    "sessionLifetime.maxAge",
+    "sessionLifetime.maxAgeHint",
+    "sessionLifetime.disabled",
+    "sessionLifetime.effective",
+    "sessionLifetime.stepUp",
+    "sessionLifetime.fromConfig",
+  ]) {
+    assert.ok(CLIENT_SOURCE.includes(`t("${key}"`), `${key} must be read through the locale helper`);
+  }
+  // Both values ride the existing save call, and a lifetime edit demands the
+  // same step-up credentials a password change does.
+  assert.match(CLIENT_SOURCE, /payload\.sessionIdleTimeoutSeconds = idleInput/u);
+  assert.match(CLIENT_SOURCE, /payload\.sessionMaxAgeSeconds = maxAgeInput/u);
+  assert.match(CLIENT_SOURCE, /if \(password !== "" \|\| lifetimeChanged\)/u);
+  assert.match(CLIENT_SOURCE, /\|\| password !== "" \|\| lifetimeChanged\n/u);
+  assert.match(CLIENT_SOURCE, /function lifetimeText\(t, seconds\)/u);
+});

@@ -117,6 +117,17 @@ export class SessionStore {
     if (changed) this.persist();
   }
 
+  /**
+   * Adopt a configuration changed while the store is loaded: deadlines are
+   * re-evaluated immediately, so a longer window takes effect on the running
+   * gateway instead of at its next restart.
+   */
+  configure({ maxAgeSeconds, idleTimeoutSeconds } = {}) {
+    if (maxAgeSeconds !== undefined) this.#maxAgeMs = Math.max(0, Number(maxAgeSeconds) || 0) * 1000;
+    if (idleTimeoutSeconds !== undefined) this.#idleTimeoutMs = Math.max(0, Number(idleTimeoutSeconds) || 0) * 1000;
+    this.#adoptConfiguredLifetime();
+  }
+
   /** Deadline earned by one record: the earliest configured bound, or none. */
   #deadline(issuedAt, lastSeenAt) {
     const bounds = [];

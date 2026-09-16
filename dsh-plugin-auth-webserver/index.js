@@ -77,6 +77,7 @@ const SECURE_CSRF_COOKIE_NAME = "__Host-dsh_auth_csrf";
 // lapses. No absolute lifetime is imposed unless the deployment configures one.
 const DEFAULT_SESSION_MAX_AGE_SECONDS = 0;
 const DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS = 3 * 24 * 3600;
+const MAX_SESSION_LIFETIME_SECONDS = 30 * 24 * 3600;
 const DEFAULT_PASSKEY_RP_NAME = "DeepSeek Harness";
 const DEFAULT_LOGIN_WINDOW_SECONDS = 60;
 const DEFAULT_LOGIN_MAX_ATTEMPTS = 10;
@@ -318,13 +319,15 @@ export const Config = z.object({
   /**
    * Ceiling on the lifetime of a browser session, which activity cannot
    * extend. Zero imposes no ceiling, so the idle window alone ends a session.
+   * The settings document (and the GUI card) override this row value.
    */
-  sessionMaxAgeSeconds: z.natural().max(30 * 24 * 3600).default(DEFAULT_SESSION_MAX_AGE_SECONDS),
+  sessionMaxAgeSeconds: z.natural().max(MAX_SESSION_LIFETIME_SECONDS).default(DEFAULT_SESSION_MAX_AGE_SECONDS),
   /**
    * Idle lifetime of a browser session: any authenticated request moves the
-   * deadline this far out. Zero disables the idle check.
+   * deadline this far out. Zero disables the idle check. The settings document
+   * (and the GUI card) override this row value.
    */
-  sessionIdleTimeoutSeconds: z.natural().max(30 * 24 * 3600).default(DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS),
+  sessionIdleTimeoutSeconds: z.natural().max(MAX_SESSION_LIFETIME_SECONDS).default(DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS),
   /** Failed authentication attempts allowed per client/user window. */
   loginMaxAttempts: z.natural().min(1).max(1000).default(DEFAULT_LOGIN_MAX_ATTEMPTS),
   /** Duration of the failed-authentication window. */
@@ -343,7 +346,9 @@ export const Config = z.object({
 
 /**
  * The settings namespace schema. Password is a secret-role field: it never
- * rides a describe response, and the GUI card treats it as write-only.
+ * rides a describe response, and the GUI card treats it as write-only. The
+ * session lifetimes are policy values the card may edit, but only behind the
+ * same step-up check as a password change.
  */
 const SettingsSchema = z.object({
   username: z.string().min(1).default("admin"),
@@ -352,7 +357,17 @@ const SettingsSchema = z.object({
   twoFactorEnabled: z.boolean().default(false),
   twoFactorSecret: z.string().role("secret").default(""),
   authEpoch: z.natural().default(0),
+  /** Idle lifetime of a browser session; every accepted request slides it. */
+  sessionIdleTimeoutSeconds: z.natural().max(MAX_SESSION_LIFETIME_SECONDS).default(DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS),
+  /** Ceiling on a browser session that activity cannot extend; 0 imposes none. */
+  sessionMaxAgeSeconds: z.natural().max(MAX_SESSION_LIFETIME_SECONDS).default(DEFAULT_SESSION_MAX_AGE_SECONDS),
 });
+
+/** Accept only a whole number of seconds inside the configured range. */
+function sessionLifetimeSeconds(value, fallback) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_SESSION_LIFETIME_SECONDS) return fallback;
+  return value;
+}
 
 function stateFile() {
   return join(stateDir(), "state.json");
@@ -530,11 +545,6 @@ export async function apply(ctx, config) {
   };
   const secret = loadOrCreateSecret();
   const activeSockets = new Map();
-  if (config.sessionIdleTimeoutSeconds <= 0 && config.sessionMaxAgeSeconds <= 0) {
-    ctx.logger?.warn?.(
-      "auth-webserver: session idle timeout and absolute lifetime are both zero; browser sessions never expire on their own",
-    );
-  }
   const sessionStore = new SessionStore({
     directory: stateDir(),
     maxAgeSeconds: config.sessionMaxAgeSeconds,
@@ -633,6 +643,8 @@ export async function apply(ctx, config) {
         ...(config.realm !== undefined ? { realm: config.realm } : {}),
         ...(config.twoFactorEnabled !== undefined ? { twoFactorEnabled: config.twoFactorEnabled } : {}),
         ...(config.twoFactorSecret !== undefined ? { twoFactorSecret: config.twoFactorSecret } : {}),
+        ...(config.sessionIdleTimeoutSeconds !== undefined ? { sessionIdleTimeoutSeconds: config.sessionIdleTimeoutSeconds } : {}),
+        ...(config.sessionMaxAgeSeconds !== undefined ? { sessionMaxAgeSeconds: config.sessionMaxAgeSeconds } : {}),
       },
       applies: "live",
     });
@@ -649,6 +661,33 @@ export async function apply(ctx, config) {
         revokeSessions();
       }
     }), "auth-webserver: revoke sessions on settings changes");
+  }
+
+  /**
+   * The lifetimes in force: the settings document wins over the row config that
+   * seeds its base layer, and either may be absent when the service is missing.
+   */
+  const effectiveSessionLifetime = () => {
+    const value = settingsScope?.get() ?? {};
+    return {
+      idleSeconds: sessionLifetimeSeconds(value.sessionIdleTimeoutSeconds, config.sessionIdleTimeoutSeconds),
+      maxAgeSeconds: sessionLifetimeSeconds(value.sessionMaxAgeSeconds, config.sessionMaxAgeSeconds),
+    };
+  };
+  const applySessionLifetime = () => {
+    const { idleSeconds, maxAgeSeconds } = effectiveSessionLifetime();
+    sessionStore.configure({ idleTimeoutSeconds: idleSeconds, maxAgeSeconds });
+    if (idleSeconds <= 0 && maxAgeSeconds <= 0) {
+      ctx.logger?.warn?.(
+        "auth-webserver: session idle timeout and absolute lifetime are both zero; browser sessions never expire on their own",
+      );
+    }
+  };
+  applySessionLifetime();
+  if (settingsScope !== undefined) {
+    ctx.effect(() => settingsScope.watch(() => {
+      applySessionLifetime();
+    }), "auth-webserver: apply session lifetimes");
   }
 
   const envUser = process.env.DSH_AUTH_USER || process.env.AUTH_USER;
@@ -801,6 +840,9 @@ export async function apply(ctx, config) {
       twoFactorOverriddenByConfig: Boolean(config.twoFactorEnabled || config.requireTwoFactor || config.twoFactorSecret),
       twoFactorRequiredByConfig: Boolean(config.requireTwoFactor),
       twoFactorOverriddenBySettings: userLayerHasField(descriptor, "twoFactorEnabled") || userLayerHasField(descriptor, "twoFactorSecret"),
+      ...effectiveSessionLifetime(),
+      sessionLifetimeFromSettings: userLayerHasField(descriptor, "sessionIdleTimeoutSeconds")
+        || userLayerHasField(descriptor, "sessionMaxAgeSeconds"),
       sessions: listSessions(currentId),
       passkeys: passkeyStore.list(),
     };
@@ -929,12 +971,21 @@ export async function apply(ctx, config) {
       }
       next.username = body.username.trim();
     }
-    // Password changes require a step-up check in addition to the session and CSRF token.
+    // Password and session-lifetime changes require one step-up check in
+    // addition to the session and CSRF token. The check is memoized because
+    // consuming a TOTP code twice in one request would fail the second time.
+    let stepUp;
+    const stepUpVerified = () => {
+      if (stepUp === undefined) {
+        const current = credentials();
+        const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
+        stepUp = safeEqual(currentPassword, current.pass)
+          && (!current.twoFactorEnabled || consumeTotp(current.twoFactorSecret, body.currentOtp));
+      }
+      return stepUp;
+    };
     if (typeof body.password === "string" && body.password !== "") {
-      const current = credentials();
-      const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
-      if (!safeEqual(currentPassword, current.pass) ||
-        (current.twoFactorEnabled && !consumeTotp(current.twoFactorSecret, body.currentOtp))) {
+      if (!stepUpVerified()) {
         sendJson(res, 403, { ok: false, error: "Current password and authenticator code are required" });
         return;
       }
@@ -944,13 +995,40 @@ export async function apply(ctx, config) {
       next.realm = body.realm.trim();
     }
 
-    if (Object.keys(next).length === 0) {
+    const lifetime = effectiveSessionLifetime();
+    const policy = {};
+    for (const [field, current] of [
+      ["sessionIdleTimeoutSeconds", lifetime.idleSeconds],
+      ["sessionMaxAgeSeconds", lifetime.maxAgeSeconds],
+    ]) {
+      if (body[field] === undefined) continue;
+      const value = body[field];
+      if (!Number.isSafeInteger(value) || value < 0 || value > MAX_SESSION_LIFETIME_SECONDS) {
+        sendJson(res, 400, {
+          ok: false,
+          error: `${field} must be a whole number of seconds between 0 and ${String(MAX_SESSION_LIFETIME_SECONDS)}`,
+        });
+        return;
+      }
+      if (value !== current) policy[field] = value;
+    }
+    if (Object.keys(policy).length > 0) {
+      if (!stepUpVerified()) {
+        sendJson(res, 403, { ok: false, error: "Current password and authenticator code are required" });
+        return;
+      }
+    }
+
+    if (Object.keys(next).length === 0 && Object.keys(policy).length === 0) {
       sendJson(res, 200, { ok: true, state: snapshot() });
       return;
     }
 
     try {
-      await updateSettingsAndRevoke(next);
+      // A lifetime is policy, not an identity change: it applies live and does
+      // not revoke the sessions it governs. Credentials keep the old path.
+      if (Object.keys(policy).length > 0) await runAuthMutation(() => settings.update(NS, policy));
+      if (Object.keys(next).length > 0) await updateSettingsAndRevoke(next);
     } catch (error) {
       sendJson(res, 400, {
         ok: false,

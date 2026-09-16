@@ -155,6 +155,28 @@ test("re-evaluates persisted deadlines under the lifetime configured now", () =>
   }
 });
 
+test("adopts a lifetime configured after the store was loaded", () => {
+  const directory = temporaryDirectory();
+  let now = 8_000_000;
+  try {
+    const store = new SessionStore({ directory, maxAgeSeconds: 0, idleTimeoutSeconds: 10, now: () => now });
+    const record = store.create({ username: "admin" });
+    assert.equal(record.expiresAt, now + 10_000);
+
+    store.configure({ idleTimeoutSeconds: 3600 });
+    assert.equal(record.expiresAt, now + 3600 * 1000, "the longer window applies to a session already in use");
+    now += 10_001;
+    assert.ok(store.touch(record.id, record.issuedAt), "activity that used to expire the session no longer does");
+
+    store.configure({ maxAgeSeconds: 5 });
+    assert.equal(record.expiresAt, record.issuedAt + 5000, "a ceiling added later still bounds the session");
+    now += 5001;
+    assert.equal(store.touch(record.id, record.issuedAt), null);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("advertises and renews a browser cookie lifetime before it lapses", () => {
   const directory = temporaryDirectory();
   let now = 7_000_000;

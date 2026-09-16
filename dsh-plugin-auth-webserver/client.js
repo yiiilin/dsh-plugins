@@ -60,6 +60,9 @@ window.__ModuleLoader__.load({
 .daw-otp{max-width:180px}
 .daw-cardFooter{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:12px 0 4px;border-top:1px solid var(--dsw-alias-border-l2)}
 .daw-clients{display:flex;flex-direction:column;gap:10px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l2)}
+.daw-sessionLifetime{display:flex;flex-direction:column;gap:10px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l2)}
+.daw-lifetimeHeader{display:flex;flex-direction:column;gap:4px}
+.daw-lifetimeTitle{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:600;line-height:18px}
 .daw-clientsHeader{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}
 .daw-clientsTitle{min-width:0;color:var(--dsw-alias-label-primary);font-size:13px;font-weight:600;line-height:18px}
 .daw-clientList{display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;overflow:hidden}
@@ -114,6 +117,26 @@ window.__ModuleLoader__.load({
 			"card.title": "认证网关",
 			"card.desc": "认证保护局域网网关的登录凭据。",
 			"card.unsaved": "未保存的更改",
+			"sessionLifetime.title": "会话寿命",
+			"sessionLifetime.description": "空闲窗口内至少使用一次即可保持登录；绝对上限到点后，即使一直在用也会要求重新登录。",
+			"sessionLifetime.idle": "空闲过期（秒）",
+			"sessionLifetime.idleHint": "每次已认证请求都会把截止时间顺延这么久。0 = 不检查空闲。",
+			"sessionLifetime.maxAge": "绝对上限（秒）",
+			"sessionLifetime.maxAgeHint": "活动无法延长的硬上限。0 = 不设上限，只由空闲窗口决定。",
+			"sessionLifetime.disabled": "已禁用",
+			"sessionLifetime.unlimited": "不限",
+			"sessionLifetime.effective": "当前生效：空闲 {idle}，上限 {maxAge}",
+			"sessionLifetime.stepUp": "修改会话寿命需要重新输入当前网关密码（启用 2FA 时还需验证码）。",
+			"sessionLifetime.fromConfig": "当前值来自部署行配置或插件默认值；在此保存即覆盖它。",
+			"sessionLifetime.fromSettings": "已在此处覆盖部署行配置。",
+			"unit.day.one": "{n} 天",
+			"unit.day.other": "{n} 天",
+			"unit.hour.one": "{n} 小时",
+			"unit.hour.other": "{n} 小时",
+			"unit.minute.one": "{n} 分钟",
+			"unit.minute.other": "{n} 分钟",
+			"unit.second.one": "{n} 秒",
+			"unit.second.other": "{n} 秒",
 			"hint.credentials": "认证保护局域网网关的登录凭据。保存在设置文档（settings.yaml）中，密码绝不会以明文形式离开该文档。",
 			"warn.env": "环境中已设置 DSH_AUTH_USER/DSH_AUTH_PASS（或 AUTH_USER/AUTH_PASS）——它们优先于此处设置生效。",
 			"warn.config": "cordis.patch.yml 中的 webserver-auth 行带有用户名/密码——它们作为基础层生效，直到您在此处保存覆盖配置为止。",
@@ -212,6 +235,26 @@ window.__ModuleLoader__.load({
 			"card.title": "Auth webserver",
 			"card.desc": "Credentials for the auth-gated LAN gateway.",
 			"card.unsaved": "Unsaved changes",
+			"sessionLifetime.title": "Session lifetime",
+			"sessionLifetime.description": "Any use inside the idle window keeps the session; the absolute lifetime ends it even while it is still in use.",
+			"sessionLifetime.idle": "Idle timeout (seconds)",
+			"sessionLifetime.idleHint": "Every authenticated request pushes the deadline this far out again. 0 disables the idle check.",
+			"sessionLifetime.maxAge": "Absolute lifetime (seconds)",
+			"sessionLifetime.maxAgeHint": "A ceiling activity cannot extend. 0 leaves the idle window as the only bound.",
+			"sessionLifetime.disabled": "disabled",
+			"sessionLifetime.unlimited": "unlimited",
+			"sessionLifetime.effective": "In force: idle {idle}, ceiling {maxAge}",
+			"sessionLifetime.stepUp": "Changing a session lifetime requires the current gateway password (and an authenticator code while 2FA is on).",
+			"sessionLifetime.fromConfig": "These values come from the deployment row or the plugin defaults; saving here overrides them.",
+			"sessionLifetime.fromSettings": "Saved here, overriding the deployment row.",
+			"unit.day.one": "{n} day",
+			"unit.day.other": "{n} days",
+			"unit.hour.one": "{n} hour",
+			"unit.hour.other": "{n} hours",
+			"unit.minute.one": "{n} minute",
+			"unit.minute.other": "{n} minutes",
+			"unit.second.one": "{n} second",
+			"unit.second.other": "{n} seconds",
 			"hint.credentials": "Credentials for the auth-gated LAN gateway. Stored in the settings document (settings.yaml); the password never leaves it unredacted.",
 			"warn.env": "DSH_AUTH_USER/DSH_AUTH_PASS (or AUTH_USER/AUTH_PASS) are set in the environment — they take precedence over these settings.",
 			"warn.config": "The webserver-auth row in cordis.patch.yml carries username/password — those act as the base layer and are effective until you save an override here.",
@@ -697,6 +740,29 @@ window.__ModuleLoader__.load({
 			};
 		}
 
+		/** A whole number of seconds from a text input, or null while it is not one. */
+		function lifetimeInput(value) {
+			const text = String(value ?? "").trim();
+			if (!/^\d+$/u.test(text)) return null;
+			const seconds = Number(text);
+			return Number.isSafeInteger(seconds) ? seconds : null;
+		}
+
+		/** Render seconds the way a person reads them ("3 days"), two units at most. */
+		function lifetimeText(t, seconds) {
+			if (!Number.isFinite(seconds) || seconds <= 0) return t("sessionLifetime.disabled");
+			const parts = [];
+			let rest = Math.floor(seconds);
+			for (const [size, unit] of [[86400, "day"], [3600, "hour"], [60, "minute"], [1, "second"]]) {
+				const value = Math.floor(rest / size);
+				rest -= value * size;
+				if (value > 0 && parts.length < 2) {
+					parts.push(t(`unit.${unit}.${value === 1 ? "one" : "other"}`, { n: value }));
+				}
+			}
+			return parts.join(" ");
+		}
+
 		function createAuthWebserverCard(t) {
 			return function AuthWebserverCard(props) {
 			const [open, setOpen] = React.useState(false);
@@ -709,6 +775,8 @@ window.__ModuleLoader__.load({
 			const [totpUri, setTotpUri] = React.useState("");
 			const [totpCode, setTotpCode] = React.useState("");
 			const [realm, setRealm] = React.useState("");
+			const [idleSeconds, setIdleSeconds] = React.useState("");
+			const [maxAgeSeconds, setMaxAgeSeconds] = React.useState("");
 			const [busy, setBusy] = React.useState(false);
 			const [error, setError] = React.useState(null);
 			const [notice, setNotice] = React.useState(null);
@@ -729,6 +797,8 @@ window.__ModuleLoader__.load({
 					setMeta(state);
 					setUsername((current) => (current === "" && state.username ? state.username : current));
 					setRealm((current) => (current === "" && state.realm ? state.realm : current));
+					setIdleSeconds((current) => (current === "" && Number.isSafeInteger(state.idleSeconds) ? String(state.idleSeconds) : current));
+					setMaxAgeSeconds((current) => (current === "" && Number.isSafeInteger(state.maxAgeSeconds) ? String(state.maxAgeSeconds) : current));
 					setError(null);
 				} catch (err) {
 					setError(err instanceof Error ? err.message : String(err));
@@ -865,8 +935,9 @@ window.__ModuleLoader__.load({
 				setNotice(null);
 				try {
 					const payload = { username: username.trim(), realm: realm.trim() };
-					if (password !== "") {
-						payload.password = password;
+					if (idleInput !== null) payload.sessionIdleTimeoutSeconds = idleInput;
+					if (maxAgeInput !== null) payload.sessionMaxAgeSeconds = maxAgeInput;
+					if (password !== "" || lifetimeChanged) {
 						payload.currentPassword = currentPassword;
 						if (twoFactorEnabled) payload.currentOtp = currentOtp;
 					}
@@ -874,6 +945,8 @@ window.__ModuleLoader__.load({
 					setMeta(data.state);
 					setUsername(data.state.username);
 					setRealm(data.state.realm);
+					setIdleSeconds(String(data.state.idleSeconds));
+					setMaxAgeSeconds(String(data.state.maxAgeSeconds));
 					setPassword("");
 					setCurrentPassword("");
 					setCurrentOtp("");
@@ -950,8 +1023,14 @@ window.__ModuleLoader__.load({
 			};
 
 			const disabled = busy || meta === null;
+			const idleInput = lifetimeInput(idleSeconds);
+			const maxAgeInput = lifetimeInput(maxAgeSeconds);
+			const lifetimeChanged = meta !== null && (
+				(idleInput !== null && idleInput !== meta.idleSeconds)
+				|| (maxAgeInput !== null && maxAgeInput !== meta.maxAgeSeconds)
+			);
 			const changed = meta !== null && (
-				username !== meta.username || realm !== meta.realm || password !== ""
+				username !== meta.username || realm !== meta.realm || password !== "" || lifetimeChanged
 			);
 			const twoFactorEnabled = Boolean(meta?.twoFactorEnabled);
 			const twoFactorOverriddenByEnv = Boolean(meta?.twoFactorOverriddenByEnv);
@@ -1231,6 +1310,58 @@ window.__ModuleLoader__.load({
 							),
 							React.createElement(
 								"section",
+								{ className: "daw-sessionLifetime", "aria-label": t("sessionLifetime.title") },
+								React.createElement(
+									"div",
+									{ className: "daw-lifetimeHeader" },
+									React.createElement("div", { className: "daw-lifetimeTitle" }, t("sessionLifetime.title")),
+									React.createElement("div", { className: "daw-hint" }, t("sessionLifetime.description")),
+								),
+								React.createElement(
+									"div",
+									{ className: "daw-grid" },
+									React.createElement(
+										"label",
+										{ className: "daw-field" },
+										React.createElement("span", { className: "daw-label" }, t("sessionLifetime.idle")),
+										React.createElement("input", {
+											className: "daw-input",
+											inputMode: "numeric",
+											value: idleSeconds,
+											disabled: disabled,
+											onChange: (event) => setIdleSeconds(event.target.value),
+										}),
+										React.createElement("span", { className: "daw-hint" }, t("sessionLifetime.idleHint")),
+									),
+									React.createElement(
+										"label",
+										{ className: "daw-field" },
+										React.createElement("span", { className: "daw-label" }, t("sessionLifetime.maxAge")),
+										React.createElement("input", {
+											className: "daw-input",
+											inputMode: "numeric",
+											value: maxAgeSeconds,
+											disabled: disabled,
+											onChange: (event) => setMaxAgeSeconds(event.target.value),
+										}),
+										React.createElement("span", { className: "daw-hint" }, t("sessionLifetime.maxAgeHint")),
+									),
+								),
+								React.createElement(
+									"div",
+									{ className: "daw-hint" },
+									t("sessionLifetime.effective", {
+										idle: lifetimeText(t, meta?.idleSeconds),
+										maxAge: lifetimeText(t, meta?.maxAgeSeconds),
+									}),
+								),
+								React.createElement("div", { className: "daw-hint" }, t("sessionLifetime.stepUp")),
+								meta !== null && !meta.sessionLifetimeFromSettings
+									? React.createElement("div", { className: "daw-warn" }, t("sessionLifetime.fromConfig"))
+									: null,
+							),
+							React.createElement(
+								"section",
 								{ className: "daw-clients", "aria-label": t("clients.title") },
 								React.createElement(
 									"div",
@@ -1267,7 +1398,7 @@ window.__ModuleLoader__.load({
 								"div",
 								{ className: "daw-cardFooter" },
 								changed
-									? React.createElement("button", { type: "button", className: "daw-btn ghost", disabled: busy, onClick: () => { setUsername(meta.username); setRealm(meta.realm); setPassword(""); setError(null); setNotice(null); } }, t("discard"))
+									? React.createElement("button", { type: "button", className: "daw-btn ghost", disabled: busy, onClick: () => { setUsername(meta.username); setRealm(meta.realm); setIdleSeconds(String(meta.idleSeconds)); setMaxAgeSeconds(String(meta.maxAgeSeconds)); setPassword(""); setError(null); setNotice(null); } }, t("discard"))
 									: null,
 								React.createElement("button", { type: "button", className: "daw-btn primary", disabled: disabled || !changed, onClick: () => void save() }, t("save")),
 							),
