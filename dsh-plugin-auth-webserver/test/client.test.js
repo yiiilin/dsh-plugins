@@ -160,18 +160,24 @@ test("edits the session lifetimes through localized, step-up-required fields", (
     "sessionLifetime.idleHint",
     "sessionLifetime.maxAge",
     "sessionLifetime.maxAgeHint",
-    "sessionLifetime.disabled",
     "sessionLifetime.effective",
+    "sessionLifetime.unknown",
     "sessionLifetime.stepUp",
     "sessionLifetime.fromConfig",
   ]) {
     assert.ok(CLIENT_SOURCE.includes(`t("${key}"`), `${key} must be read through the locale helper`);
   }
+  // Zero means something different per field, so each passes its own wording.
+  assert.match(CLIENT_SOURCE, /lifetimeText\(t, meta\.idleSeconds, "sessionLifetime\.disabled"\)/u);
+  assert.match(CLIENT_SOURCE, /lifetimeText\(t, meta\.maxAgeSeconds, "sessionLifetime\.unlimited"\)/u);
+  // A host that reports no lifetimes gets no control, rather than empty fields.
+  assert.match(CLIENT_SOURCE, /const lifetimeAvailable = meta !== null/u);
+  assert.match(CLIENT_SOURCE, /lifetimeAvailable\n\t*\? React\.createElement/u);
   // Both values ride the existing save call, and a lifetime edit demands the
   // same step-up credentials a password change does.
   assert.match(CLIENT_SOURCE, /payload\.sessionIdleTimeoutSeconds = idleInput/u);
   assert.match(CLIENT_SOURCE, /payload\.sessionMaxAgeSeconds = maxAgeInput/u);
   assert.match(CLIENT_SOURCE, /if \(password !== "" \|\| lifetimeChanged\)/u);
   assert.match(CLIENT_SOURCE, /\|\| password !== "" \|\| lifetimeChanged\n/u);
-  assert.match(CLIENT_SOURCE, /function lifetimeText\(t, seconds\)/u);
+  assert.match(CLIENT_SOURCE, /function lifetimeText\(t, seconds, zeroKey\)/u);
 });

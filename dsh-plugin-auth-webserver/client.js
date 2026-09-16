@@ -129,6 +129,7 @@ window.__ModuleLoader__.load({
 			"sessionLifetime.stepUp": "修改会话寿命需要重新输入当前网关密码（启用 2FA 时还需验证码）。",
 			"sessionLifetime.fromConfig": "当前值来自部署行配置或插件默认值；在此保存即覆盖它。",
 			"sessionLifetime.fromSettings": "已在此处覆盖部署行配置。",
+			"sessionLifetime.unknown": "—",
 			"unit.day.one": "{n} 天",
 			"unit.day.other": "{n} 天",
 			"unit.hour.one": "{n} 小时",
@@ -247,6 +248,7 @@ window.__ModuleLoader__.load({
 			"sessionLifetime.stepUp": "Changing a session lifetime requires the current gateway password (and an authenticator code while 2FA is on).",
 			"sessionLifetime.fromConfig": "These values come from the deployment row or the plugin defaults; saving here overrides them.",
 			"sessionLifetime.fromSettings": "Saved here, overriding the deployment row.",
+			"sessionLifetime.unknown": "—",
 			"unit.day.one": "{n} day",
 			"unit.day.other": "{n} days",
 			"unit.hour.one": "{n} hour",
@@ -748,11 +750,17 @@ window.__ModuleLoader__.load({
 			return Number.isSafeInteger(seconds) ? seconds : null;
 		}
 
-		/** Render seconds the way a person reads them ("3 days"), two units at most. */
-		function lifetimeText(t, seconds) {
-			if (!Number.isFinite(seconds) || seconds <= 0) return t("sessionLifetime.disabled");
+		/**
+		 * Render seconds the way a person reads them ("3 days"), two units at
+		 * most. Zero has no meaning of its own — an idle window of zero disables
+		 * the check while a ceiling of zero is unlimited — so the caller passes
+		 * the key its own field uses.
+		 */
+		function lifetimeText(t, seconds, zeroKey) {
+			if (!Number.isSafeInteger(seconds) || seconds < 0) return t("sessionLifetime.unknown");
+			if (seconds === 0) return t(zeroKey);
 			const parts = [];
-			let rest = Math.floor(seconds);
+			let rest = seconds;
 			for (const [size, unit] of [[86400, "day"], [3600, "hour"], [60, "minute"], [1, "second"]]) {
 				const value = Math.floor(rest / size);
 				rest -= value * size;
@@ -825,8 +833,12 @@ window.__ModuleLoader__.load({
 			}, [refresh]);
 
 			React.useEffect(() => {
+				// Re-read the state whenever the card is opened: a gateway that was
+				// restarted or upgraded since the last look reports its values then,
+				// and refresh() only fills inputs the user has left empty.
+				if (open) void refresh();
 				if (open) void refreshClients();
-			}, [open, refreshClients]);
+			}, [open, refresh, refreshClients]);
 
 			const revokeClient = async (client) => {
 				if (clientActionId !== null || client.id === "") return;
@@ -1023,6 +1035,12 @@ window.__ModuleLoader__.load({
 			};
 
 			const disabled = busy || meta === null;
+			// A host that predates this section (or a mixed-version reload, where
+			// only the client half has been hot-swapped) reports no lifetimes at
+			// all: show no control that host cannot honour.
+			const lifetimeAvailable = meta !== null
+				&& Number.isSafeInteger(meta.idleSeconds)
+				&& Number.isSafeInteger(meta.maxAgeSeconds);
 			const idleInput = lifetimeInput(idleSeconds);
 			const maxAgeInput = lifetimeInput(maxAgeSeconds);
 			const lifetimeChanged = meta !== null && (
@@ -1308,7 +1326,8 @@ window.__ModuleLoader__.load({
 										)
 										: React.createElement("button", { type: "button", className: "daw-btn primary", disabled: disabled || twoFactorLocked || !meta?.hasPassword, onClick: () => void startTwoFactor() }, t("twoFactor.setupButton")),
 							),
-							React.createElement(
+							lifetimeAvailable
+								? React.createElement(
 								"section",
 								{ className: "daw-sessionLifetime", "aria-label": t("sessionLifetime.title") },
 								React.createElement(
@@ -1351,15 +1370,16 @@ window.__ModuleLoader__.load({
 									"div",
 									{ className: "daw-hint" },
 									t("sessionLifetime.effective", {
-										idle: lifetimeText(t, meta?.idleSeconds),
-										maxAge: lifetimeText(t, meta?.maxAgeSeconds),
+										idle: lifetimeText(t, meta.idleSeconds, "sessionLifetime.disabled"),
+										maxAge: lifetimeText(t, meta.maxAgeSeconds, "sessionLifetime.unlimited"),
 									}),
 								),
 								React.createElement("div", { className: "daw-hint" }, t("sessionLifetime.stepUp")),
-								meta !== null && !meta.sessionLifetimeFromSettings
-									? React.createElement("div", { className: "daw-warn" }, t("sessionLifetime.fromConfig"))
-									: null,
-							),
+								meta.sessionLifetimeFromSettings
+									? null
+									: React.createElement("div", { className: "daw-warn" }, t("sessionLifetime.fromConfig")),
+							)
+								: null,
 							React.createElement(
 								"section",
 								{ className: "daw-clients", "aria-label": t("clients.title") },
