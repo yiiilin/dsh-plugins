@@ -1,6 +1,6 @@
-# Feature doc format — `docs/features/<name>.md`
+# Feature doc format — `docs/domains/<domain>/features/<name>.md`
 
-The doc that carries one unit of work: its design, the verifications it rests on, and the function detail for anything complex. It spans as many modules as the work needs. When it stops fitting one sitting (≤ ~400 lines), move the function-level detail into `docs/modules/<name>.md` and leave a pointer.
+The doc that carries one unit of work: its design, the verifications it rests on, and the function detail for anything complex. It spans as many modules as the work needs. When it stops fitting one sitting (≤ ~400 lines), move the function-level detail into `domains/<domain>/modules/<name>.md` and leave a pointer.
 
 This is the layer between `architecture.md` above it and module docs below it.
 
@@ -30,7 +30,7 @@ Reconciled: —
 2. **Interface** — every symbol this unit exposes or consumes, as `symbol | signature | notes`, plus data shapes as a type block. This is what the code and the other docs will reference.
 3. **Design** — how it works: data structures, the numbered flow, state machines, invariants. State invariants as checks: `byteOffset never points past a committed batch`.
 4. **Verification** — pointers to the verification docs this design rests on, then the test plan (below).
-5. **Function detail** — one subsection per complex function, in the `module.md` shape, or a pointer: `→ docs/modules/import.md`.
+5. **Function detail** — one subsection per complex function, in the `module.md` shape, or a pointer: `→ domains/import/modules/reader.md`.
 6. **Edge cases and errors** — table of `case | expected behavior | test`.
 7. **Budgets** — numbers, with the box.
 8. **Decision points** — see `decision-point.md`.

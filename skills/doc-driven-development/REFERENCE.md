@@ -119,6 +119,6 @@ Full workflow: the `doc-driven-development` skill.
 
 ## Splitting
 
-- Split a feature doc into `docs/modules/<name>.md` when it stops fitting one sitting, or when two people would confirm it separately.
+- Split a feature doc into `domains/<domain>/modules/<name>.md` when it stops fitting one sitting, or when two people would confirm it separately.
 - Split `docs/architecture.md` per subsystem once it covers more than one deployable or more than roughly five modules.
 - `docs/README.md` stays the only map. When a doc moves, its index row moves in the same change.

@@ -13,20 +13,21 @@ Status: `draft` · `awaiting confirmation` · `confirmed` · `implemented` · `s
 ## Conventions
 - Language: <the language docs are written in>
 - Glossary: `CONTEXT.md` · Decisions: `docs/adr/` · Formats: the `doc-driven-development` skill
-- Source files name their doc: `// doc: docs/features/import.md`
+- Domains: the module table in `architecture.md`; docs live under `domains/<domain>/`
+- Source files name their doc: `// doc: docs/domains/import/features/import.md`
 
 ## Docs
 
 | Doc | Layer | Status | Ver | Owns | Depends on | Open |
 |---|---|---|---|---|---|---|
 | [architecture.md](architecture.md) | architecture | confirmed | v2 | — | — | — |
-| [features/import.md](features/import.md) | design | awaiting confirmation | v1 | `src/import/**` | architecture.md | D2, ⚠D5 |
+| [domains/import/features/import.md](domains/import/features/import.md) | design | awaiting confirmation | v1 | `src/import/**` | architecture.md | D2, ⚠D5 |
 | `docs/adr/` (4) | decisions | — | — | — | — | — |
 
 ## Open decision points
 
-- [ ] `features/import.md` D2 — eviction policy; recommend in-process LRU
-- [ ] ⚠ `features/import.md` D5 — drop the legacy `mode` column; needs an explicit answer
+- [ ] `domains/import/features/import.md` D2 — eviction policy; recommend in-process LRU
+- [ ] ⚠ `domains/import/features/import.md` D5 — drop the legacy `mode` column; needs an explicit answer
 
 ## Reading order
 1. `architecture.md` — why the system is shaped this way
@@ -36,7 +37,9 @@ Status: `draft` · `awaiting confirmation` · `confirmed` · `implemented` · `s
 ## Rules
 
 - **One row per live doc**, plus one row for the whole `docs/adr/` directory with its count. ADRs are append-only history, found by number; they do not each need a row. A live doc that is not in the index does not exist.
-- **The root holds two files and typed directories**: `README.md` (this index), `architecture.md`, and `features/`, `modules/`, `verifications/`, `adr/`. A document type that has no directory yet gets one when its second file appears — never put a pile of one type loose in `docs/`.
+- **The root holds two files and the cross-cutting directories**: `README.md` (this index), `architecture.md`, `adr/`, `verifications/`, and `domains/` once a repo has more than one domain. Feature and module docs live under their domain.
+- **Domain names come from the module table in `architecture.md`.** A directory matching no row there is a misclassification — fix the directory, not the table. A single-domain repo keeps `features/` and `modules/` at the root until the second domain appears, and the index's rows move with them.
+- **`verifications/` and `adr/` stay at the root** because they cross domains: a premise outlives the unit that raised it, and ADR numbers are repository-wide.
 - **One index for ADRs.** If the repo keeps its own `docs/adr/README.md` (the `architecture-decision-records` convention), point the row at it and list nothing else — the same decisions never appear in two indexes.
 - **The conventions block is filled once and obeyed afterwards** — including the doc language, so no session re-asks and no session switches language mid-repo.
 - **Status and version here match the doc's own header.** The same fact in two places: when they disagree, the doc wins and the row is fixed. A stale row is drift.

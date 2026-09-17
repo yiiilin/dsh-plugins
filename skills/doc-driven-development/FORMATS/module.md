@@ -1,4 +1,4 @@
-# Module format — `docs/modules/<name>.md`
+# Module format — `docs/domains/<domain>/modules/<name>.md`
 
 Function-level detail for one module, split out of a feature doc when that doc outgrows one sitting. This is the layer that turns implementation into transcription: everything below is written so that it can be typed into code without a decision being made along the way.
 

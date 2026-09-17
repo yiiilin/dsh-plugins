@@ -35,8 +35,8 @@ One doc per **unit of work a human can confirm in one sitting** — a feature, a
 |---|---|---|
 | `docs/README.md` | Index: conventions, one row per doc, open decision points, reading order | [`FORMATS/index.md`](FORMATS/index.md) |
 | `docs/architecture.md` | Why the system is shaped this way: boundaries, dependency direction, data flow, budgets | [`FORMATS/architecture.md`](FORMATS/architecture.md) |
-| `docs/features/<name>.md` | Design, the verifications it rests on, function detail for one unit of work | [`FORMATS/feature.md`](FORMATS/feature.md) |
-| `docs/modules/<name>.md` | Function-level detail, when a feature doc outgrows one sitting | [`FORMATS/module.md`](FORMATS/module.md) |
+| `docs/domains/<domain>/features/<name>.md` | Design, the verifications it rests on, function detail for one unit of work | [`FORMATS/feature.md`](FORMATS/feature.md) |
+| `docs/domains/<domain>/modules/<name>.md` | Function-level detail, when a feature doc outgrows one sitting | [`FORMATS/module.md`](FORMATS/module.md) |
 | `docs/verifications/<method>.md` | A premise the design rests on: the cheapest test, the evidence, the verdict | [`FORMATS/verification.md`](FORMATS/verification.md) |
 | `CONTEXT.md` | Glossary: one definition and its rejected synonyms per term | [`REFERENCE.md`](REFERENCE.md), or `domain-modeling` when installed |
 | `docs/adr/NNNN-slug.md` | Decisions meeting all three ADR conditions | [`REFERENCE.md`](REFERENCE.md), or `domain-modeling` when installed |

@@ -18,7 +18,7 @@ Reconciled: 2026-09-17
 
 1. **Purpose and scope** — what this system is for, and the boundary around it.
 2. **Context** — the systems outside the boundary and what crosses it (calls, events, files, humans).
-3. **Modules and responsibilities** — table of `module | responsibility | may depend on`. One row per module; the responsibility is one line.
+3. **Modules and responsibilities** — table of `module | responsibility | may depend on`. One row per module; the responsibility is one line. **This table names the domains**: `docs/domains/<domain>/` mirrors these rows, so adding a row here means adding a directory there.
 4. **Dependency direction** — the rule, and how it is enforced: `src/api may import src/core, never the reverse — enforced by <check>`.
 5. **Data flow** — the end-to-end paths, numbered, one line per hop. The three or four paths that matter, not every path.
 6. **Data ownership** — table of `store | owner | who may write`. Name the single writer for every piece of state.
