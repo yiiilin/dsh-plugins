@@ -1,5 +1,6 @@
 ---
 name: doc-driven-development
+version: 0.1.0
 license: MIT
 description: "Doc-driven development: the repo's docs/ set is the contract; code is its transcription. Use when a repo carries a doc set (docs/README.md indexing per-doc status), or when asked to write design docs before coding, implement from a confirmed doc, reconcile code that drifted from its doc, or onboard an existing repo. Covers the architecture, design, verification, and function-level pseudocode layers plus the confirmation gate. Skip repos with no doc set unless asked to adopt it."
 ---

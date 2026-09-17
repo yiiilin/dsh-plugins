@@ -1,6 +1,6 @@
 # Third-party notices
 
-Original material in this skill is released under the MIT License, © 2026 the author of this skill. Parts of it are adapted from other MIT-licensed work, which keeps its own copyright notice; an exact account of what came from where follows.
+Original material in this skill is released under the MIT License, © 2026 yiiilin. Parts of it are adapted from other MIT-licensed work, which keeps its own copyright notice; an exact account of what came from where follows.
 
 ## mattpocock/skills
 
