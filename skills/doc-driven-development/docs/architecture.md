@@ -55,7 +55,7 @@ One fact, one owner. When two files disagree, the owner wins and the other is fi
 
 - `SKILL.md` ≤ 200 lines — loaded on every invocation.
 - Each `FORMATS/` file ≤ 120 lines, and only one is loaded at a time.
-- The frontmatter description ≤ 497 characters — the catalog truncates at 497, and a truncated pointer loses its trigger branches. Measured: the first draft ran ~620 and was cut mid-sentence.
+- The frontmatter description ≤ 500 characters — past that the catalog renders `slice(0, 497) + '...'`, and a truncated pointer loses its trigger branches. Measured: the first draft ran ~620 and was cut mid-sentence.
 - A confirmation list the human clears in under two minutes.
 - `node scripts/check.mjs` passes before the package is copied anywhere.
 

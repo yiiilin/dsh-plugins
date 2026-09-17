@@ -11,7 +11,7 @@ import { join, dirname, resolve, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const MAX_DESC = 497 // the catalog renders slice(0, 497) + '...'
+const MAX_DESC = 500 // harness: length <= 500 passes; past that it renders slice(0, 497) + '...'
 
 const walk = (dir) =>
   readdirSync(dir).flatMap((name) => {
@@ -55,11 +55,15 @@ for (const [f, body] of text) {
 }
 
 // 4 — no orphans: every file is named by some markdown file
+// The match is anchored: a bare `index.md` must not be satisfied by `FORMATS/index.md`.
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const namedIn = (haystack, needle) =>
+  new RegExp(`(^|[\\s(\`"'>|[=])${escapeRe(needle)}([\\s)\`"'<>|\\],:.]|$)`, 'm').test(haystack)
 for (const f of files) {
   if (f === skillPath) continue
   const r = rel(f)
   const others = [...text].filter(([g]) => g !== f).map(([, b]) => b).join('\n')
-  if (!others.includes(r) && !others.includes(r.split('/').pop())) {
+  if (!namedIn(others, r) && !namedIn(others, r.split('/').pop())) {
     fail.push(`${r}: orphan — nothing references it, so nothing will ever load it`)
   }
 }
