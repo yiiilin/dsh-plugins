@@ -21,7 +21,7 @@ const ROOT = resolve(process.argv[2] ?? '.')
 const DOCS = join(ROOT, 'docs')
 const INDEX = join(DOCS, 'README.md')
 const STATUSES = ['draft', 'awaiting confirmation', 'confirmed', 'implemented', 'superseded']
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'out', '.next', 'coverage', 'docs'])
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'out', '.next', 'coverage', 'docs', 'target', 'vendor'])
 const fail = []
 
 if (!existsSync(DOCS)) {

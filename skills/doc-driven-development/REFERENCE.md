@@ -95,6 +95,23 @@ Document **just in time** — the code you are about to change plus one level of
 
 A repo that already has its own `docs/` layout is mapped onto, not migrated: keep the existing files where they are, retrofit the header fields, and build the index over the existing structure.
 
+## Carrying the skill with the repo
+
+Adopting the workflow is **two copies**, and the second is what keeps it alive after the session that introduced it:
+
+1. The block above into `AGENTS.md`.
+2. The skill's own directory, **verbatim**, into the project's skill root.
+
+Copy verbatim because the body reaches `FORMATS/`, `REFERENCE.md` and `scripts/` by relative path — a partial copy leaves a skill that half works. Your resource base names the directory to copy.
+
+```
+cp -a <this skill's directory> <project>/.agents/skills/
+```
+
+**The project skill root is `.agents/skills/` or `.dsh/skills/`**, resolved from the nearest ancestor holding `.git`. Copy there and every developer who clones the repo has the skill with no install step and no configuration.
+
+A plain `<project>/skills/` is **not** a discovery root — using it means each developer adds a `customSkillDirs` entry for the project, which is exactly the step this avoids.
+
 ## Failure modes
 
 | Symptom | Fix |

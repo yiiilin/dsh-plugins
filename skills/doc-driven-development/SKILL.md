@@ -14,7 +14,7 @@ The repo's `docs/` set is the **contract**. Code is its **transcription**: archi
 - **The repo says so.** `AGENTS.md` or `CLAUDE.md` carries the block in [`REFERENCE.md`](REFERENCE.md); its first line declares the repo doc-first.
 - **The repo carries the doc set this produces.** `docs/README.md` and `docs/architecture.md`, with a `features/` or `domains/` directory beside them. Presence, not shape — the layout is what makes it recognisable at a glance.
 
-Inside those, the workflow is the default and the tier decides the depth. Outside them it is a workflow to *offer* — one line, then the user's actual request; adopting it is the user's call, made by pasting that block or asking outright.
+Inside those, the workflow is the default and the tier decides the depth. Outside them it is a workflow to *offer* — one line, then the user's actual request; adopting it is the user's call, and it is two copies: the `AGENTS.md` block, and this skill itself carried in the repo so the next developer to clone it has the workflow too. See *Carrying the skill with the repo* in [`REFERENCE.md`](REFERENCE.md).
 
 A repo that adopts it gets its doc set **for the work at hand** — the takeover procedure, just in time: the code you are about to change, never the whole repo up front. T0 work needs no doc at all.
 
@@ -22,7 +22,7 @@ A repo that adopts it gets its doc set **for the work at hand** — the takeover
 
 Keep step 3 and step 4 apart — the human's answer *is* the gate.
 
-1. **Locate** — read the code you are about to change, then find the doc that owns it. `docs/README.md` indexes every doc by the paths it `owns`. A vendored `docs/` — a skill's own, under `skills/**/docs/` — is not this repo's doc set; ignore it. No owning doc → step 2 creates one.
+1. **Locate** — read the code you are about to change, then find the doc that owns it. `docs/README.md` indexes every doc by the paths it `owns`. A vendored `docs/` — a skill's own, under `.agents/skills/**` or `skills/**` — is not this repo's doc set; ignore it. No owning doc → step 2 creates one.
    *Done when:* every path you will touch is covered by a doc, or you have named the doc you will create.
 2. **Write the contract** — write or amend that doc at the layer the change belongs to, following the format for that document type. Every choice the human would want a say in becomes a **decision point**: numbered, with options, a recommendation, and the recommendation's cost.
    *Done when:* each decision point carries options + recommendation + cost, the doc carries a status line, and its open points are listed in `docs/README.md`.
