@@ -1,11 +1,11 @@
 # Doc-set convention
 
-Status: awaiting confirmation
-Version: v1
+Status: confirmed
+Version: v2
 Tier: T2
-Owns: `FORMATS/**`
+Owns: FORMATS/**, scripts/check-doc-set.mjs
 Depends on: docs/architecture.md
-Reconciled: —
+Reconciled: 2026-09-17
 
 ## 1. Goal
 
@@ -62,9 +62,9 @@ D7 Escape hatch — **A** (2026-09-17)
 - Recommend: A — C rots the doc set; B gets bypassed under real pressure, and a bypassed gate loses authority
 - Cost: the doc records a design discovered while coding rather than agreed in advance; the `code-first` marker in the change log is the only thing separating it from a reviewed contract
 
-D8 Takeover of a repo that already has a `docs/` layout
+D8 Takeover of a repo that already has a `docs/` layout — **A** (2026-09-17)
 - Options: A map onto the existing layout, retrofitting headers and status / B migrate the existing docs into this layout / C run two sets in parallel, new work in this layout
-- Recommend: A — lowest migration cost, keeps existing history and links intact
+- Decided: A — lowest migration cost, keeps existing history and links intact. This is what the takeover procedure in `REFERENCE.md` already prescribes, so the decision point only records it
 - Cost: index rows inherit the old structure's unevenness, and headers must be retrofitted onto docs written to other rules
 
 D9 Verification is its own doc — **B** (2026-09-17)
@@ -85,5 +85,5 @@ D11 Validation script for a target repo's doc set — **B** (2026-09-17)
 
 ## 5. Change log
 
-- v2 — verification became its own document type; the target-repo validator dropped
+- v2 — verification became its own document type; feature and module docs grouped by domain; the doc-set check shipped
 - v1 — initial; round-1 decisions recorded

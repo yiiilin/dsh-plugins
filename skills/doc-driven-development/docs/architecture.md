@@ -1,10 +1,10 @@
 # Skill architecture
 
-Status: awaiting confirmation
+Status: confirmed
 Version: v1
-Owns: `SKILL.md`, `REFERENCE.md`
+Owns: SKILL.md, REFERENCE.md, CONTEXT.md, THIRD-PARTY-NOTICES.md, scripts/check.mjs
 Depends on: —
-Reconciled: —
+Reconciled: 2026-09-17
 
 ## 1. Purpose and scope
 
@@ -61,7 +61,7 @@ One fact, one owner. When two files disagree, the owner wins and the other is fi
 
 ## 6. Decision points
 
-D1 Final file tree
+D1 Final file tree — **A** (2026-09-17)
 - Options: A `SKILL.md` + `FORMATS/` + `REFERENCE.md` + `CONTEXT.md` + `docs/` / B everything folded into one `SKILL.md` / C procedures split one file per procedure alongside `FORMATS/`
 - Recommend: A — one always-loaded file, one file per format, one file of procedures
 - Cost: an agent must follow two pointers (shape vs procedure) and may load neither

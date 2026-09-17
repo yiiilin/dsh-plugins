@@ -14,15 +14,14 @@ Status: `draft` · `awaiting confirmation` · `confirmed` · `implemented` · `s
 
 | Doc | Layer | Status | Ver | Owns | Depends on | Open |
 |---|---|---|---|---|---|---|
-| [architecture.md](architecture.md) | architecture | awaiting confirmation | v1 | `SKILL.md`, `REFERENCE.md` | — | D1 |
-| [features/doc-set.md](features/doc-set.md) | design | awaiting confirmation | v2 | `FORMATS/**` | architecture.md | D8 |
-| [verifications/design-validation.md](verifications/design-validation.md) | verification | awaiting confirmation | v1 | — | doc-set.md | — |
+| [architecture.md](architecture.md) | architecture | confirmed | v1 | `SKILL.md`, `REFERENCE.md`, `CONTEXT.md`, `THIRD-PARTY-NOTICES.md`, `scripts/check.mjs` | — | — |
+| [features/doc-set.md](features/doc-set.md) | design | confirmed | v2 | `FORMATS/**`, `scripts/check-doc-set.mjs` | architecture.md | — |
+| [verifications/design-validation.md](verifications/design-validation.md) | verification | confirmed | v1 | — | features/doc-set.md | — |
 | `docs/adr/` (0) | decisions | — | — | — | — | — |
 
 ## Open decision points
 
-- [ ] `architecture.md` D1 — final file tree: keep `REFERENCE.md` for procedures, or fold it into `SKILL.md`
-- [ ] `features/doc-set.md` D8 — how a repo that already has its own `docs/` layout is taken over
+None. Three of the six premises in the verification doc are still `open`, pending the pilot — that is a property of the premises, not a question waiting on anyone.
 
 ## Reading order
 

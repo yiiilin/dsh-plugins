@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// doc: docs/architecture.md
 // Contract check for this skill package:  node scripts/check.mjs
 //
 // Five invariants, each of which was silently violated at least once while this

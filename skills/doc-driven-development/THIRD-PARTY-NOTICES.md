@@ -19,7 +19,7 @@ Adapted material:
 
 Referenced but not reproduced: `domain-modeling` is cited by name as the owner of the glossary and ADR formats. Everything else in this skill — the loop, the tier table, the doc-set convention, the `FORMATS/` specs, and the skill's own `docs/` — is original to this skill.
 
-Verified by 5-gram overlap against every installed skill (136,121 distinct 8-grams): the only substantive overlaps are the rows above; the remaining hits are generic English and table separators.
+Verified by n-gram overlap against every installed skill: an 8-gram pass over 136,121 distinct grams found no overlap at all, and 5- and 6-gram passes surfaced only the rows above plus generic English and table separators.
 
 ## MIT License
 

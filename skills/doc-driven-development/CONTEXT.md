@@ -37,16 +37,24 @@ _Avoid_: priority, size, complexity, weight
 
 **Evidence**:
 A command and its result, with a date, recorded in the doc to settle a claim.
-_Avoid_: proof, test result, verification, confirmation
+_Avoid_: proof, test result, confirmation
+
+**Verification doc**:
+One file recording a premise the design rests on, the cheapest test of it, and the verdict.
+_Avoid_: spike report, proof, test doc
+
+**Code-first**:
+A version built from code that was changed first, at the human's instruction: the doc is its transcription rather than its contract.
+_Avoid_: unconfirmed, undocumented, backfilled
 
 **Reconcile**:
 Walking a doc against the code item by item and classifying each item as realized, missing, or divergent.
-_Avoid_: sync, audit, review, check
+_Avoid_: sync, audit, review
 
 **Takeover**:
-Bringing an existing codebase under the contract, just in time rather than all at once.
-_Avoid_: migration, onboarding, retrofit, backfill
+Bringing an existing codebase under the contract, just in time rather than all at once. The two acts within it are backfilling a doc and retrofitting a header.
+_Avoid_: migration, onboarding
 
 **Confirmation list**:
 The one-line-per-decision-point digest the human actually reads at the gate.
-_Avoid_: summary, changelog, review request
+_Avoid_: summary, review request, status update

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// doc: docs/features/doc-set.md
 // Doc-set check for a repo that follows the doc-driven-development convention.
 //
 //   node check-doc-set.mjs [repo-root]      (default: the working directory)

@@ -1,6 +1,6 @@
 # Design validation
 
-Status: awaiting confirmation
+Status: confirmed
 Version: v1
 Verifies: docs/features/doc-set.md
 Verdict: holds for 3 of 6; 3 open pending the pilot
