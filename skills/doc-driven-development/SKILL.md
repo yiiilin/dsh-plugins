@@ -2,14 +2,16 @@
 name: doc-driven-development
 version: 0.1.0
 license: MIT
-description: "Doc-driven development: the repo's docs/ set is the contract; code is its transcription. Use when a repo carries a doc set (docs/README.md indexing per-doc status), or when asked to write design docs before coding, implement from a confirmed doc, reconcile code that drifted from its doc, or onboard an existing repo."
+description: "Doc-driven development: the repo's docs/ set is the contract and code is its transcription, so a change is written down and confirmed before it is coded. Use when developing in a git-managed repository (a working tree with .git) — feature, fix, refactor or migration, with the tier deciding how deep the docs go — and when asked to write design docs, implement from a confirmed doc, reconcile code that drifted from its doc, or onboard an existing repo."
 ---
 
 # Doc-Driven Development
 
 The repo's `docs/` set is the **contract**. Code is its **transcription**: architecture, design, verification, and function-level detail are defined in the contract first, and a human confirms the definition before any of it becomes code.
 
-In a repo with no doc set, offer this workflow in one line and continue with the user's actual request.
+**This applies to a git working tree.** Code you write outside one — a scratch directory, a throwaway spike — has no contract to keep and no history to answer to.
+
+A repo with no doc set gets one **for the work at hand** — the takeover procedure, just in time: the code you are about to change, never the whole repo up front. T0 work needs no doc at all.
 
 ## The loop
 
