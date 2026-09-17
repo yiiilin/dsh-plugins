@@ -85,8 +85,8 @@ D11 Validation script for a target repo's doc set — **B** (2026-09-17)
 
 D12 The unit in a repo of independent packages — **A** (2026-09-17)
 - Options: A the package / B the cross-package feature / C the file
-- Decided: A — the package boundary is the boundary of the confirmation. A change spanning packages is two docs when each half is confirmable on its own, and one doc when it is not
-- Cost: a genuinely single cross-package decision has to be written as one doc with two `Owns` globs, which reads heavier than it is
+- Decided: A — the boundary of the confirmation is the boundary of the package. The rule is written out in `FORMATS/feature.md`
+- Cost: a genuinely single cross-package decision is written as one doc with two `Owns` globs, which reads heavier than it is
 
 D13 Which ADR format — **`domain-modeling`** (2026-09-17)
 - Options: `domain-modeling` / `architecture-decision-records` / detect from the directory
@@ -95,8 +95,8 @@ D13 Which ADR format — **`domain-modeling`** (2026-09-17)
 
 D14 `Owns names` — **added** (2026-09-17)
 - Options: A record non-path interfaces in the header / B leave them to the architecture doc
-- Decided: A — a tab id, an event name or an injection key is an interface exactly as a file is, and without an owner it is what gets silently redefined by whoever touches it next. One name, one owner, checked mechanically
-- Cost: one more header field to keep true, and the doc-set check grows a rule
+- Decided: A — an interface with no owner is redefined by whoever touches it next. The field is specified in `FORMATS/feature.md` and enforced by the doc-set check
+- Cost: one more header field to keep true
 
 ## 5. Change log
 
