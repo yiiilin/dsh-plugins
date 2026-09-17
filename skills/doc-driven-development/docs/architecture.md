@@ -3,6 +3,7 @@
 Status: confirmed
 Version: v1
 Owns: SKILL.md, REFERENCE.md, CONTEXT.md, THIRD-PARTY-NOTICES.md, scripts/check.mjs
+Owns names: doc-driven-development (the name the catalog and the human invoke it by)
 Depends on: —
 Reconciled: 2026-09-17
 

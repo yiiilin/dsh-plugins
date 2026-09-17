@@ -18,7 +18,7 @@ Write for two readers at once: the human who confirms it, and the agent that tra
 
 ## Ports: glossary and ADR formats
 
-The external formats this skill needs but does not own. Adapters name this port; they never name a concrete skill. When the `domain-modeling` skill is installed it is the adapter: use `CONTEXT-FORMAT.md` and `ADR-FORMAT.md` there. Without it, these minimum shapes are enough:
+Two formats this skill needs but does not own. **`domain-modeling` owns both** — use its `CONTEXT-FORMAT.md` and `ADR-FORMAT.md`. Adapters name this port rather than a concrete skill, so a repo whose tooling differs still has one place to look. Without it installed, these minimum shapes are enough:
 
 ```markdown
 # CONTEXT.md — one entry per term, nothing else
@@ -33,6 +33,8 @@ One to three sentences: the context, what was decided, and why.
 ```
 
 A glossary entry is a definition plus its rejected synonyms. An ADR records *that* a decision was made and *why* — it can be a single paragraph, and most are.
+
+A repo whose `docs/adr/` was written by another tool keeps what it has — takeover maps, it does not migrate — and its new ADRs follow the shape above.
 
 ## Status mechanics
 
@@ -83,6 +85,8 @@ Report the three lists. "Looks consistent" is not a reconcile.
 ## Takeover: an existing codebase
 
 Document **just in time** — the code you are about to change plus one level of its neighbors. Documenting a legacy repo up front produces a doc set nobody trusts, and it delays the work that would have proved the docs useful.
+
+**The unit is the package.** Ten independent packages become ten feature docs as their work happens — not one per repo, and not one per file.
 
 1. Create `docs/README.md` and a thin `docs/architecture.md`: boundaries and dependency direction only, status `draft`.
 2. Backfill a feature doc from the code as it stands, in the format for that type.

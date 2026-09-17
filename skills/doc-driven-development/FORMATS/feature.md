@@ -2,6 +2,8 @@
 
 The doc that carries one unit of work: its design, the verifications it rests on, and the function detail for anything complex. It spans as many modules as the work needs. When it stops fitting one sitting (≤ ~400 lines), move the function-level detail into `domains/<domain>/modules/<name>.md` and leave a pointer.
 
+**The unit is what a human confirms in one sitting.** In a repo of independent packages, that is the package: one package's work, one doc, and the package boundary is the boundary of the confirmation. A change spanning packages is **two** docs when each half can be confirmed on its own, and **one** doc whose `Owns` covers both when it cannot.
+
 This is the layer between `architecture.md` above it and module docs below it.
 
 ## Header
@@ -11,6 +13,7 @@ Status: awaiting confirmation
 Version: v1
 Tier: T2
 Owns: src/import/**
+Owns names: `@yiln-dsh/dsh-plugin-file-explorer/git` (tab id), `dsh:import.done` (event)
 Depends on: docs/architecture.md
 Reconciled: —
 ```
@@ -21,6 +24,7 @@ Reconciled: —
 | Version | `v1`, `v2`, … — bumped every time a `confirmed` doc is edited |
 | Tier | `T1` · `T2` · `T3` — sets the depth this doc is expected to reach |
 | Owns | repo-relative globs of the paths this doc is the contract for — code, config, CI, manifests; `—` only for a doc that owns no artifact |
+| Owns names | the things this doc is the contract for that are **not** paths: string ids, event names, injected service keys, environment variables, published names. Comma-separated, each with a one-word kind when it is not obvious; `—` when there are none |
 | Depends on | docs that must be read first |
 | Reconciled | date of the last item-by-item reconcile; `—` until then |
 
@@ -48,6 +52,7 @@ A list of pointers, not a table — each verification gets its own doc under `ve
 ```
 
 - **A premise with no verification doc is unverified**, and saying so is the point.
+- **Paths are owned by `Owns`, names by `Owns names`, and no two docs claim the same one.** A tab id, an event, or an injection key is an interface exactly as a file is — without an owner it is the kind of thing that gets silently redefined by whoever touches it next.
 - **The test plan names its seams** — which test covers which section, at the highest seam that works.
 - **A design with no test seam says so**: `Test seam: none (UI-only)` plus what manual evidence will stand in. Otherwise reconcile records a check that proves nothing.
 

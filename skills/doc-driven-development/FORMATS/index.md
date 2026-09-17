@@ -40,7 +40,7 @@ Status: `draft` · `awaiting confirmation` · `confirmed` · `implemented` · `s
 - **The root holds two files and the cross-cutting directories**: `README.md` (this index), `architecture.md`, `adr/`, `verifications/`, and `domains/` once a repo has more than one domain. Feature and module docs live under their domain.
 - **Domain names come from the module table in `architecture.md`.** A directory matching no row there is a misclassification — fix the directory, not the table. A single-domain repo keeps `features/` and `modules/` at the root until the second domain appears, and the index's rows move with them.
 - **`verifications/` and `adr/` stay at the root** because they cross domains: a premise outlives the unit that raised it, and ADR numbers are repository-wide.
-- **One index for ADRs.** If the repo keeps its own `docs/adr/README.md` (the `architecture-decision-records` convention), point the row at it and list nothing else — the same decisions never appear in two indexes.
+- **One index for ADRs.** ADRs follow the `domain-modeling` format. If the repo keeps its own `docs/adr/README.md`, point the row at it and list nothing else — the same decisions never appear in two indexes.
 - **The conventions block is filled once and obeyed afterwards** — including the doc language, so no session re-asks and no session switches language mid-repo.
 - **Status and version here match the doc's own header.** The same fact in two places: when they disagree, the doc wins and the row is fixed. A stale row is drift.
 - **Open decision points are duplicated here on purpose.** The index is the human's single review surface; clear a line the moment it is decided.

@@ -104,7 +104,8 @@ if (!existsSync(INDEX)) {
   }
 }
 
-// 5 — Owns: globs and `// doc:` headers agree
+// 5 — ownership: `Owns:` globs against `// doc:` headers, both ways, plus
+// `Owns names` — the non-path interfaces, which get exactly one owner each
 const globRe = (glob) =>
   new RegExp(
     '^' +
@@ -136,10 +137,25 @@ for (const f of codeFiles) {
   }
 }
 
+const names = new Map() // name -> the doc that owns it
+for (const f of docs) {
+  const raw = header(f)['Owns names']
+  if (!raw || raw === '—') continue
+  for (const entry of raw.split(',').map((s) => s.trim()).filter(Boolean)) {
+    const name = entry.replace(/\(.*?\)/g, '').replace(/`/g, '').trim()
+    if (!name) continue
+    if (names.has(name)) {
+      fail.push(`${rel(f)}: "${name}" is already owned by ${rel(names.get(name))} — one name, one owner`)
+    } else {
+      names.set(name, f)
+    }
+  }
+}
+
 if (fail.length) {
   console.error(fail.map((l) => `FAIL  ${l}`).join('\n'))
   process.exit(1)
 }
 console.log(
-  `ok — ${docs.length} docs, ${links} links resolve, ${rows.size} index rows, ${owned.length} owned globs`,
+  `ok — ${docs.length} docs, ${links} links resolve, ${rows.size} index rows, ${owned.length} owned globs, ${names.size} owned names`,
 )
