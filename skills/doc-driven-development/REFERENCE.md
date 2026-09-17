@@ -117,14 +117,17 @@ Paste this into the repo's `AGENTS.md` so every session starts under the workflo
 ## Development workflow
 
 This repo develops doc-first: `docs/` is the contract, code is its transcription.
+Where this repo already has a rule — releases, i18n, verification — that rule stands;
+this adds the doc workflow, it replaces nothing.
 
 - Find the owning doc before changing code — `docs/README.md` indexes them by owned path.
 - Decisions land in the doc as numbered decision points before they land in code.
 - Implement only from a doc marked `confirmed`; edit the doc before changing confirmed behavior.
 - Reconcile item by item and record evidence before marking a doc `implemented`.
-- Every source file names its doc in its header: `// doc: docs/<name>.md`.
+- Owned files name their doc in the header, where the language has comments: `// doc: docs/domains/<domain>/features/<name>.md`.
+- The doc-set check runs before any doc is called `implemented`.
 
-Full workflow: the `doc-driven-development` skill.
+Full workflow, formats, and the check: the `doc-driven-development` skill.
 ```
 
 ## Splitting

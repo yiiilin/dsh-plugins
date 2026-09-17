@@ -44,4 +44,4 @@ Status: `draft` · `awaiting confirmation` · `confirmed` · `implemented` · `s
 - **The conventions block is filled once and obeyed afterwards** — including the doc language, so no session re-asks and no session switches language mid-repo.
 - **Status and version here match the doc's own header.** The same fact in two places: when they disagree, the doc wins and the row is fixed. A stale row is drift.
 - **Open decision points are duplicated here on purpose.** The index is the human's single review surface; clear a line the moment it is decided.
-- **Reading order is not decoration.** It is how a new session knows what to read before touching code.
+- **Reading order tells a new session what to read before touching code.**

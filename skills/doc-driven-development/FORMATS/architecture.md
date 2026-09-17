@@ -32,6 +32,6 @@ Reconciled: 2026-09-17
 
 - **Every claim is checkable.** "Layered architecture" is not architecture. "`src/api` may import `src/core`, never the reverse, enforced by `depcruise`" is.
 - **Budgets are numbers with the box they were measured on**: `P99 ≤ 120 ms at 500 rps on the 4-vCPU staging box`. A budget without a box is a wish.
-- **No interfaces here.** Signatures belong to the feature doc that owns them; architecture names boundaries, not symbols.
+- **Signatures belong to the feature doc that owns them.** Architecture names boundaries, not symbols.
 - **Rejected alternatives stay visible** in the decision points, one line each — that is what stops a future session from re-litigating the shape of the system.
 - **This doc is not a tour of the code.** If a reader can get it from the directory listing, it does not belong here; keep the reasons and the rules.

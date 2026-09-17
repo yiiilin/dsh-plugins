@@ -55,7 +55,7 @@ One fact, one owner. When two files disagree, the owner wins and the other is fi
 ## 5. Budgets
 
 - `SKILL.md` ≤ 200 lines — loaded on every invocation.
-- Each `FORMATS/` file ≤ 120 lines, and only one is loaded at a time.
+- Each `FORMATS/` file ≤ 120 lines, loaded one at a time — plus `decision-point.md` whenever the type being written embeds a decision point.
 - The frontmatter description ≤ 500 characters — past that the catalog renders `slice(0, 497) + '...'`, and a truncated pointer loses its trigger branches. Measured: the first draft ran ~620 and was cut mid-sentence.
 - A confirmation list the human clears in under two minutes.
 - `node scripts/check.mjs` passes before the package is copied anywhere.

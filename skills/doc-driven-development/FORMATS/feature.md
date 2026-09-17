@@ -72,5 +72,5 @@ A different question from the verification docs above: this one records that the
 
 - **A reader who has never seen the code builds this from the doc alone.** That is the whole test.
 - **Anything the human would want a say in is a decision point**, never a sentence buried in Design.
-- **Restating the code is not documentation.** Keep the reason, the constraint, the number.
+- **Keep the reason, the constraint, the number.** Those are what a reader cannot recover from the code.
 - **`implemented` is claimed only after an item-by-item reconcile with recorded evidence.**

@@ -2,22 +2,20 @@
 name: doc-driven-development
 version: 0.1.0
 license: MIT
-description: "Doc-driven development: the repo's docs/ set is the contract; code is its transcription. Use when a repo carries a doc set (docs/README.md indexing per-doc status), or when asked to write design docs before coding, implement from a confirmed doc, reconcile code that drifted from its doc, or onboard an existing repo. Covers the architecture, design, verification, and function-level pseudocode layers plus the confirmation gate. Skip repos with no doc set unless asked to adopt it."
+description: "Doc-driven development: the repo's docs/ set is the contract; code is its transcription. Use when a repo carries a doc set (docs/README.md indexing per-doc status), or when asked to write design docs before coding, implement from a confirmed doc, reconcile code that drifted from its doc, or onboard an existing repo."
 ---
 
 # Doc-Driven Development
 
 The repo's `docs/` set is the **contract**. Code is its **transcription**: architecture, design, verification, and function-level detail are defined in the contract first, and a human confirms the definition before any of it becomes code.
 
-A doc is an abstraction of the code, closer to pseudocode than to prose. Correcting a doc costs the human a fraction of reading a diff, and it happens *before* the decision hardens into a diff: every choice you would otherwise make silently becomes a numbered line the human can cross out.
-
-Adopt this workflow when the user asks for it or when `docs/README.md` already exists. In a repo with no doc set, offer it in one line and continue with the user's actual request.
+In a repo with no doc set, offer this workflow in one line and continue with the user's actual request.
 
 ## The loop
 
-Steps 1–3 produce documents only; code begins at step 4. Keep step 3 and step 4 apart — the human's answer *is* the gate.
+Keep step 3 and step 4 apart — the human's answer *is* the gate.
 
-1. **Locate** — read the code you are about to change, then find the doc that owns it. `docs/README.md` indexes every doc by the paths it `owns`. No owning doc → step 2 creates one.
+1. **Locate** — read the code you are about to change, then find the doc that owns it. `docs/README.md` indexes every doc by the paths it `owns`. A vendored `docs/` — a skill's own, under `skills/**/docs/` — is not this repo's doc set; ignore it. No owning doc → step 2 creates one.
    *Done when:* every path you will touch is covered by a doc, or you have named the doc you will create.
 2. **Write the contract** — write or amend that doc at the layer the change belongs to, following the format for that document type. Every choice the human would want a say in becomes a **decision point**: numbered, with options, a recommendation, and the recommendation's cost.
    *Done when:* each decision point carries options + recommendation + cost, the doc carries a status line, and its open points are listed in `docs/README.md`.
@@ -46,9 +44,9 @@ Decision points live in the doc that owns the work (see [`FORMATS/decision-point
 
 **Traceability is what makes "every change has a doc" checkable.** A doc names the paths it owns as repo-relative globs — code, config, CI, manifests, anything (`Owns: src/cache/**, .github/workflows/ci.yml`). An owned source file names its doc back in its header where the language has comments (`// doc: docs/cache.md`). Two greps reconcile the whole repo.
 
-**Language:** docs are written for the human who confirms them, so they follow the repo. Detect it from the existing docs or `AGENTS.md`, ask once if unclear, and record the answer in the index conventions block — never re-ask, never switch mid-repo.
+**Language:** docs are written for the human who confirms them, so they follow the repo. Detect it from the existing docs or `AGENTS.md`, ask once if unclear, and record the answer in the index conventions block.
 
-## Depth scales with risk, never with line count
+## Depth scales with the risk of being wrong
 
 | Tier | What it is | What it requires |
 |---|---|---|
@@ -62,7 +60,7 @@ The tier scales the *depth* of the doc. Every change that alters behavior still 
 ## Hard rules
 
 1. **Code begins at `confirmed`.** A doc authorizes implementation only in that state; `draft` and `awaiting confirmation` authorize nothing.
-2. **The doc changes first.** When code and doc disagree, amend the doc, confirm the delta, then change the code. Drift is resolved in the doc's favor or by the human, never by quietly editing code.
+2. **The doc changes first.** When code and doc disagree, amend the doc, confirm the delta, then change the code. Drift is resolved in the doc's favor, or by the human.
 3. **No silent decisions.** Library, data structure, algorithm, retry and cache policy, schema, public naming, error surface — each becomes a decision point. If you would otherwise choose it alone, it is a decision point.
 4. **Numbers, not adjectives.** `fast` → `P99 ≤ 50 ms at 1k QPS`. `robust` → `survives a kill mid-write and resumes from the last committed offset`. `clean` → `no module imports upward, enforced by <check>`.
 5. **Pseudocode, not prose.** A function-level section transcribes directly — if two engineers could implement it differently, it is not done. The checklist is the transcription test in [`REFERENCE.md`](REFERENCE.md).
@@ -105,11 +103,11 @@ A design is believable once the premises it rests on are named and each has been
 | "D3 → option B" · D3 改成 B | Amend that decision point, re-present only the changed lines |
 | "implement it" · 实现 | Step 4, provided the doc is `confirmed`; otherwise name the decision points still open |
 | "check docs vs code" · 核对 | Step 5 |
-| "we're changing X" · 要改 X | Step 1 — reopen the owning doc to `draft` |
+| "we're changing X" · 要改 X | Step 1 — the contract edit returns the changed part to `awaiting confirmation` |
 
 ## Further reference
 
-- [`FORMATS/`](FORMATS/) — how each document type is written: header fields, section skeleton, rules.
+- [`FORMATS/`](FORMATS/) — how each document type is written (header fields, section skeleton, rules), plus [`decision-point.md`](FORMATS/decision-point.md) for the section they all share.
 - [`REFERENCE.md`](REFERENCE.md) — the writing standard, status mechanics, the item-by-item reconcile procedure, takeover of an existing codebase, failure modes, and a paste-ready `AGENTS.md` block that enforces this workflow in a repo.
 - [`docs/`](docs/) and [`CONTEXT.md`](CONTEXT.md) — this skill's own contract, written in its own format. A live example: read it to calibrate how concrete a doc has to be.
 - [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) — MIT license and the material adapted from `mattpocock/skills`.
