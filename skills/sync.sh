@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# Keep the two copies of a skill in step.
+# Install a skill from this repo into the harness's skill root.
 #
-#   ~/.agents/skills/<name>/   is what the harness loads — edits here take effect
-#                              immediately, with no restart.
-#   skills/<name>/             is this repo's versioned record, and what gets committed.
+#   skills/<name>/             is this repo's versioned record — the source.
+#   ~/.agents/skills/<name>/   is the installed copy the harness loads.
 #
-# The live copy leads, so the direction is live -> repo. Run this, then commit.
+# The repo leads, so the direction is repo -> live. Commit first, then run this.
 #
 #   ./skills/sync.sh              # every skill in this directory
 #   ./skills/sync.sh <name>       # just one
@@ -17,13 +16,25 @@ live_root="${HOME}/.agents/skills"
 
 sync_one() {
   local name="$1" live="${live_root}/$1" repo="${here}/$1"
-  if [ ! -d "$live" ]; then
-    echo "skip ${name}: not installed at ${live}" >&2
+  if [ ! -f "${repo}/SKILL.md" ]; then
+    echo "skip ${name}: no SKILL.md in ${repo}" >&2
     return 0
   fi
-  mkdir -p "$repo"
-  rsync -a --delete "${live}/" "${repo}/"
-  echo "synced ${name}: live -> repo"
+
+  # This overwrites the installed copy, so anything edited there and not yet
+  # brought back into the repo is about to be lost. Show it before doing it.
+  if [ -d "$live" ]; then
+    local drifted
+    drifted="$(diff -rq "${repo}" "${live}" 2>/dev/null || true)"
+    if [ -n "$drifted" ]; then
+      echo "warning: ${name} differs from the installed copy, which this overwrites:" >&2
+      echo "${drifted}" | sed 's/^/  /' >&2
+    fi
+  fi
+
+  install -d "$live"
+  rsync -a --delete "${repo}/" "${live}/"
+  echo "synced ${name}: repo -> live"
 }
 
 if [ $# -gt 0 ]; then
