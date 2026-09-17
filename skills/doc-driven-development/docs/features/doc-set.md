@@ -17,7 +17,7 @@ Make every change in a repo traceable to a doc a human has confirmed, so that im
 
 The premises this convention rests on are recorded as verification docs, by its own rule:
 
-- → [verifications/design-validation.md](verifications/design-validation.md) — three hold; three open, pending the pilot
+- → [verifications/design-validation.md](../verifications/design-validation.md) — three hold; three open, pending the pilot
 
 ## 3. Function detail
 

@@ -96,7 +96,7 @@ A repo that already has its own `docs/` layout is mapped onto, not migrated: kee
 | Every tiny change demands a doc | Check the tier table; T0 work needs none |
 | Docs pile up unconfirmed | The confirmation list is too long — split the work and confirm in smaller units |
 | Doc set grows, trust does not | A `confirmed` doc was edited without re-confirmation, or a doc was marked `implemented` without evidence |
-| The index drifts from the docs | Nothing reads the index. Step 1 and step 5 both do; keep it to one screen |
+| The index drifts from the docs | Nothing reads the index. Step 1 and step 5 both do. The map may run long — it is grepped, not read; what has to stay short is its Open decision points section |
 | A doc points at a file that does not exist | Nothing validates pointers. Re-check every relative link whenever a doc is renamed, moved, or split |
 
 ## Enforcing it in a repo

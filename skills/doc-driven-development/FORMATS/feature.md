@@ -1,4 +1,4 @@
-# Feature doc format — `docs/<feature>.md`
+# Feature doc format — `docs/features/<name>.md`
 
 The doc that carries one unit of work: its design, the verifications it rests on, and the function detail for anything complex. It spans as many modules as the work needs. When it stops fitting one sitting (≤ ~400 lines), move the function-level detail into `docs/modules/<name>.md` and leave a pointer.
 

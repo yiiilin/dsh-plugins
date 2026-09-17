@@ -15,18 +15,18 @@ Status: `draft` · `awaiting confirmation` · `confirmed` · `implemented` · `s
 | Doc | Layer | Status | Ver | Owns | Depends on | Open |
 |---|---|---|---|---|---|---|
 | [architecture.md](architecture.md) | architecture | awaiting confirmation | v1 | `SKILL.md`, `REFERENCE.md` | — | D1 |
-| [doc-set.md](doc-set.md) | design | awaiting confirmation | v2 | `FORMATS/**` | architecture.md | D8 |
+| [features/doc-set.md](features/doc-set.md) | design | awaiting confirmation | v2 | `FORMATS/**` | architecture.md | D8 |
 | [verifications/design-validation.md](verifications/design-validation.md) | verification | awaiting confirmation | v1 | — | doc-set.md | — |
 | `docs/adr/` (0) | decisions | — | — | — | — | — |
 
 ## Open decision points
 
 - [ ] `architecture.md` D1 — final file tree: keep `REFERENCE.md` for procedures, or fold it into `SKILL.md`
-- [ ] `doc-set.md` D8 — how a repo that already has its own `docs/` layout is taken over
+- [ ] `features/doc-set.md` D8 — how a repo that already has its own `docs/` layout is taken over
 
 ## Reading order
 
 1. `architecture.md` — what the skill is made of, and which file owns which fact
-2. `doc-set.md` — the convention itself: layout, roster, lifecycle, the gate
+2. `features/doc-set.md` — the convention itself: layout, roster, lifecycle, the gate
 3. `verifications/design-validation.md` — what the convention's own premises rest on
 4. [`../FORMATS/`](../FORMATS/) — how each doc type is written

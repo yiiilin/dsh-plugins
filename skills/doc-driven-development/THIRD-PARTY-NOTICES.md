@@ -14,7 +14,7 @@ Adapted material:
 |---|---|---|
 | `FORMATS/decision-point.md` — "Escalate to an ADR when all three hold" | `skills/engineering/domain-modeling/ADR-FORMAT.md` | The three conditions for promoting a decision to an ADR, reworded |
 | `CONTEXT.md` — the shape of every entry | `skills/engineering/domain-modeling/CONTEXT-FORMAT.md` | The glossary entry format: term, a one-or-two-sentence definition, and an `_Avoid_:` list of rejected synonyms |
-| `docs/doc-set.md`, `FORMATS/index.md`, `REFERENCE.md` | `skills/engineering/domain-modeling/{SKILL.md,ADR-FORMAT.md,CONTEXT-FORMAT.md}` | The `docs/adr/` layout, and the rule that this skill cites `domain-modeling` as the owner of the glossary and ADR formats instead of redefining them |
+| `docs/features/doc-set.md`, `FORMATS/index.md`, `REFERENCE.md` | `skills/engineering/domain-modeling/{SKILL.md,ADR-FORMAT.md,CONTEXT-FORMAT.md}` | The `docs/adr/` layout, and the rule that this skill cites `domain-modeling` as the owner of the glossary and ADR formats instead of redefining them |
 | `REFERENCE.md` — "The writing standard" | `skills/productivity/writing-for-agents/SKILL.md` | One phrase ("the reason behind a choice") and the document-design guidance followed throughout |
 
 Referenced but not reproduced: `domain-modeling` is cited by name as the owner of the glossary and ADR formats. Everything else in this skill — the loop, the tier table, the doc-set convention, the `FORMATS/` specs, and the skill's own `docs/` — is original to this skill.

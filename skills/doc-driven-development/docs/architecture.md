@@ -70,7 +70,7 @@ D1 Final file tree
 D2 Package self-check — **B** (2026-09-17)
 - Options: A check by hand / B one dependency-free script for the invariants that broke silently / C B plus a CI hook
 - Recommend: B — implemented as `scripts/check.mjs`
-- Cost: one more file to keep working; it checks this package only, not a target repo's doc set (that is D11 in `docs/doc-set.md`, still open)
+- Cost: one more file to keep working; it checks this package only, not a target repo's doc set (that is D11 in `docs/features/doc-set.md`, still open)
 - Affects: `scripts/check.mjs`, `docs/architecture.md` §5
 - Evidence: three failures shipped silently before it existed — the 620-char description the catalog truncated, the pointer to a `TEMPLATES/` that never existed, and §3's own invariant that `SKILL.md` violated
 

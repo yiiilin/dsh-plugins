@@ -2,7 +2,7 @@
 
 Status: awaiting confirmation
 Version: v1
-Verifies: docs/doc-set.md
+Verifies: docs/features/doc-set.md
 Verdict: holds for 3 of 6; 3 open pending the pilot
 Date: 2026-09-17
 
