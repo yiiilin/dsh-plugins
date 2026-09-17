@@ -19,11 +19,11 @@ Steps 1–3 produce documents only; code begins at step 4. Keep step 3 and step 
 1. **Locate** — read the code you are about to change, then find the doc that owns it. `docs/README.md` indexes every doc by the paths it `owns`. No owning doc → step 2 creates one.
    *Done when:* every path you will touch is covered by a doc, or you have named the doc you will create.
 2. **Write the contract** — write or amend that doc at the layer the change belongs to, following the format for that document type. Every choice the human would want a say in becomes a **decision point**: numbered, with options, a recommendation, and the recommendation's cost.
-   *Done when:* each decision point carries options + recommendation + cost, and the doc carries a status line.
+   *Done when:* each decision point carries options + recommendation + cost, the doc carries a status line, and its open points are listed in `docs/README.md`.
 3. **Present the confirmation list** — one line per open decision point, high-stakes ones marked `⚠`, then a short statement of what the doc now defines and what implementing it will change. Stop there.
-   *Done when:* the human has answered — approved, edited a decision point, or said "go with the recommendations".
+   *Done when:* every open point appears with its recommendation and cost, the `⚠` ones are marked, the list matches the index's Open section, and the human has answered.
 4. **Transcribe** — implement from a doc whose status is `confirmed`. The doc is the specification, not a hint. A gap, contradiction, or better idea found while coding returns you to step 2: amend the doc, confirm the delta, then code it.
-   *Done when:* every item in the doc exists in code, and no behavior exists in code that the doc does not account for.
+   *Done when:* every item in the doc exists in code, and every path in the diff maps to an item in the doc — a path with no item is a gap, and gaps return you to step 2.
 5. **Reconcile** — walk the doc against the code item by item, record the verification evidence in the doc, set the status to `implemented`, and update `docs/README.md`.
    *Done when:* the doc reads `implemented`, its evidence is recorded, and the index row matches.
 
@@ -42,7 +42,7 @@ One doc per **unit of work a human can confirm in one sitting** — a feature, a
 
 Decision points live in the doc that owns the work (see [`FORMATS/decision-point.md`](FORMATS/decision-point.md)); escalate one to an ADR only when it is hard to reverse, surprising without context, *and* the result of a real trade-off.
 
-**Traceability is what makes "every change has a doc" checkable.** Each doc names the paths it owns (`Owns: src/cache/**`); each source file's header names its doc (`// doc: docs/cache.md`). Two greps reconcile the whole repo.
+**Traceability is what makes "every change has a doc" checkable.** A doc names the paths it owns as repo-relative globs — code, config, CI, manifests, anything (`Owns: src/cache/**, .github/workflows/ci.yml`). An owned source file names its doc back in its header where the language has comments (`// doc: docs/cache.md`). Two greps reconcile the whole repo.
 
 **Language:** docs are written for the human who confirms them, so they follow the repo. Detect it from the existing docs or `AGENTS.md`, ask once if unclear, and record the answer in the index conventions block — never re-ask, never switch mid-repo.
 
@@ -63,14 +63,14 @@ The tier scales the *depth* of the doc. Every change that alters behavior still 
 2. **The doc changes first.** When code and doc disagree, amend the doc, confirm the delta, then change the code. Drift is resolved in the doc's favor or by the human, never by quietly editing code.
 3. **No silent decisions.** Library, data structure, algorithm, retry and cache policy, schema, public naming, error surface — each becomes a decision point. If you would otherwise choose it alone, it is a decision point.
 4. **Numbers, not adjectives.** `fast` → `P99 ≤ 50 ms at 1k QPS`. `robust` → `survives a kill mid-write and resumes from the last committed offset`. `clean` → `no module imports upward, enforced by <check>`.
-5. **Pseudocode, not prose.** A function-level section transcribes directly: signature, inputs, outputs, steps, edge cases, error paths, budget. If two engineers could implement it differently, it is not done.
-6. **A contract edit goes back through the gate.** Changing a doc's contract — interface, design, decision points, boundaries, budgets — bumps its version and returns the changed part to `awaiting confirmation`, from `confirmed` and `implemented` alike. Recording evidence, setting `Reconciled`, and moving the status line are bookkeeping: they never reopen a doc.
+5. **Pseudocode, not prose.** A function-level section transcribes directly — if two engineers could implement it differently, it is not done. The checklist is the transcription test in [`REFERENCE.md`](REFERENCE.md).
+6. **A contract edit goes back through the gate.** Changing a doc's contract — interface, design, decision points, boundaries, budgets — bumps its version and returns the changed part to `awaiting confirmation`, from `confirmed` and `implemented` alike. Closing a doc out is not a contract edit; [`REFERENCE.md`](REFERENCE.md) draws that line.
 
 ## Changing implemented work
 
-**The direction is forward by default.** A change to work an `implemented` doc governs is not "editing the implemented thing" — it is that doc re-entering the loop: back to `awaiting confirmation`, the human confirms, the code follows. Doc first, always, for the same reason as rule 2: the human sees the change as a decision, not as a diff.
+**The direction is forward by default.** Changing work an `implemented` doc governs means that doc re-enters the loop — back to `awaiting confirmation`, the human confirms, the code follows. Doc first, always: the human sees the change as a decision, not as a diff.
 
-The one exception is the human saying to change the code directly — an incident, a one-line fix, "just do it". That instruction **is** the authorization, so the change is not unconfirmed; what differs is the direction. The doc is transcribed *from* the code instead of the code from the doc. Obey, then update that doc's content **in the same session**, mark the changed part `code-first` in its change log, and record the choices made while coding as decision points settled in code. The doc keeps its `implemented` status; what never happens is a doc left describing code that no longer exists.
+The one exception is the human saying to change the code directly. That instruction **is** the authorization, so the change is not unconfirmed; only the direction differs — see the transition table in [`REFERENCE.md`](REFERENCE.md). Obey, then update that doc's content **in the same session** so it describes what the code now does, mark the changed part `code-first` in its change log, and record the choices made while coding as decision points settled in code.
 
 ## Status lifecycle
 

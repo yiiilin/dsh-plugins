@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Contract check for this skill package:  node scripts/check.mjs
 //
-// Four invariants, each of which was silently violated at least once while this
+// Five invariants, each of which was silently violated at least once while this
 // skill was written (a 620-char description the catalog truncated; a pointer to a
 // TEMPLATES/ directory that never existed; an architecture rule forbidding
 // something SKILL.md did). Nothing else validates them.
@@ -68,8 +68,15 @@ for (const f of files) {
   }
 }
 
+// 5 — the line budgets stated in docs/architecture.md
+const budget = [[skillPath, 200], ...mds.filter((f) => rel(f).startsWith('FORMATS/')).map((f) => [f, 120])]
+for (const [f, cap] of budget) {
+  const n = text.get(f).split('\n').length
+  if (n > cap) fail.push(`${rel(f)}: ${n} lines, budget is ${cap} — split it or cut it`)
+}
+
 if (fail.length) {
   console.error(fail.map((l) => `FAIL  ${l}`).join('\n'))
   process.exit(1)
 }
-console.log(`ok — ${mds.length} docs, ${files.length} files, ${links} links resolve, no orphans`)
+console.log(`ok — ${mds.length} docs, ${files.length} files, ${links} links resolve, no orphans, budgets met`)

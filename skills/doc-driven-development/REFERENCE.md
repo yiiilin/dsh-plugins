@@ -44,22 +44,22 @@ The status lives in two places, and they must agree: the doc's header and its ro
 | `awaiting confirmation` | Presented to the human, with its open decision points listed |
 | `confirmed` | The human approved this version. **The only state that authorizes code** |
 | `implemented` | Transcribed, reconciled item by item, evidence recorded |
-| `superseded` | Replaced; the header names the doc that replaced it |
+| `superseded` | Replaced; the header reads `Status: superseded by docs/<name>.md` |
+
+`confirmed` requires no open decision points. An unanswered point is recorded `D5 — deferred, answer pending` rather than silently dropped, and the doc stays `awaiting confirmation` until it is answered or the point is withdrawn.
 
 A doc's **contract** is frozen once confirmed: changing the interface, design, decision points, boundaries, or budgets bumps the version and returns the changed part to `awaiting confirmation` — from `confirmed` and `implemented` alike; the change log gains one line: `v2 — D5 dropped the legacy column (2026-09-17)`.
 
 **Bookkeeping is not a contract change.** Recording evidence, setting `Reconciled`, and moving the status line never reopen a doc — otherwise step 5 would unfreeze the very doc it is closing out. A reconcile that finds the doc wrong (`divergent`) *is* a contract change and goes back through the gate like any other.
 
-**The direction is forward by default.** Changing work an `implemented` doc governs means that doc re-enters at `awaiting confirmation`, the human confirms, then the code follows.
+**Direction of transcription.** Forward is the default: a contract change re-enters at `awaiting confirmation`, and the code follows the confirmation. The exception is the human saying to change the code directly — authorized by that instruction rather than by a doc review, so it is not an unconfirmed change; only the direction differs:
 
-Changing the code first is the exception, and only when the human says so — and that instruction **is** the authorization, so the change is not "unconfirmed". What differs is which side led:
+| Path | Who leads | What the doc is | Change log |
+|---|---|---|---|
+| default | the doc | a contract the code follows | — |
+| `code-first` | the code | a record of what was built | `code-first` |
 
-| Path | Who leads | What the doc is |
-|---|---|---|
-| default | the doc | a contract the code follows |
-| `code-first` | the code | a record of what was built |
-
-On the code-first path: obey, update the doc's content in the same session, write `code-first` into the change log line for that version, and record the choices made while coding as decision points settled in code. The doc keeps its `implemented` status. What never happens is a doc left describing code that no longer exists — that is the drift this convention exists to prevent.
+A `code-first` doc keeps its `implemented` status.
 
 `implemented` is a claim about evidence, not about effort. If a reconcile has not been run, the doc stays `confirmed`.
 
@@ -68,8 +68,8 @@ On the code-first path: obey, update the doc's content in the same session, writ
 1. **Extract the checkable items** from the doc: interface entries, decision points, edge-case rows, budget numbers, named tests.
 2. **Locate the code** that realizes each — file and symbol.
 3. **Classify** each item: realized / missing / divergent.
-4. **Resolve**: `missing` means either the doc or the code is wrong — find out which before writing anything. `divergent` means the doc wins unless the human says otherwise; either way the doc is edited first, then the code.
-5. **Record evidence** per item: the command that proves it (test name, benchmark, curl) and its result, with a date.
+4. **Resolve**: `missing` on a confirmed interface, edge case, or budget is a contract breach — the code is wrong, fix the code. `missing` on a backfilled `draft` doc is the doc's error — fix the doc. `divergent` means the doc wins unless the human says otherwise; either way the doc is edited first, then the code.
+5. **Record evidence** per item in the doc's Reconcile evidence table: the command that proves it (test name, benchmark, curl), its result, and the date.
 6. **Close out**: status `implemented`, `Reconciled` date set, index row updated.
 
 Report the three lists. "Looks consistent" is not a reconcile.

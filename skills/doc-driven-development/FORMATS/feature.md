@@ -20,7 +20,7 @@ Reconciled: —
 | Status | `draft` · `awaiting confirmation` · `confirmed` · `implemented` · `superseded by <doc>` |
 | Version | `v1`, `v2`, … — bumped every time a `confirmed` doc is edited |
 | Tier | `T1` · `T2` · `T3` — sets the depth this doc is expected to reach |
-| Owns | the code paths this doc is the contract for, as globs; `—` for a doc that owns no code |
+| Owns | repo-relative globs of the paths this doc is the contract for — code, config, CI, manifests; `—` only for a doc that owns no artifact |
 | Depends on | docs that must be read first |
 | Reconciled | date of the last item-by-item reconcile; `—` until then |
 
@@ -48,6 +48,19 @@ Reconciled: —
 - **Evidence is a command and a result, with a date.** "Tested" is not evidence.
 - **A failed assumption returns to Design.** Implementing on an `open` assumption needs the human's explicit acceptance, recorded as a decision point.
 - **The test plan names its seams** — which test covers which section, at the highest seam that works.
+- **A design with no test seam says so**: `Test seam: none (UI-only)` plus what manual evidence will stand in. Otherwise reconcile records a check that proves nothing.
+
+### Reconcile evidence
+
+Written at step 5, one row per checkable item extracted from the doc:
+
+| Item | Class | Command | Result | Date |
+|---|---|---|---|---|
+| `readBatch` post-condition: exactly `size` rows, fewer only at EOF | realized | `node --test test/reader.test.js` | 4 pass | 2026-09-17 |
+| quoted field spans lines | realized | `import.multiline_field` | pass | 2026-09-17 |
+| budget: ≤ 12 MB peak RSS per 1000-row batch | divergent | `/usr/bin/time -v node bench/import.js` | 18 MB — budget raised to 20 MB in v2 | 2026-09-17 |
+
+`Class` is `realized` / `missing` / `divergent`, from the reconcile procedure in `REFERENCE.md`. A doc reaches `implemented` only when every row is accounted for.
 
 ## Rules
 

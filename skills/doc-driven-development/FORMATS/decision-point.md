@@ -17,7 +17,6 @@ D3 Retry budget
 - Recommend: B — the upstream is idempotent and its blips last under 2 s
 - Cost: a hard-down upstream costs 3× latency before failing
 - Affects: src/queue/**, docs/architecture.md (error budget)
-- Needs: explicit answer
 ```
 
 | Field | Rule |
@@ -31,7 +30,7 @@ D3 Retry budget
 
 ## The ⚠ mark
 
-Mark a point ⚠ when it is irreversible, expensive to reverse, user-visible, or security-relevant. Everything unmarked clears in bulk with "go with the recommendations"; ⚠ points need explicit answers. Marking too much defeats the purpose: the mark exists so bulk approval is safe.
+Mark a point ⚠ when it is irreversible, expensive to reverse, user-visible, security-relevant, or rests on an `open` assumption. Everything unmarked clears in bulk with "go with the recommendations"; ⚠ points need explicit answers. Marking too much defeats the purpose: the mark exists so bulk approval is safe.
 
 ## Decided form
 
