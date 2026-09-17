@@ -111,7 +111,7 @@ A repo that already has its own `docs/` layout is mapped onto, not migrated: kee
 
 ## Enforcing it in a repo
 
-Paste this into the repo's `AGENTS.md` so every session starts under the workflow, whether or not this skill is loaded:
+Pasting this is how a repo opts in: it is what makes the workflow fire on its own, and it is what the skill's trigger looks for. Every session then starts under the workflow, whether or not the skill is loaded.
 
 ```markdown
 ## Development workflow

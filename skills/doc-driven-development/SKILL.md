@@ -2,16 +2,16 @@
 name: doc-driven-development
 version: 0.1.0
 license: MIT
-description: "Doc-driven development: the repo's docs/ set is the contract and code is its transcription, so a change is written down and confirmed before it is coded. Use when developing in a git-managed repository (a working tree with .git) — feature, fix, refactor or migration, with the tier deciding how deep the docs go — and when asked to write design docs, implement from a confirmed doc, reconcile code that drifted from its doc, or onboard an existing repo."
+description: "Doc-driven development: the repo's docs/ set is the contract and code is its transcription, so a change is written down and confirmed before it is coded. Use in a repo that already works this way — docs/README.md indexing each doc's status, or an AGENTS.md requiring it — or when asked to adopt the workflow, and to write design docs, implement from a confirmed doc, reconcile code that drifted from its doc, or onboard an existing repo."
 ---
 
 # Doc-Driven Development
 
 The repo's `docs/` set is the **contract**. Code is its **transcription**: architecture, design, verification, and function-level detail are defined in the contract first, and a human confirms the definition before any of it becomes code.
 
-**This applies to a git working tree.** Code you write outside one — a scratch directory, a throwaway spike — has no contract to keep and no history to answer to.
+**When this applies** — two conditions, both checkable from the repo itself: it already works this way (`docs/README.md` indexes each doc's status), or it says so (`AGENTS.md` carries the block in [`REFERENCE.md`](REFERENCE.md)). Inside those, the workflow is the default and the tier decides the depth. Outside them it is a workflow to *offer* — one line, and then the user's actual request; adopting it is the user's call, made by pasting that block or asking outright.
 
-A repo with no doc set gets one **for the work at hand** — the takeover procedure, just in time: the code you are about to change, never the whole repo up front. T0 work needs no doc at all.
+A repo that adopts it gets its doc set **for the work at hand** — the takeover procedure, just in time: the code you are about to change, never the whole repo up front. T0 work needs no doc at all.
 
 ## The loop
 
