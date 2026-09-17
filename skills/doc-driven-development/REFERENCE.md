@@ -46,7 +46,20 @@ The status lives in two places, and they must agree: the doc's header and its ro
 | `implemented` | Transcribed, reconciled item by item, evidence recorded |
 | `superseded` | Replaced; the header names the doc that replaced it |
 
-A `confirmed` doc is **frozen**. Editing it bumps the version and returns the changed part to `awaiting confirmation`; the change log gains one line: `v2 — D5 dropped the legacy column (2026-09-17)`.
+A doc's **contract** is frozen once confirmed: changing the interface, design, decision points, boundaries, or budgets bumps the version and returns the changed part to `awaiting confirmation` — from `confirmed` and `implemented` alike; the change log gains one line: `v2 — D5 dropped the legacy column (2026-09-17)`.
+
+**Bookkeeping is not a contract change.** Recording evidence, setting `Reconciled`, and moving the status line never reopen a doc — otherwise step 5 would unfreeze the very doc it is closing out. A reconcile that finds the doc wrong (`divergent`) *is* a contract change and goes back through the gate like any other.
+
+**The direction is forward by default.** Changing work an `implemented` doc governs means that doc re-enters at `awaiting confirmation`, the human confirms, then the code follows.
+
+Changing the code first is the exception, and only when the human says so — and that instruction **is** the authorization, so the change is not "unconfirmed". What differs is which side led:
+
+| Path | Who leads | What the doc is |
+|---|---|---|
+| default | the doc | a contract the code follows |
+| `code-first` | the code | a record of what was built |
+
+On the code-first path: obey, update the doc's content in the same session, write `code-first` into the change log line for that version, and record the choices made while coding as decision points settled in code. The doc keeps its `implemented` status. What never happens is a doc left describing code that no longer exists — that is the drift this convention exists to prevent.
 
 `implemented` is a claim about evidence, not about effort. If a reconcile has not been run, the doc stays `confirmed`.
 

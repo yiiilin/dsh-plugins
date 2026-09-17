@@ -65,9 +65,9 @@ D6 Doc language — **A** (2026-09-17)
 - Cost: the first session in each repo must detect the language or ask once
 
 D7 Escape hatch — **A** (2026-09-17)
-- Options: A obey, then backfill in the same session / B refuse and hold the gate / C skip without backfill
+- Options: A obey, then update the owning doc in the same session / B refuse and hold the gate / C skip without updating
 - Recommend: A — C rots the doc set; B gets bypassed under real pressure, and a bypassed gate loses authority
-- Cost: a backfilled doc starts at `draft` and can sit unconfirmed
+- Cost: the doc records a design discovered while coding rather than agreed in advance; the `code-first` marker in the change log is the only thing separating it from a reviewed contract
 
 D8 Takeover of a repo that already has a `docs/` layout
 - Options: A map onto the existing layout, retrofitting headers and status / B migrate the existing docs into this layout / C run two sets in parallel, new work in this layout

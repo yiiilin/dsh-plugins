@@ -34,7 +34,7 @@ Reconciled: —
 6. **Edge cases and errors** — table of `case | expected behavior | test`.
 7. **Budgets** — numbers, with the box.
 8. **Decision points** — see `decision-point.md`.
-9. **Change log** — one line per version.
+9. **Change log** — one line per version. A version built code-first says so: `v2 — retry budget, code-first (2026-09-17)`.
 
 ## The verification section
 

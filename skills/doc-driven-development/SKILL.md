@@ -64,17 +64,19 @@ The tier scales the *depth* of the doc. Every change that alters behavior still 
 3. **No silent decisions.** Library, data structure, algorithm, retry and cache policy, schema, public naming, error surface — each becomes a decision point. If you would otherwise choose it alone, it is a decision point.
 4. **Numbers, not adjectives.** `fast` → `P99 ≤ 50 ms at 1k QPS`. `robust` → `survives a kill mid-write and resumes from the last committed offset`. `clean` → `no module imports upward, enforced by <check>`.
 5. **Pseudocode, not prose.** A function-level section transcribes directly: signature, inputs, outputs, steps, edge cases, error paths, budget. If two engineers could implement it differently, it is not done.
-6. **Confirmed docs are frozen.** Editing a `confirmed` doc bumps its version and returns the changed part to `awaiting confirmation`. Scope stays under human control.
+6. **A contract edit goes back through the gate.** Changing a doc's contract — interface, design, decision points, boundaries, budgets — bumps its version and returns the changed part to `awaiting confirmation`, from `confirmed` and `implemented` alike. Recording evidence, setting `Reconciled`, and moving the status line are bookkeeping: they never reopen a doc.
 
-## When the human says skip it
+## Changing implemented work
 
-An incident, a one-line fix, "just do it": obey, then backfill the owning doc **in the same session** — decision points listed, status `draft` — and say plainly in your reply that the doc is unconfirmed. The contract's value is final consistency, not sequence. A doc set that quietly loses entries is worth less than no doc set.
+**The direction is forward by default.** A change to work an `implemented` doc governs is not "editing the implemented thing" — it is that doc re-entering the loop: back to `awaiting confirmation`, the human confirms, the code follows. Doc first, always, for the same reason as rule 2: the human sees the change as a decision, not as a diff.
+
+The one exception is the human saying to change the code directly — an incident, a one-line fix, "just do it". That instruction **is** the authorization, so the change is not unconfirmed; what differs is the direction. The doc is transcribed *from* the code instead of the code from the doc. Obey, then update that doc's content **in the same session**, mark the changed part `code-first` in its change log, and record the choices made while coding as decision points settled in code. The doc keeps its `implemented` status; what never happens is a doc left describing code that no longer exists.
 
 ## Status lifecycle
 
 `draft` → `awaiting confirmation` → `confirmed` → `implemented` → `superseded`
 
-Only `confirmed` authorizes code. `implemented` is claimed only after step 5, and `superseded` names the doc that replaced it. Transitions and the version-bump rule are in [`REFERENCE.md`](REFERENCE.md).
+Only `confirmed` authorizes code. `implemented` is claimed only after step 5, and `superseded` names the doc that replaced it. A contract change re-enters at `awaiting confirmation` from `confirmed` or `implemented`; bookkeeping does not. Full transitions are in [`REFERENCE.md`](REFERENCE.md).
 
 ## The confirmation list
 
