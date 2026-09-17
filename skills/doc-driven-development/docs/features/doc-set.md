@@ -77,10 +77,10 @@ D10 One-off evidence artifacts — dissolved by D9 (2026-09-17)
 - Decided: evidence lives beside its verification doc, so there is no separate place left to decide about
 - Cost: a script worth keeping must be placed deliberately rather than accumulating in one evidence folder
 
-D11 Validation script for a target repo's doc set — **A** (2026-09-17)
-- Options: A none / B a script checking header fields, index rows, and `Owns` ↔ file-header agreement / C a CI snippet running it
-- Decided: A — step 5's reconcile procedure *is* the check, and the model runs it
-- Cost: drift between a doc's header and its index row is caught when step 5 runs, not before
+D11 Validation script for a target repo's doc set — **B** (2026-09-17)
+- Options: A none — the model checks by eye / B a script checking statuses, links, index coverage, index-against-header drift, and `Owns` ↔ `// doc:` agreement / C B plus a CI snippet running it
+- Decided: B, reconsidered once the domain layout deepened the paths and made relative links easier to break
+- Cost: one more thing to keep working, and it only checks what is mechanical — the three reconcile lists are still the model's job
 - Note: distinct from `scripts/check.mjs`, which checks *this package*, not a repo's doc set
 
 ## 5. Change log

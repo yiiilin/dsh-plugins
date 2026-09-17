@@ -72,6 +72,12 @@ A `code-first` doc keeps its `implemented` status.
 5. **Record evidence** per item in the doc's Reconcile evidence table: the command that proves it (test name, benchmark, curl), its result, and the date.
 6. **Close out**: status `implemented`, `Reconciled` date set, index row updated.
 
+Then run the doc-set check over the repo — it catches the five mechanical failures nothing else sees: an unknown status, a broken link, a doc missing from the index, an index row whose status drifted from the header, and an `Owns:` glob whose files lack their `// doc:` line.
+
+```
+node <this skill>/scripts/check-doc-set.mjs .
+```
+
 Report the three lists. "Looks consistent" is not a reconcile.
 
 ## Takeover: an existing codebase
@@ -96,7 +102,7 @@ A repo that already has its own `docs/` layout is mapped onto, not migrated: kee
 | Every tiny change demands a doc | Check the tier table; T0 work needs none |
 | Docs pile up unconfirmed | The confirmation list is too long — split the work and confirm in smaller units |
 | Doc set grows, trust does not | A `confirmed` doc was edited without re-confirmation, or a doc was marked `implemented` without evidence |
-| The index drifts from the docs | Nothing reads the index. Step 1 and step 5 both do. The map may run long — it is grepped, not read; what has to stay short is its Open decision points section |
+| The index drifts from the docs | Nothing reads the index. Step 1 and step 5 both do. The map may run long — it is grepped, not read; what has to stay short is its Open decision points section. The doc-set check catches the drift mechanically |
 | A doc points at a file that does not exist | Nothing validates pointers. Re-check every relative link whenever a doc is renamed, moved, or split |
 
 ## Enforcing it in a repo

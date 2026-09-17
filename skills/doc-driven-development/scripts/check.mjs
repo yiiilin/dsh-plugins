@@ -46,7 +46,8 @@ if (!fm) {
 
 // 3 + 4 — every relative link resolves, and every file is the target of one.
 // Resolving the link (rather than matching its text) is what makes a doc linked
-// as `verifications/x.md` from inside `docs/` count as referenced.
+// as `verifications/x.md` from inside `docs/` count as referenced; a link to a
+// directory references everything under it.
 const referenced = new Set()
 let links = 0
 for (const [f, body] of text) {
@@ -54,8 +55,13 @@ for (const [f, body] of text) {
     if (/^(https?:|mailto:)/.test(link)) continue
     links += 1
     const target = resolve(dirname(f), link)
-    referenced.add(target)
-    if (!existsSync(target)) fail.push(`${rel(f)}: link does not resolve -> ${link}`)
+    if (!existsSync(target)) {
+      fail.push(`${rel(f)}: link does not resolve -> ${link}`)
+    } else if (statSync(target).isDirectory()) {
+      for (const g of walk(target)) referenced.add(g)
+    } else {
+      referenced.add(target)
+    }
   }
 }
 for (const f of files) {

@@ -25,7 +25,7 @@ Steps 1–3 produce documents only; code begins at step 4. Keep step 3 and step 
 4. **Transcribe** — implement from a doc whose status is `confirmed`. The doc is the specification, not a hint. A gap, contradiction, or better idea found while coding returns you to step 2: amend the doc, confirm the delta, then code it.
    *Done when:* every item in the doc exists in code, and every path in the diff maps to an item in the doc — a path with no item is a gap, and gaps return you to step 2.
 5. **Reconcile** — walk the doc against the code item by item, record the verification evidence in the doc, set the status to `implemented`, and update `docs/README.md`.
-   *Done when:* the doc reads `implemented`, its evidence is recorded, and the index row matches.
+   *Done when:* the doc reads `implemented`, its evidence is recorded, the index row matches, and the doc-set check passes.
 
 ## The doc set
 
@@ -112,4 +112,4 @@ A design is believable once the premises it rests on are named and each has been
 - [`REFERENCE.md`](REFERENCE.md) — the writing standard, status mechanics, the item-by-item reconcile procedure, takeover of an existing codebase, failure modes, and a paste-ready `AGENTS.md` block that enforces this workflow in a repo.
 - [`docs/`](docs/) and [`CONTEXT.md`](CONTEXT.md) — this skill's own contract, written in its own format. A live example: read it to calibrate how concrete a doc has to be.
 - [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) — MIT license and the material adapted from `mattpocock/skills`.
-- [`scripts/check.mjs`](scripts/check.mjs) — `node scripts/check.mjs` verifies this package: frontmatter, the description cap, every link, and orphan files.
+- [`scripts/`](scripts/) — two checks. `check.mjs` verifies this package: frontmatter, the description cap, links, orphans, budgets. `check-doc-set.mjs <repo>` verifies a repo's doc set: statuses, links, index coverage, index-against-header drift, and `Owns:` ↔ `// doc:` agreement.
