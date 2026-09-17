@@ -1,6 +1,6 @@
 # Feature doc format — `docs/<feature>.md`
 
-The doc that carries one unit of work: its design, its verification, and the function detail for anything complex. It spans as many modules as the work needs. When it stops fitting one sitting (≤ ~400 lines), move the function-level detail into `docs/modules/<name>.md` and leave a pointer.
+The doc that carries one unit of work: its design, the verifications it rests on, and the function detail for anything complex. It spans as many modules as the work needs. When it stops fitting one sitting (≤ ~400 lines), move the function-level detail into `docs/modules/<name>.md` and leave a pointer.
 
 This is the layer between `architecture.md` above it and module docs below it.
 
@@ -29,7 +29,7 @@ Reconciled: —
 1. **Goal** — what becomes true for the user, one paragraph. Then **Non-goals**: what this deliberately does not do. Non-goals are load-bearing: they are how scope stays closed.
 2. **Interface** — every symbol this unit exposes or consumes, as `symbol | signature | notes`, plus data shapes as a type block. This is what the code and the other docs will reference.
 3. **Design** — how it works: data structures, the numbered flow, state machines, invariants. State invariants as checks: `byteOffset never points past a committed batch`.
-4. **Verification** — the assumption table and the test plan (below).
+4. **Verification** — pointers to the verification docs this design rests on, then the test plan (below).
 5. **Function detail** — one subsection per complex function, in the `module.md` shape, or a pointer: `→ docs/modules/import.md`.
 6. **Edge cases and errors** — table of `case | expected behavior | test`.
 7. **Budgets** — numbers, with the box.
@@ -38,21 +38,22 @@ Reconciled: —
 
 ## The verification section
 
-| Assumption | Cheapest test | Evidence | Verdict |
-|---|---|---|---|
-| `csv-parse` streams without buffering the file | 20-line spike on a 1 GB file, watch RSS | spike 2026-09-12: RSS flat at 48 MB | holds |
-| a 1000-row upsert stays under 50 ms | benchmark on staging | 38 ms p95 | holds |
+A list of pointers, not a table — each verification gets its own doc under `verifications/`:
 
-- **Assumptions are the ones that would sink the design**, not the ones you already know.
-- **Cheapest test first**: read the dependency's source, a spike, a benchmark, the vendor's docs, one question to the human.
-- **Evidence is a command and a result, with a date.** "Tested" is not evidence.
-- **A failed assumption returns to Design.** Implementing on an `open` assumption needs the human's explicit acceptance, recorded as a decision point.
+```
+## 4. Verification
+- → verifications/csv-parse-streams.md — holds
+- → verifications/upsert-latency.md — holds
+- → verifications/vendor-webhook-retries.md — open, accepted in D6
+```
+
+- **A premise with no verification doc is unverified**, and saying so is the point.
 - **The test plan names its seams** — which test covers which section, at the highest seam that works.
 - **A design with no test seam says so**: `Test seam: none (UI-only)` plus what manual evidence will stand in. Otherwise reconcile records a check that proves nothing.
 
 ### Reconcile evidence
 
-Written at step 5, one row per checkable item extracted from the doc:
+A different question from the verification docs above: this one records that the shipped code matches *this* doc, item by item.
 
 | Item | Class | Command | Result | Date |
 |---|---|---|---|---|

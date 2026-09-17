@@ -44,28 +44,25 @@ if (!fm) {
   }
 }
 
-// 3 — every relative link resolves (fenced examples and comments excluded)
+// 3 + 4 — every relative link resolves, and every file is the target of one.
+// Resolving the link (rather than matching its text) is what makes a doc linked
+// as `verifications/x.md` from inside `docs/` count as referenced.
+const referenced = new Set()
 let links = 0
 for (const [f, body] of text) {
   for (const [, link] of strip(body).matchAll(/\]\(([^)#\s]+?)\)/g)) {
     if (/^(https?:|mailto:)/.test(link)) continue
     links += 1
-    if (!existsSync(resolve(dirname(f), link))) fail.push(`${rel(f)}: link does not resolve -> ${link}`)
+    const target = resolve(dirname(f), link)
+    referenced.add(target)
+    if (!existsSync(target)) fail.push(`${rel(f)}: link does not resolve -> ${link}`)
   }
 }
-
-// 4 — no orphans: every file is named by some markdown file
-// The match is anchored: a bare `index.md` must not be satisfied by `FORMATS/index.md`.
-const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-const namedIn = (haystack, needle) =>
-  new RegExp(`(^|[\\s(\`"'>|[=])${escapeRe(needle)}([\\s)\`"'<>|\\],:.]|$)`, 'm').test(haystack)
 for (const f of files) {
-  if (f === skillPath) continue
-  const r = rel(f)
-  const others = [...text].filter(([g]) => g !== f).map(([, b]) => b).join('\n')
-  if (!namedIn(others, r) && !namedIn(others, r.split('/').pop())) {
-    fail.push(`${r}: orphan — nothing references it, so nothing will ever load it`)
-  }
+  // Entry points are reached by convention rather than by a link: SKILL.md through
+  // the catalog, an index through step 1 of the loop.
+  if (f === skillPath || f.endsWith('README.md')) continue
+  if (!referenced.has(f)) fail.push(`${rel(f)}: orphan — no markdown link resolves to it`)
 }
 
 // 5 — the line budgets stated in docs/architecture.md

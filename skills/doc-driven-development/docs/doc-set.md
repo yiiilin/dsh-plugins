@@ -15,16 +15,9 @@ Make every change in a repo traceable to a doc a human has confirmed, so that im
 
 ## 2. Verification
 
-| Assumption | Cheapest test | Evidence | Verdict |
-|---|---|---|---|
-| A human clears a decision list faster than they read the equivalent diff | This design session: put the open questions as numbered points with recommendations | Round 1 — 7 decision points answered in one pass, no clarification asked | holds |
-| Referencing `domain-modeling`'s formats is enough; no local glossary or ADR format is needed | Read `CONTEXT-FORMAT.md` and `ADR-FORMAT.md` | Both are short, opinionated, and complete; they define creation triggers and rules | holds |
-| One format file per document type is an established shape, not an invention | Survey the installed skills for the pattern | `domain-modeling` (2 files) and `teach` (4 files) do exactly this; nothing auto-loads a side file, so each pointer must say when to read it | holds |
-| One doc per confirmable intent stays readable | Pilot on a real repo | — | open |
-| `Owns` + file-header pointers keep docs findable without anyone tending the index | Grep the pilot repo for both directions | — | open |
-| A central `docs/` does not decay into a write-only folder | Pilot: count docs still `confirmed` or `implemented` after a month | — | open |
+The premises this convention rests on are recorded as verification docs, by its own rule:
 
-**Test plan.** Pilot the convention on one real repo, at the `docs/README.md` seam and the feature-doc seam: measure the time to confirm a T1 change, and count undocumented behavior found in the first reconcile.
+- → [verifications/design-validation.md](verifications/design-validation.md) — three hold; three open, pending the pilot
 
 ## 3. Function detail
 
@@ -74,22 +67,23 @@ D8 Takeover of a repo that already has a `docs/` layout
 - Recommend: A — lowest migration cost, keeps existing history and links intact
 - Cost: index rows inherit the old structure's unevenness, and headers must be retrofitted onto docs written to other rules
 
-D9 Verification layer: section or file
-- Options: A a section of the feature doc / B always its own `docs/verification/<name>.md` / C a section for T1 and its own file from T2 up
-- Recommend: A — the evidence belongs beside the design it proves; splitting by tier makes the location unpredictable
-- Cost: a heavily verified T2 doc gets long, mitigated by the `modules/` split
+D9 Verification is its own doc — **B** (2026-09-17)
+- Options: A a section of the feature doc / B its own file under `docs/verifications/` / C a section for T1, a file from T2 up
+- Decided: B — a premise usually outlives the unit that raised it, and the design doc links to it
+- Cost: the feature doc's verification section becomes a list of pointers rather than answers in place
 
-D10 One-off evidence artifacts
-- Options: A none in the repo — record the command, the result, and the date in the table / B commit them under `docs/evidence/<slug>/` / C commit reusable harnesses under `scripts/` and reference them
-- Recommend: A, escalating to C when the evidence has to be re-runnable later
-- Cost: A loses reproducibility for a spike that cannot be re-run cheaply
+D10 One-off evidence artifacts — dissolved by D9 (2026-09-17)
+- Options: A none in the repo / B commit under `docs/evidence/<slug>/` / C commit reusable harnesses under `scripts/`
+- Decided: evidence lives beside its verification doc, so there is no separate place left to decide about
+- Cost: a script worth keeping must be placed deliberately rather than accumulating in one evidence folder
 
-D11 Validation script for a target repo's doc set
-- Options: A none — two greps and a look at the index / B a script checking header fields, index rows, and `Owns` ↔ file-header agreement / C a CI snippet running that script
-- Recommend: A for now; the checks are greps, and a markdown parser is real maintenance. Revisit after the pilot
-- Cost: header and index drift is caught only when someone looks
+D11 Validation script for a target repo's doc set — **A** (2026-09-17)
+- Options: A none / B a script checking header fields, index rows, and `Owns` ↔ file-header agreement / C a CI snippet running it
+- Decided: A — step 5's reconcile procedure *is* the check, and the model runs it
+- Cost: drift between a doc's header and its index row is caught when step 5 runs, not before
 - Note: distinct from `scripts/check.mjs`, which checks *this package*, not a repo's doc set
 
 ## 5. Change log
 
-- v1 — initial; round-1 decisions recorded; D8–D11 open
+- v2 — verification became its own document type; the target-repo validator dropped
+- v1 — initial; round-1 decisions recorded

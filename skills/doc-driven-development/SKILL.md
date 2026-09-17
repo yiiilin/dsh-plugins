@@ -35,8 +35,9 @@ One doc per **unit of work a human can confirm in one sitting** — a feature, a
 |---|---|---|
 | `docs/README.md` | Index: conventions, one row per doc, open decision points, reading order | [`FORMATS/index.md`](FORMATS/index.md) |
 | `docs/architecture.md` | Why the system is shaped this way: boundaries, dependency direction, data flow, budgets | [`FORMATS/architecture.md`](FORMATS/architecture.md) |
-| `docs/<feature>.md` | Design, verification, function detail for one unit of work | [`FORMATS/feature.md`](FORMATS/feature.md) |
+| `docs/<feature>.md` | Design, the verifications it rests on, function detail for one unit of work | [`FORMATS/feature.md`](FORMATS/feature.md) |
 | `docs/modules/<name>.md` | Function-level detail, when a feature doc outgrows one sitting | [`FORMATS/module.md`](FORMATS/module.md) |
+| `docs/verifications/<method>.md` | A premise the design rests on: the cheapest test, the evidence, the verdict | [`FORMATS/verification.md`](FORMATS/verification.md) |
 | `CONTEXT.md` | Glossary: one definition and its rejected synonyms per term | [`REFERENCE.md`](REFERENCE.md), or `domain-modeling` when installed |
 | `docs/adr/NNNN-slug.md` | Decisions meeting all three ADR conditions | [`REFERENCE.md`](REFERENCE.md), or `domain-modeling` when installed |
 
@@ -92,12 +93,7 @@ Mark a decision point `⚠` when it needs an explicit answer — the criteria ar
 
 ## Verification layer
 
-A design is believable once its assumptions are named and each has been tested as cheaply as possible.
-
-- **Assumptions** — "the client library streams responses", "the index still serves at 100M rows", "the vendor retries webhooks for 24 h".
-- **Cheapest test** — read the dependency's source, a 20-line spike, a benchmark, the vendor's docs, or one question to the human. Cheapest first.
-- **Evidence** — command, output, number, link, and a verdict: `holds` / `fails` / `open`. Recorded in the doc, not left in the conversation.
-- A failed assumption returns to the design layer. Implementing on an `open` assumption requires the human's explicit acceptance, recorded as a decision point.
+A design is believable once the premises it rests on are named and each has been tested as cheaply as possible. Each premise gets its own doc, and the design doc links to it — the shape is in [`FORMATS/verification.md`](FORMATS/verification.md): one question, the cheapest method that settles it, the evidence with a date, the verdict.
 
 ## Driving it from the human's side
 
