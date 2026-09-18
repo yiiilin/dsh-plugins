@@ -1,154 +1,119 @@
-# Reference
+# 工作规则与字段参考
 
-Procedures behind [`SKILL.md`](SKILL.md): the writing standard, status mechanics, the reconcile procedure, takeovers, failure modes, and the block that enforces this workflow in a repo. Document *shapes* live in [`FORMATS/`](FORMATS/); this file owns *procedure*.
+本文是规则，`FORMATS/` 是可裁剪模板。模板中的示例值、路径和结果不能原样冒充项目事实。
 
-## The writing standard
+## 1. 文档形态与生效版本
 
-**The transcription test.** Every function-level section must be implementable by someone who has never seen the code and cannot ask you a question. Signature, inputs, outputs, steps, edge cases, error paths, budget. Prose that gestures at behavior fails the test.
+长期文档按稳定功能、模块和系统边界维护。三层是关注点，不是三套重复内容：需求描述可观察行为和约束；概要解释责任、协作、数据与控制流；详细设计只锁定必须统一的契约和关键机制。
 
-Write for two readers at once: the human who confirms it, and the agent that transcribes it. Tables for interfaces and edge cases, numbered steps for algorithms, one short sentence per rule.
+普通功能放一篇文档；稳定共享模块独立一篇；复杂子系统才独立需求或详细设计文件。跨包功能不必按包拆碎，包边界只作为定位依据。一个事实只在一个主要位置定义，其他地方链接。
 
-**What belongs:** the reason behind a choice, the constraint it satisfies, the interface, the invariants, the numbers, the alternative you rejected and why. None of that is recoverable from the code.
+当前文档讲现在被认可的方案；提案讲下一版差异。已有 `accepted` 文档不原地改成未确认目标并继续称为生效。可以在独立提案中审批，或使用保留旧版本的分支差异。无 Git 时优先短提案。
 
-**What never belongs:** a line-by-line restatement of the code (the code is the transcription — the doc is the source), commit history (that is `git log`), aspirations without a budget ("should be scalable"), and facts that live in config (`package.json` scripts, the directory layout). Cache what a reader cannot look up: the unwritten convention, the gotcha, the reason.
+## 2. 最少字段
 
-**Rejected alternatives get one line each.** This is what stops the next session — human or agent — from re-litigating a settled choice: `Rejected: Redis cache — adds an operational dependency for a workload under 100 QPS.`
+字段放在一级标题之后、第一个二级标题之前，每行一个。标识和值使用下表英文；正文语言不受限制。不要求所有仓库 Markdown 都使用这些字段，只有带 `Doc-ID:` 的文档进入检查。
 
-**A doc nobody can find does not exist.** Every doc appears in `docs/README.md`, and every doc names the paths it owns.
+```text
+Doc-ID: FEAT-IMPORT
+Type: feature
+Revision: 1
+Status: observed
+Baseline: unknown
+Owns: src/import/**
+Implementation: unknown
+Verification: not-run
+```
 
-## Ports: glossary and ADR formats
+| 字段 | 规则 |
+|---|---|
+| `Doc-ID` | 仓库内唯一稳定标识，如 `FEAT-IMPORT`；只用大写字母、数字和连字符 |
+| `Type` | `feature / architecture / module / change / adoption / verification / adr / requirements` |
+| `Revision` | 正整数。实质内容修订递增；只补充证据、修链接、更新索引不递增 |
+| `Status` | `observed / proposed / accepted / superseded` |
+| `Baseline` | `unknown`、`git:<提交哈希>` 或 `snapshot:<inventory 输出的 SHA-256>` |
+| `Owns` | 逗号分隔的仓库相对路径或 glob；无主要归属填 `—`。支持 `*`、`?`、`**`；不支持否定、花括号或字符组 |
+| `Implementation` | `unknown / missing / partial / complete / divergent / not-applicable` |
+| `Verification` | `not-run / partial / passed / failed / blocked / stale / not-applicable` |
 
-Two formats this skill needs but does not own. **`domain-modeling` owns both** — use its `CONTEXT-FORMAT.md` and `ADR-FORMAT.md`. Adapters name this port rather than a concrete skill, so a repo whose tooling differs still has one place to look. Without it installed, these minimum shapes are enough:
+按需补充：
+
+| 字段 | 用途 |
+|---|---|
+| `Owns names` | 逗号分隔的稳定接口名，如 `event:import.done`、`package.json#/exports`；全仓唯一主要归属 |
+| `Approval` | 真实确认来源、日期与范围；未获批填 `none`。可引用 PR、用户原话的简要摘录或项目审阅记录 |
+| `Approved revision` | 获批修订号。`accepted` 必填，必须等于 `Revision` |
+| `Affects` | 提案涉及的路径 glob；不是另一次主要归属声明 |
+| `Targets` | 提案目标，如 `docs/features/import.md@2`；新文档用 `@new`。逗号分隔 |
+| `Superseded by` | 替代文档的仓库相对路径；`superseded` 必填 |
+
+路径使用 `/`，不使用绝对路径、`..`、换行或符号链接跨仓访问。正文 Markdown 链接相对于所在文件；`Owns`、`Targets`、源码 `doc:` 和进度 JSON 路径相对于仓库根。普通文件名可含空格，逗号不适用于字段列表；这类特殊文件通过正文链接定位并记录检查限制。
+
+`Baseline` 标识分析/核对的代码状态，不是确认本身。干净工作树可用 Git 提交；工作树有本次相关修改时，使用 inventory 快照，不用旧 HEAD 冒充当前状态。新增证据必须绑定实际检查的基线。
+
+## 3. 状态不是一个线性“完成”按钮
+
+| 状态 | 含义与授权 |
+|---|---|
+| `observed` | 从现有实现恢复的事实，未被采纳为期望；可用于理解，不自动授权改变行为 |
+| `proposed` | 待确认目标或差异；不授权其中未确认的重要选择 |
+| `accepted` | 指定修订及范围已被人明确认可；同时看实现和验证字段判断是否已落地 |
+| `superseded` | 保留的历史，当前主要归属和确认不从它读取 |
+
+观察可以经真实确认直接采纳，不必等待第一次代码变更。采纳部分规则时，将获批范围独立成当前文档或短提案；其余观察继续保留，不用一个 `accepted` 覆盖未获批章节。
+
+`accepted + complete + not-run` 表示已实现但未验证，不允许称“验证通过”。`observed + complete + passed` 只表示观察与所列检查吻合，不表示现有行为业务上正确。文档检查成功与以上状态没有自动转换关系。
+
+文档或相关代码实质变化后，旧证据标 `stale`；重新检查受影响项，其余有理由保留的证据注明适用范围。实质修改已确认文档前，先记录提案并取得确认，不只机械增加修订号。
+
+## 4. 设计决策与自主范围
+
+先写清方案，再提供真正需要人判断的选择。每项 `D-<主题>-<编号>` 包含问题、真实选项、推荐理由、代价、影响范围及确认结果。编号不重排、不复用。
+
+将“必须遵守”“可以自主”“未知/待验证”分开。所有私有函数都列决策点不是更严格，而是淹没重要选择。复杂算法应描述前后置条件和不变量；普通样板逻辑不用伪代码复述。
+
+高风险决策需要明确答案；明确预先授权的范围无需反复请示。确无可行备选时说明约束，不伪造两套方案。重大且难以逆转、没有背景会令人困惑、存在真实取舍的决策，才值得单独 ADR。最小 ADR：背景、决定、理由、代价、替代方案、状态与来源；已有 ADR 格式优先。
+
+词汇表仅在术语确有歧义时添加；不强制排斥自然同义词，不依赖其他 skill 的术语或 ADR 模板。
+
+## 5. 要求—实现—证据
+
+重要规则使用独立标题定义标识，例如 `### R-IMPORT-001 失败时不发布部分结果`。设计约束可用 `C-IMPORT-001`。编号跨仓唯一，定义后不重排。局部实现细节不必全部编号。
+
+用表格关联要求、实现路径与证据；同一模块可以服务多个功能，主契约只写一次。接口名称或配置字段可在 `Owns names` 说明，具体符号和 JSON Pointer 的存在需要语言工具或人工核查，通用脚本不声称完成此检查。
+
+证据使用独立标题，避免把“计划中的测试”误写成结果：
 
 ```markdown
-# CONTEXT.md — one entry per term, nothing else
-**Term**:
-One or two sentences defining what it IS, not what it does.
-_Avoid_: synonym, synonym
-
-# docs/adr/NNNN-slug.md — numbered from the highest existing number
-# Short title of the decision
-
-One to three sentences: the context, what was decided, and why.
+### E-IMPORT-001 非法行回归验证
+Covers: R-IMPORT-001
+Method: node --test test/import.test.mjs
+Result: not-run
+Baseline: unknown
+Detail: 当前仅制定测试方法，尚未执行。
 ```
 
-A glossary entry is a definition plus its rejected synonyms. An ADR records *that* a decision was made and *why* — it can be a single paragraph, and most are.
+证据 `Result` 可用 `passed / failed / blocked / not-run`。`passed` 必须有实际方法、非未知基线和具体结果说明；结构检查只核字段，并不能证明命令真的执行过。人工步骤、代码审阅、实验和自动测试都可作为方法，但说明其局限；代码审阅不能替代性能测量。
 
-A repo whose `docs/adr/` was written by another tool keeps what it has — takeover maps, it does not migrate — and its new ADRs follow the shape above.
+独立验证文档只用于共享/复杂实验，写清问题、方法、环境、结果与局限，并链接回要求。设计前提实验回答“方案可不可行”；实现验收回答“这份实现是否满足约束”，两者不要混淆。
 
-## Status mechanics
+## 6. 人工改代码与代码优先
 
-The status lives in two places, and they must agree: the doc's header and its row in `docs/README.md`.
+先比较文档、工作树和变更基线，不先假定任一方永远正确：
 
-| Status | Means |
+| 发现 | 处理 |
 |---|---|
-| `draft` | Being written; nobody has reviewed it |
-| `awaiting confirmation` | Presented to the human, with its open decision points listed |
-| `confirmed` | The human approved this version. **The only state that authorizes code** |
-| `implemented` | Transcribed, reconciled item by item, evidence recorded |
-| `superseded` | Replaced; the header reads `Status: superseded by docs/<name>.md` |
+| 代码偏离已确认要求 | 按要求修代码并补回归验证；不修改要求迁就 BUG |
+| 等价重构或定位变化 | 按请求处理，更新定位与受影响证据，不重审无关设计 |
+| 人明确批准的行为/方案已直接编码 | 记录真实批准范围，补当前文档并核对，标明代码优先来源 |
+| 代码引入新的未确认重要选择 | 记录差异与提案，不自动补成 `accepted` |
+| 旧文档与代码矛盾且缺少权威来源 | 分开记录两者、影响和未知；需要决定的部分提交人确认 |
+| 代码似有缺陷但需求不明 | 区分静态事实与疑似问题；建立隔离的现状测试，不把它当正确性验收 |
 
-`confirmed` requires no open decision points. An unanswered point is recorded `D5 — deferred, answer pending` rather than silently dropped, and the doc stays `awaiting confirmation` until it is answered or the point is withdrawn.
+“直接修改代码”授权了工作方式，不等于无限授权新设计。紧急修复可按明确授权的有限目标先做，记录尚未确认的差异和回滚边界；不能据此标记整个契约获批。
 
-A doc's **contract** is frozen once confirmed: changing the interface, design, decision points, boundaries, or budgets bumps the version and returns the changed part to `awaiting confirmation` — from `confirmed` and `implemented` alike; the change log gains one line: `v2 — D5 dropped the legacy column (2026-09-17)`.
+## 7. 一致性核对
 
-**Bookkeeping is not a contract change.** Recording evidence, setting `Reconciled`, and moving the status line never reopen a doc — otherwise step 5 would unfreeze the very doc it is closing out. A reconcile that finds the doc wrong (`divergent`) *is* a contract change and goes back through the gate like any other.
+先列本次重要要求，再读实现与测试，分类为已满足、缺失、偏离、无法验证。记录真实结果后更新状态。新代码没有符合要求时，优先修复；改变要求须新提案。文档明显记录错误时，修正观察并保留理由，不将错误描述强加给代码。
 
-**Direction of transcription.** Forward is the default: a contract change re-enters at `awaiting confirmation`, and the code follows the confirmation. The exception is the human saying to change the code directly — authorized by that instruction rather than by a doc review, so it is not an unconfirmed change; only the direction differs:
-
-| Path | Who leads | What the doc is | Change log |
-|---|---|---|---|
-| default | the doc | a contract the code follows | — |
-| `code-first` | the code | a record of what was built | `code-first` |
-
-A `code-first` doc keeps its `implemented` status.
-
-`implemented` is a claim about evidence, not about effort. If a reconcile has not been run, the doc stays `confirmed`.
-
-## Reconcile procedure (step 5)
-
-1. **Extract the checkable items** from the doc: interface entries, decision points, edge-case rows, budget numbers, named tests.
-2. **Locate the code** that realizes each — file and symbol.
-3. **Classify** each item: realized / missing / divergent.
-4. **Resolve**: `missing` on a confirmed interface, edge case, or budget is a contract breach — the code is wrong, fix the code. `missing` on a backfilled `draft` doc is the doc's error — fix the doc. `divergent` means the doc wins unless the human says otherwise; either way the doc is edited first, then the code.
-5. **Record evidence** per item in the doc's Reconcile evidence table: the command that proves it (test name, benchmark, curl), its result, and the date.
-6. **Close out**: status `implemented`, `Reconciled` date set, index row updated.
-
-Then run the doc-set check over the repo — it catches the five mechanical failures nothing else sees: an unknown status, a broken link, a doc missing from the index, an index row whose status drifted from the header, and an `Owns:` glob whose files lack their `// doc:` line.
-
-```
-node <this skill>/scripts/check-doc-set.mjs .
-```
-
-Report the three lists. "Looks consistent" is not a reconcile.
-
-## Takeover: an existing codebase
-
-Document **just in time** — the code you are about to change plus one level of its neighbors. Documenting a legacy repo up front produces a doc set nobody trusts, and it delays the work that would have proved the docs useful.
-
-**The unit is the package.** Ten independent packages become ten feature docs as their work happens — not one per repo, and not one per file.
-
-1. Create `docs/README.md` and a thin `docs/architecture.md`: boundaries and dependency direction only, status `draft`.
-2. Backfill a feature doc from the code as it stands, in the format for that type.
-3. Mark what is an accident of history rather than a decision: `Open: is the 30 s timeout intentional?` becomes a decision point for the human.
-4. The first real change after takeover is what promotes the doc to `confirmed` — the backfill itself is never confirmed, because nobody has actually agreed to it.
-
-A repo that already has its own `docs/` layout is mapped onto, not migrated: keep the existing files where they are, retrofit the header fields, and build the index over the existing structure.
-
-## Carrying the skill with the repo
-
-Adopting the workflow is **two copies**, and the second is what keeps it alive after the session that introduced it:
-
-1. The block above into `AGENTS.md`.
-2. The skill's own directory, **verbatim**, into the project's skill root.
-
-Copy verbatim because the body reaches `FORMATS/`, `REFERENCE.md` and `scripts/` by relative path — a partial copy leaves a skill that half works. Your resource base names the directory to copy.
-
-```
-cp -a <this skill's directory> <project>/.agents/skills/
-```
-
-**The project skill root is `.agents/skills/` or `.dsh/skills/`**, resolved from the nearest ancestor holding `.git`. Copy there and every developer who clones the repo has the skill with no install step and no configuration.
-
-A plain `<project>/skills/` is **not** a discovery root — using it means each developer adds a `customSkillDirs` entry for the project, which is exactly the step this avoids.
-
-## Failure modes
-
-| Symptom | Fix |
-|---|---|
-| Doc reads like a feature announcement ("supports X, Y, Z") | Rewrite as interface + steps + edge cases; a doc must let someone build the thing |
-| Doc restates the code line by line | Delete the restatement; keep the reason, the constraint, the number |
-| Every decision point is "recommended: as described" | You are not surfacing choices; list the alternatives you actually rejected and what each costs |
-| Implementation "mostly matches" the doc | That is drift. Reconcile item by item, and edit the doc before the code |
-| Every tiny change demands a doc | Check the tier table; T0 work needs none |
-| Docs pile up unconfirmed | The confirmation list is too long — split the work and confirm in smaller units |
-| Doc set grows, trust does not | A `confirmed` doc was edited without re-confirmation, or a doc was marked `implemented` without evidence |
-| The index drifts from the docs | Nothing reads the index. Step 1 and step 5 both do. The map may run long — it is grepped, not read; what has to stay short is its Open decision points section. The doc-set check catches the drift mechanically |
-| A doc points at a file that does not exist | Nothing validates pointers. Re-check every relative link whenever a doc is renamed, moved, or split |
-
-## Enforcing it in a repo
-
-Pasting this is how a repo opts in: it is what makes the workflow fire on its own, and it is what the skill's trigger looks for. Every session then starts under the workflow, whether or not the skill is loaded.
-
-```markdown
-## Development workflow
-
-This repo develops doc-first: `docs/` is the contract, code is its transcription.
-Where this repo already has a rule — releases, i18n, verification — that rule stands;
-this adds the doc workflow, it replaces nothing.
-
-- Find the owning doc before changing code — `docs/README.md` indexes them by owned path.
-- Decisions land in the doc as numbered decision points before they land in code.
-- Implement only from a doc marked `confirmed`; edit the doc before changing confirmed behavior.
-- Reconcile item by item and record evidence before marking a doc `implemented`.
-- Owned files name their doc in the header, where the language has comments: `// doc: docs/domains/<domain>/features/<name>.md`.
-- The doc-set check runs before any doc is called `implemented`.
-
-Full workflow, formats, and the check: the `doc-driven-development` skill.
-```
-
-## Splitting
-
-- Split a feature doc into `domains/<domain>/modules/<name>.md` when it stops fitting one sitting, or when two people would confirm it separately.
-- Split `docs/architecture.md` per subsystem once it covers more than one deployable or more than roughly five modules.
-- `docs/README.md` stays the only map. When a doc moves, its index row moves in the same change.
+工作中允许有显式提案和待验证差异；合并/交付时要报告剩余问题。严格交付检查会拒绝受影响文档未确认、未完整实现或未通过验证的状态；它是可选门禁，不妨碍只做逆向记录或渐进接管。

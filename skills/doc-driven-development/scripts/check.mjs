@@ -1,86 +1,71 @@
 #!/usr/bin/env node
-// doc: docs/architecture.md
-// Contract check for this skill package:  node scripts/check.mjs
-//
-// Five invariants, each of which was silently violated at least once while this
-// skill was written (a 620-char description the catalog truncated; a pointer to a
-// TEMPLATES/ directory that never existed; an architecture rule forbidding
-// something SKILL.md did). Nothing else validates them.
+// Check the skill package, not the user's repository.
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { VERSION, parseCLI, runCLI, localLinks, resolveLink } from './lib.mjs';
 
-import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
-import { join, dirname, resolve, relative } from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const MAX_DESC = 500 // harness: length <= 500 passes; past that it renders slice(0, 497) + '...'
-
-const walk = (dir) =>
-  readdirSync(dir).flatMap((name) => {
-    const p = join(dir, name)
-    return statSync(p).isDirectory() ? walk(p) : [p]
-  })
-
-const files = walk(ROOT) // every file, so a non-markdown orphan is caught too
-const mds = files.filter((f) => f.endsWith('.md'))
-const rel = (p) => relative(ROOT, p)
-const text = new Map(mds.map((f) => [f, readFileSync(f, 'utf8')]))
-const strip = (t) => t.replace(/```[\s\S]*?```/g, '').replace(/<!--[\s\S]*?-->/g, '')
-const fail = []
-
-// 1 + 2 — SKILL.md frontmatter parses and the description survives the catalog
-const skillPath = join(ROOT, 'SKILL.md')
-const fm = text.get(skillPath)?.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/)
-if (!fm) {
-  fail.push('SKILL.md: no frontmatter block at line 1 (the skill disappears from the catalog)')
-} else {
-  const field = (k) => fm[1].match(new RegExp(`^${k}:\\s*(.*)$`, 'm'))?.[1]?.trim()
-  for (const k of ['name', 'description']) {
-    if (!field(k)) fail.push(`SKILL.md: frontmatter is missing ${k} (the skill disappears from the catalog)`)
+runCLI(() => {
+  const args = parseCLI(process.argv.slice(2), { '--no-tests': 'flag' });
+  if (args.flags.help) { console.log('Usage: node scripts/check.mjs [--no-tests]\nChecks package metadata, local links and JS syntax; runs isolated regression tests by default.'); return; }
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const files = [];
+  const walk = dir => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isSymbolicLink()) throw new Error(`Unexpected symlink in skill package: ${p}`);
+      if (e.isDirectory()) walk(p); else if (e.isFile()) files.push(p);
+    }
+  };
+  walk(root);
+  const errors = [], skill = fs.readFileSync(path.join(root, 'SKILL.md'), 'utf8');
+  const fm = skill.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
+  if (!fm) errors.push('SKILL.md lacks a frontmatter block.');
+  else {
+    const field = key => {
+      const value = fm[1].match(new RegExp(`^${key}:\\s*(.+)$`, 'm'))?.[1];
+      if (!value) return '';
+      if (value.startsWith('"')) { try { return JSON.parse(value); } catch { errors.push(`Invalid quoted scalar ${key}`); return ''; } }
+      return value;
+    };
+    const name = field('name'), description = field('description'), compatibility = field('compatibility');
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name) || name.length > 64 || name !== path.basename(root)) errors.push('Invalid skill name or directory/name mismatch.');
+    if (!description || description.length > 1024) errors.push('Description must contain 1–1024 characters.');
+    if (compatibility.length > 500) errors.push('Compatibility field exceeds 500 characters.');
+    if (!fm[1].includes(`  version: "${VERSION}"`)) errors.push('Metadata and script versions differ.');
+    console.log(`Metadata: ${name} v${VERSION}; description ${description.length} characters.`);
   }
-  const desc = (field('description') ?? '').replace(/^["']|["']$/g, '')
-  if (desc.length > MAX_DESC) {
-    fail.push(`SKILL.md: description is ${desc.length} chars, cap is ${MAX_DESC} — the catalog truncates it mid-sentence`)
-  } else if (desc) {
-    console.log(`  description ${desc.length}/${MAX_DESC} chars`)
-  }
-}
-
-// 3 + 4 — every relative link resolves, and every file is the target of one.
-// Resolving the link (rather than matching its text) is what makes a doc linked
-// as `verifications/x.md` from inside `docs/` count as referenced; a link to a
-// directory references everything under it.
-const referenced = new Set()
-let links = 0
-for (const [f, body] of text) {
-  for (const [, link] of strip(body).matchAll(/\]\(([^)#\s]+?)\)/g)) {
-    if (/^(https?:|mailto:)/.test(link)) continue
-    links += 1
-    const target = resolve(dirname(f), link)
-    if (!existsSync(target)) {
-      fail.push(`${rel(f)}: link does not resolve -> ${link}`)
-    } else if (statSync(target).isDirectory()) {
-      for (const g of walk(target)) referenced.add(g)
-    } else {
-      referenced.add(target)
+  if (skill.split('\n').length > 500) errors.push('SKILL.md exceeds the 500-line packaging guideline.');
+  const required = ['README.md', 'REFERENCE.md', 'ADOPTION.md', 'CHANGELOG.md', 'TESTING.md', 'LICENSE', 'THIRD-PARTY-NOTICES.md',
+    'FORMATS/feature.md', 'FORMATS/architecture.md', 'FORMATS/module.md', 'FORMATS/change.md', 'FORMATS/adoption.md',
+    'examples/scenarios.md', 'scripts/init.mjs', 'scripts/inventory.mjs', 'scripts/index.mjs', 'scripts/check-doc-set.mjs', 'tests/run.mjs'];
+  for (const p of required) if (!fs.existsSync(path.join(root, p))) errors.push(`Missing required package file: ${p}`);
+  let links = 0;
+  for (const p of files.filter(p => p.endsWith('.md'))) {
+    const rel = path.relative(root, p);
+    for (const link of localLinks(fs.readFileSync(p, 'utf8'))) {
+      links++;
+      try { if (!fs.existsSync(resolveLink(root, rel, link))) errors.push(`${rel}: broken local link ${link}`); }
+      catch (e) { errors.push(`${rel}: ${e.message}`); }
     }
   }
-}
-for (const f of files) {
-  // Entry points are reached by convention rather than by a link: SKILL.md through
-  // the catalog, an index through step 1 of the loop.
-  if (f === skillPath || f.endsWith('README.md')) continue
-  if (!referenced.has(f)) fail.push(`${rel(f)}: orphan — no markdown link resolves to it`)
-}
-
-// 5 — the line budgets stated in docs/architecture.md
-const budget = [[skillPath, 200], ...mds.filter((f) => rel(f).startsWith('FORMATS/')).map((f) => [f, 120])]
-for (const [f, cap] of budget) {
-  const n = text.get(f).split('\n').length
-  if (n > cap) fail.push(`${rel(f)}: ${n} lines, budget is ${cap} — split it or cut it`)
-}
-
-if (fail.length) {
-  console.error(fail.map((l) => `FAIL  ${l}`).join('\n'))
-  process.exit(1)
-}
-console.log(`ok — ${mds.length} docs, ${files.length} files, ${links} links resolve, no orphans, budgets met`)
+  for (const p of files.filter(p => p.endsWith('.mjs'))) {
+    const result = spawnSync(process.execPath, ['--check', p], { encoding: 'utf8', timeout: 10000 });
+    if (result.status !== 0) errors.push(`${path.relative(root, p)}: ${result.stderr || result.error?.message || 'syntax check failed'}`);
+  }
+  if (errors.length) { for (const e of errors) console.error(`FAIL ${e}`); process.exitCode = 1; return; }
+  console.log(`Package OK: ${files.length} files, ${links} local links, JavaScript syntax checked.`);
+  if (!args.flags['no-tests']) {
+    const result = spawnSync(process.execPath, ['--test', '--test-reporter=tap', path.join(root, 'tests/run.mjs')], {
+      cwd: root, encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024,
+    });
+    if (result.status !== 0) {
+      process.stdout.write(result.stdout ?? ''); process.stderr.write(result.stderr ?? '');
+      if (result.error) console.error(result.error.message);
+      process.exitCode = 1; return;
+    }
+    const summary = result.stdout.split('\n').filter(l => /^# (tests|suites|pass|fail|cancelled|skipped|todo|duration_ms)\b/.test(l));
+    console.log(summary.join('\n'));
+  }
+});

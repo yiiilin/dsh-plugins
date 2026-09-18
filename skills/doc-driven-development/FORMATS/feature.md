@@ -1,76 +1,65 @@
-# Feature doc format — `docs/domains/<domain>/features/<name>.md`
+# 功能文档模板
 
-The doc that carries one unit of work: its design, the verifications it rests on, and the function detail for anything complex. It spans as many modules as the work needs. When it stops fitting one sitting (≤ ~400 lines), move the function-level detail into `domains/<domain>/modules/<name>.md` and leave a pointer.
-
-**The unit is what a human confirms in one sitting.** In a repo of independent packages, that is the package: one package's work, one doc, and the package boundary is the boundary of the confirmation. A change spanning packages is **two** docs when each half can be confirmed on its own, and **one** doc whose `Owns` covers both when it cannot.
-
-This is the layer between `architecture.md` above it and module docs below it.
-
-## Header
+按稳定功能维护；默认需求、概要、关键详细设计同篇。删掉不适用的节，不填伪造数据。状态和字段规则见 [参考](../REFERENCE.md)。已有代码用 `observed`；新功能用 `proposed`。示例路径必须替换。
 
 ```markdown
-Status: awaiting confirmation
-Version: v1
-Tier: T2
-Owns: src/import/**
-Owns names: `@yiln-dsh/dsh-plugin-file-explorer/git` (tab id), `dsh:import.done` (event)
-Depends on: docs/architecture.md
-Reconciled: —
+# 功能名称
+
+Doc-ID: FEAT-EXAMPLE
+Type: feature
+Revision: 1
+Status: observed
+Baseline: unknown
+Owns: src/example/**
+Implementation: unknown
+Verification: not-run
+
+## 摘要
+这个功能解决什么问题，当前采用什么整体方案，本文覆盖哪里。
+明确这是一份现状记录还是待确认目标；摘要应让人先读懂整体。
+
+## 1. 需求与验收
+需求来源：用户已确认的规格 / 现有资料 / 仅从实现推断，待确认。
+本次不包含什么。
+
+### R-EXAMPLE-001 可观察行为
+写出前提、输入、结果、失败/边界行为。说明是已知需求还是观察。
+验收：可以判断通过与否的场景，不用“快速、稳定”代替标准。
+
+## 2. 概要设计
+模块各自负责什么，依赖谁，主要流程如何运行，状态由谁拥有。
+给出正常路径与最重要的失败路径。设计理由没有来源时写未知。
+引用共享模块与全局架构，不复制其他文档的规则。
+
+## 3. 关键详细设计
+
+### C-EXAMPLE-001 必须统一的实现约束
+接口输入/输出、错误语义、关键状态、不变量及适用的事务/并发规则。
+只有会影响正确性、兼容性或维护边界的细节才必须固定。
+
+可以自主：不改变上述契约的私有函数拆分、局部命名等。
+未知/待测：尚缺证据的假设。对本次实现是否阻塞、为什么。
+
+## 4. 待决事项
+没有真实待决事项时删除本节。
+D-EXAMPLE-001：选择、推荐、理由、代价、影响、是否需单独确认。
+
+## 5. 实现与验证
+
+| 要求/约束 | 实现入口 | 验证证据 |
+|---|---|---|
+| R-EXAMPLE-001 | `src/example/main.ts` 的具体符号 | E-EXAMPLE-001 |
+| C-EXAMPLE-001 | 相关接口/配置位置 | E-EXAMPLE-001 |
+
+### E-EXAMPLE-001 核对记录
+Covers: R-EXAMPLE-001, C-EXAMPLE-001
+Method: 待替换为实际测试命令、测量方法或人工步骤
+Result: not-run
+Baseline: unknown
+Detail: 尚未执行，不宣称通过。
+
+## 6. 偏差与未知
+现有实现与意图不一致之处、怀疑的缺陷、尚未解释的历史选择。
 ```
 
-| Field | Rule |
-|---|---|
-| Status | `draft` · `awaiting confirmation` · `confirmed` · `implemented` · `superseded by <doc>` |
-| Version | `v1`, `v2`, … — bumped every time a `confirmed` doc is edited |
-| Tier | `T1` · `T2` · `T3` — sets the depth this doc is expected to reach |
-| Owns | repo-relative globs of the paths this doc is the contract for — code, config, CI, manifests; `—` only for a doc that owns no artifact |
-| Owns names | the things this doc is the contract for that are **not** paths: string ids, event names, injected service keys, environment variables, published names. Comma-separated, each with a one-word kind when it is not obvious; `—` when there are none |
-| Depends on | docs that must be read first |
-| Reconciled | date of the last item-by-item reconcile; `—` until then |
-
-## Sections
-
-1. **Goal** — what becomes true for the user, one paragraph. Then **Non-goals**: what this deliberately does not do. Non-goals are load-bearing: they are how scope stays closed.
-2. **Interface** — every symbol this unit exposes or consumes, as `symbol | signature | notes`, plus data shapes as a type block. This is what the code and the other docs will reference.
-3. **Design** — how it works: data structures, the numbered flow, state machines, invariants. State invariants as checks: `byteOffset never points past a committed batch`.
-4. **Verification** — pointers to the verification docs this design rests on, then the test plan (below).
-5. **Function detail** — one subsection per complex function, in the `module.md` shape, or a pointer: `→ domains/import/modules/reader.md`.
-6. **Edge cases and errors** — table of `case | expected behavior | test`.
-7. **Budgets** — numbers, with the box.
-8. **Decision points** — see `decision-point.md`.
-9. **Change log** — one line per version. A version built code-first says so: `v2 — retry budget, code-first (2026-09-17)`.
-
-## The verification section
-
-A list of pointers, not a table — each verification gets its own doc under `verifications/`:
-
-```
-## 4. Verification
-- → verifications/csv-parse-streams.md — holds
-- → verifications/upsert-latency.md — holds
-- → verifications/vendor-webhook-retries.md — open, accepted in D6
-```
-
-- **A premise with no verification doc is unverified**, and saying so is the point.
-- **Paths are owned by `Owns`, names by `Owns names`, and no two docs claim the same one.** A tab id, an event, or an injection key is an interface exactly as a file is — without an owner it is the kind of thing that gets silently redefined by whoever touches it next.
-- **The test plan names its seams** — which test covers which section, at the highest seam that works.
-- **A design with no test seam says so**: `Test seam: none (UI-only)` plus what manual evidence will stand in. Otherwise reconcile records a check that proves nothing.
-
-### Reconcile evidence
-
-A different question from the verification docs above: this one records that the shipped code matches *this* doc, item by item.
-
-| Item | Class | Command | Result | Date |
-|---|---|---|---|---|
-| `readBatch` post-condition: exactly `size` rows, fewer only at EOF | realized | `node --test test/reader.test.js` | 4 pass | 2026-09-17 |
-| quoted field spans lines | realized | `import.multiline_field` | pass | 2026-09-17 |
-| budget: ≤ 12 MB peak RSS per 1000-row batch | divergent | `/usr/bin/time -v node bench/import.js` | 18 MB — budget raised to 20 MB in v2 | 2026-09-17 |
-
-`Class` is `realized` / `missing` / `divergent`, from the reconcile procedure in `REFERENCE.md`. A doc reaches `implemented` only when every row is accounted for.
-
-## Rules
-
-- **A reader who has never seen the code builds this from the doc alone.** That is the whole test.
-- **Anything the human would want a say in is a decision point**, never a sentence buried in Design.
-- **Keep the reason, the constraint, the number.** Those are what a reader cannot recover from the code.
-- **`implemented` is claimed only after an item-by-item reconcile with recorded evidence.**
+确认后补 `Approval`、`Approved revision`，并按真实范围改变状态。实现、验证字段分别更新。长期正文写当前结论；有价值的历史理由可简记，提交历史交给版本管理。

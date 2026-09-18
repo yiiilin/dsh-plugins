@@ -1,37 +1,46 @@
-# Architecture format — `docs/architecture.md`
+# 概要设计模板
 
-The architecture doc answers *why the system is shaped this way*. It changes rarely, it is read first, and it is the only doc that spans features.
-
-One file until it covers more than one deployable or roughly five modules; then split per subsystem and let the index carry a row for each.
-
-## Header
+全项目共享的结构与协作，不是技术栈或目录清单。不要求先掌握整个项目才能写薄版本；已分析范围与未知必须明确。
 
 ```markdown
-Status: confirmed
-Version: v2
+# 系统概要设计
+
+Doc-ID: ARCH-SYSTEM
+Type: architecture
+Revision: 1
+Status: observed
+Baseline: unknown
 Owns: —
-Owns names: —
-Depends on: —
-Reconciled: 2026-09-17
+Implementation: unknown
+Verification: not-run
+
+## 摘要与范围
+系统目的、外部参与方、明确边界、已分析与未分析的部分。
+
+## 1. 模块与职责
+| 模块 | 职责 | 对外接口 | 依赖 | 主要文档 |
+|---|---|---|---|---|
+
+## 2. 运行时协作
+描述重要用户请求、后台任务或消息的端到端链路。
+至少包含重要异常如何传播；图可用文本或 Mermaid，但必须有文字说明。
+
+## 3. 数据与状态归属
+谁负责创建、修改、读取与清理状态；跨模块一致性如何处理。
+
+## 4. 依赖边界与公共约束
+鉴权、错误、日志、配置、协议版本、资源限制等实际相关的横切规则。
+已知的规则写来源；从代码推断的结构不能虚构成已批准架构。
+
+## 5. 部署与运行边界
+服务/进程拓扑、必要的外部系统、发布与迁移约束。
+引用配置的实际入口，不复制容易变动的全部配置。
+
+## 6. 关键取舍、未知与风险
+已知理由与未知理由分开；待确认方案不得混入当前架构。
+
+## 7. 验证入口
+架构约束如何核对，执行了哪些检查，哪些尚未检查。
 ```
 
-## Sections
-
-1. **Purpose and scope** — what this system is for, and the boundary around it.
-2. **Context** — the systems outside the boundary and what crosses it (calls, events, files, humans).
-3. **Modules and responsibilities** — table of `module | responsibility | may depend on`. One row per module; the responsibility is one line. **This table names the domains**: `docs/domains/<domain>/` mirrors these rows, so adding a row here means adding a directory there.
-4. **Dependency direction** — the rule, and how it is enforced: `src/api may import src/core, never the reverse — enforced by <check>`.
-5. **Data flow** — the end-to-end paths, numbered, one line per hop. The three or four paths that matter, not every path.
-6. **Data ownership** — table of `store | owner | who may write`. Name the single writer for every piece of state.
-7. **Cross-cutting concerns** — configuration, logging, errors, auth, i18n: where each lives and what the rule is.
-8. **Budgets** — the numbers the design is held to.
-9. **Decision points** — see `decision-point.md`.
-10. **Change log** — one line per version.
-
-## Rules
-
-- **Every claim is checkable.** "Layered architecture" is not architecture. "`src/api` may import `src/core`, never the reverse, enforced by `depcruise`" is.
-- **Budgets are numbers with the box they were measured on**: `P99 ≤ 120 ms at 500 rps on the 4-vCPU staging box`. A budget without a box is a wish.
-- **Signatures belong to the feature doc that owns them.** Architecture names boundaries, not symbols.
-- **Rejected alternatives stay visible** in the decision points, one line each — that is what stops a future session from re-litigating the shape of the system.
-- **This doc is not a tour of the code.** If a reader can get it from the directory listing, it does not belong here; keep the reasons and the rules.
+默认 `Owns: —`，由功能/模块拥有具体代码；只有确有独立架构配置才给它主要归属，避免与所有功能重复。

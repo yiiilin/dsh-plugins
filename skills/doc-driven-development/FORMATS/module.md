@@ -1,58 +1,44 @@
-# Module format — `docs/domains/<domain>/modules/<name>.md`
+# 共享模块 / 关键详细设计模板
 
-Function-level detail for one module, split out of a feature doc when that doc outgrows one sitting. This is the layer that turns implementation into transcription: everything below is written so that it can be typed into code without a decision being made along the way.
-
-A doc set needs this file only where the hard functions are. Simple functions are not documented here — their behavior is visible in the code and in the feature doc's interface table.
-
-## Header
+仅在模块具有稳定共享契约，或复杂机制值得独立阅读时创建。不因功能文档行数到某个阈值就随意切断设计。
 
 ```markdown
-Status: confirmed
-Version: v1
-Owns: src/import/reader.ts
-Depends on: docs/import.md
-Reconciled: 2026-09-17
+# 模块名称
+
+Doc-ID: MOD-EXAMPLE
+Type: module
+Revision: 1
+Status: observed
+Baseline: unknown
+Owns: src/shared/example/**
+Implementation: unknown
+Verification: not-run
+
+## 摘要与调用方
+模块职责、不承担的职责、谁使用它，链接到上层功能。
+
+## 1. 对外契约
+输入、输出、错误、兼容性、配置字段或事件名。
+
+## 2. 内部概要
+主要组件、依赖、状态所有权和运行流程。
+
+## 3. 必须统一的详细约束
+
+### C-MODULE-001 关键规则
+前后置条件、不变量，以及适用的算法/状态转换/锁/事务/重试/清理。
+复杂时写伪代码；不复刻每个函数。
+
+## 4. 实现自由与未知
+可以等价替换的内部细节；未确认假设及其影响。
+
+## 5. 实现与验证
+C-MODULE-001 对应的实现路径、符号与 E-MODULE-001。
+
+### E-MODULE-001 核对记录
+Covers: C-MODULE-001
+Method: 待填写实际方法
+Result: not-run
+Baseline: unknown
+Detail: 未执行。
 ```
-
-## Body
-
-```markdown
-## Exports
-| Symbol | Signature | Notes |
-|---|---|---|
-
-## Invariants
-- <state that holds across every call in this module>
-
-## `readBatch(stream, schema, size) -> Promise<Row[]>`
-
-Contract:
-- pre: `size > 0`; `stream` is at a record boundary
-- post: exactly `size` rows, fewer only at EOF
-- invariant: never buffers more than one raw line beyond the batch
-
-Steps:
-```
-rows = []
-while rows.length < size:
-  line = stream.next()                # raw bytes, one at a time
-  if line is EOF: break
-  rows.push(parseRow(line, schema))   # throws ParseError
-return rows
-```
-
-| Edge case | Behavior | Test |
-|---|---|---|
-| quoted field spans lines | parser joins it; offset still advances per physical line | `import.multiline_field` |
-
-Errors: `ParseError` on schema mismatch, carrying `{ line, column, expected }`.
-Budget: ≤ 12 MB peak RSS per 1000-row batch.
-```
-
-## Rules
-
-- **Signature, inputs, outputs, steps, edge cases, errors, budget.**
-- **Pseudocode, not prose.** Number the steps, name the branches, show the loop bounds. Language syntax is fine when it removes ambiguity; the point is that no design decision is left for the transcriber.
-- **One subsection per function that needs it.** This file exists for the hard tenth, not the whole module.
-- **Reference symbols, never paste code.** The code is the transcription and the doc is the source; when they disagree, this doc is edited first.
-- **Budgets are per call or per unit of work**, with the box: `≤ 12 MB peak RSS per 1000-row batch on the 4-vCPU staging box`.
