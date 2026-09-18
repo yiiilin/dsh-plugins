@@ -3,8 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { decodeText, mergeBlock } from './managed-text.mjs';
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.2.1';
 export const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 export const DEFAULTS = {
   schemaVersion: 1, enabled: true, docsRoots: ['docs'], index: 'docs/README.md',
@@ -12,7 +13,7 @@ export const DEFAULTS = {
 };
 export const SKIP_DIRS = new Set([
   '.git', '.hg', '.svn', 'node_modules', 'dist', 'build', 'out', 'coverage', 'target', 'vendor',
-  '.next', '.nuxt', '.cache', '.venv', 'venv', '__pycache__', '.agents', '.claude', '.dsh', '.codex',
+  '.doc-driven', '.next', '.nuxt', '.cache', '.venv', 'venv', '__pycache__', '.agents', '.claude', '.dsh', '.codex',
 ]);
 const SECRET = /(^|\/)(?:\.env[^/]*|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|credentials(?:\.[^/]*)?|secrets?(?:\.[^/]*)?|[^/]*\.(?:pem|key|p12|pfx))$/i;
 export const START = '<!-- doc-driven:index:start -->';
@@ -79,8 +80,10 @@ export function writeAtomic(root, rel, contents, { exclusive = false } = {}) {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   safePath(root, rel); // Recheck created components before writing.
   if (exclusive) { fs.writeFileSync(target, contents, { flag: 'wx' }); return; }
+  const previous = fs.existsSync(target) ? fs.lstatSync(target) : null;
+  if (previous && (!previous.isFile() || previous.nlink > 1)) throw new Error(`Refusing non-regular/hard-linked target: ${rel}`);
   const temp = `${target}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
-  try { fs.writeFileSync(temp, contents, { flag: 'wx' }); fs.renameSync(temp, target); }
+  try { fs.writeFileSync(temp, contents, { flag: 'wx', mode: previous ? previous.mode & 0o777 : 0o644 }); fs.renameSync(temp, target); }
   finally { if (fs.existsSync(temp)) fs.unlinkSync(temp); }
 }
 export function loadConfig(root, required = true) {
@@ -293,15 +296,12 @@ export function indexBlock(config, docs) {
   return lines.join('\n');
 }
 export function replaceIndex(text, block) {
-  const a = text.indexOf(START), b = text.indexOf(END);
-  if ((a < 0) !== (b < 0) || (a >= 0 && (b < a || text.indexOf(START, a + START.length) >= 0 || text.indexOf(END, b + END.length) >= 0)))
-    throw new Error('Index markers are malformed or duplicated; fix them before regenerating.');
-  if (a < 0) return `${text}${text && !text.endsWith('\n') ? '\n' : ''}\n${block}\n`;
-  return text.slice(0, a) + block + text.slice(b + END.length);
+  try { return mergeBlock(text, block, START, END).text; }
+  catch (error) { throw new Error(`Index markers: ${error.message}`); }
 }
 export function updateIndex(root, config) {
   const file = safePath(root, config.index);
-  const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '# 项目设计文档\n\n先读系统概要，再读本次涉及的功能与共享模块。\n';
+  const old = fs.existsSync(file) ? decodeText(fs.readFileSync(file), config.index) : '# 项目设计文档\n\n先读系统概要，再读本次涉及的功能与共享模块。\n';
   const { docs } = documents(root, config), next = replaceIndex(old, indexBlock(config, docs));
   if (next !== old) writeAtomic(root, config.index, next);
   return { count: docs.length, changed: next !== old };

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { readPackage } from './project-install.mjs';
 import { VERSION, parseCLI, runCLI, localLinks, resolveLink } from './lib.mjs';
 
 runCLI(() => {
@@ -19,7 +20,9 @@ runCLI(() => {
     }
   };
   walk(root);
-  const errors = [], skill = fs.readFileSync(path.join(root, 'SKILL.md'), 'utf8');
+  const errors = [];
+  try { readPackage(root); } catch (e) { errors.push(e.message); }
+  const skill = fs.readFileSync(path.join(root, 'SKILL.md'), 'utf8');
   const fm = skill.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
   if (!fm) errors.push('SKILL.md lacks a frontmatter block.');
   else {
@@ -39,6 +42,7 @@ runCLI(() => {
   if (skill.split('\n').length > 500) errors.push('SKILL.md exceeds the 500-line packaging guideline.');
   const required = ['README.md', 'REFERENCE.md', 'ADOPTION.md', 'CHANGELOG.md', 'TESTING.md', 'LICENSE', 'THIRD-PARTY-NOTICES.md',
     'FORMATS/feature.md', 'FORMATS/architecture.md', 'FORMATS/module.md', 'FORMATS/change.md', 'FORMATS/adoption.md',
+    'INSTALL.md', 'package-manifest.json', 'scripts/install.mjs', 'scripts/uninstall.mjs', 'scripts/doctor.mjs', 'scripts/project-install.mjs', 'scripts/managed-text.mjs', 'tests/install.mjs',
     'examples/scenarios.md', 'scripts/init.mjs', 'scripts/inventory.mjs', 'scripts/index.mjs', 'scripts/check-doc-set.mjs', 'tests/run.mjs'];
   for (const p of required) if (!fs.existsSync(path.join(root, p))) errors.push(`Missing required package file: ${p}`);
   let links = 0;
@@ -57,7 +61,7 @@ runCLI(() => {
   if (errors.length) { for (const e of errors) console.error(`FAIL ${e}`); process.exitCode = 1; return; }
   console.log(`Package OK: ${files.length} files, ${links} local links, JavaScript syntax checked.`);
   if (!args.flags['no-tests']) {
-    const result = spawnSync(process.execPath, ['--test', '--test-reporter=tap', path.join(root, 'tests/run.mjs')], {
+    const result = spawnSync(process.execPath, ['--test', '--test-reporter=tap', path.join(root, 'tests/run.mjs'), path.join(root, 'tests/install.mjs')], {
       cwd: root, encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024,
     });
     if (result.status !== 0) {
