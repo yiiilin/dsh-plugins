@@ -10,6 +10,8 @@
 
 普通功能放一篇文档；稳定共享模块独立一篇；复杂子系统才独立需求或详细设计文件。跨包功能不必按包拆碎，包边界只作为定位依据。一个事实只在一个主要位置定义，其他地方链接。
 
+目录遵循 [LAYOUT.md](LAYOUT.md)：默认 `docs/domains/<domain>/features/` 与领域内 `modules/`，概览是可选导航，不是契约的替代物。旧布局先映射、获准后才迁移，不自动移动或生成并存副本。
+
 当前文档讲现在被认可的方案；提案讲下一版差异。已有 `accepted` 文档不原地改成未确认目标并继续称为生效。可以在独立提案中审批，或使用保留旧版本的分支差异。无 Git 时优先短提案。
 
 ## 2. 最少字段
@@ -46,7 +48,7 @@ Verification: not-run
 | `Approval` | 真实确认来源、日期与范围；未获批填 `none`。可引用 PR、用户原话的简要摘录或项目审阅记录 |
 | `Approved revision` | 获批修订号。`accepted` 必填，必须等于 `Revision` |
 | `Affects` | 提案涉及的路径 glob；不是另一次主要归属声明 |
-| `Targets` | 提案目标，如 `docs/features/import.md@2`；新文档用 `@new`。逗号分隔 |
+| `Targets` | 提案目标，如 `docs/domains/data-import/features/import.md@2`；新文档用 `@new`。逗号分隔 |
 | `Superseded by` | 替代文档的仓库相对路径；`superseded` 必填 |
 
 路径使用 `/`，不使用绝对路径、`..`、换行或符号链接跨仓访问。正文 Markdown 链接相对于所在文件；`Owns`、`Targets`、源码 `doc:` 和进度 JSON 路径相对于仓库根。普通文件名可含空格，逗号不适用于字段列表；这类特殊文件通过正文链接定位并记录检查限制。

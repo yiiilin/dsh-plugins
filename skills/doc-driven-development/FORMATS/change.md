@@ -11,7 +11,7 @@ Revision: 1
 Status: proposed
 Baseline: unknown
 Owns: —
-Targets: docs/features/example.md@1
+Targets: docs/domains/example-domain/features/example.md@1
 Affects: src/example/**
 Implementation: missing
 Verification: not-run

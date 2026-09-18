@@ -5,11 +5,11 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { decodeText, mergeBlock } from './managed-text.mjs';
 
-export const VERSION = '0.2.1';
+export const VERSION = '0.2.2';
 export const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 export const DEFAULTS = {
   schemaVersion: 1, enabled: true, docsRoots: ['docs'], index: 'docs/README.md',
-  adoption: 'incremental', language: 'zh-CN', include: ['**'], exclude: [], sourcePointers: 'optional',
+  adoption: 'incremental', language: 'zh-CN', include: ['**'], exclude: [], sourcePointers: 'optional', layout: 'domain',
 };
 export const SKIP_DIRS = new Set([
   '.git', '.hg', '.svn', 'node_modules', 'dist', 'build', 'out', 'coverage', 'target', 'vendor',
@@ -89,13 +89,15 @@ export function writeAtomic(root, rel, contents, { exclusive = false } = {}) {
 export function loadConfig(root, required = true) {
   const file = safePath(root, '.doc-driven.json');
   if (!fs.existsSync(file)) {
-    if (required) throw new Error('No .doc-driven.json. Run init.mjs, or explicitly create the configuration first.');
+    if (required) throw new Error('No .doc-driven.json. Use install.mjs to preview project setup, then install.mjs --apply to install the skill, project rules and configuration together. Do not create enabled: true as a substitute for installation.');
     return structuredClone(DEFAULTS);
   }
   const data = readJSON(file);
   if (!data || Array.isArray(data) || typeof data !== 'object') throw new Error('.doc-driven.json must be an object.');
   for (const k of Object.keys(data)) if (!Object.hasOwn(DEFAULTS, k)) throw new Error(`Unknown configuration key: ${k}`);
-  const c = { ...structuredClone(DEFAULTS), ...data };
+  const c = { ...structuredClone(DEFAULTS), ...data, layout: data.layout ?? 'preserve' };
+  if (Object.hasOwn(data, 'layout') && !['domain', 'preserve'].includes(data.layout))
+    throw new Error('layout must be domain or preserve; an absent legacy key preserves existing paths.');
   if (data.schemaVersion !== 1 || typeof data.enabled !== 'boolean') throw new Error('Expected schemaVersion: 1 and a boolean enabled.');
   for (const key of ['docsRoots', 'include', 'exclude']) {
     if (!Array.isArray(c[key]) || c[key].some(x => typeof x !== 'string')) throw new Error(`${key} must be a string array.`);

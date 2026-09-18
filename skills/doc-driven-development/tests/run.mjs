@@ -26,7 +26,7 @@ function fixture(t, options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ddd-test-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const put = (rel, text) => { const p = path.join(root, rel); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, text); };
-  const config = { ...structuredClone(DEFAULTS), ...options.config };
+  const config = { ...structuredClone(DEFAULTS), layout: 'preserve', ...options.config }; // Legacy flat fixture; domain policy is tested separately.
   put('.doc-driven.json', JSON.stringify(config));
   put('src/main.mjs', 'export const add = (a, b) => a + b;\n');
   if (options.doc !== false) put(DOC, textDoc());
@@ -85,22 +85,24 @@ test('headers ignore fenced examples and support CRLF', () => {
   assert.equal(stripFences('~~~js\nStatus: accepted\n~~~\nreal').trim(), 'real');
 });
 test('observed documents pass without inventing approval', t => { const f = fixture(t); ok(f.check()); });
-test('initialization adds only configuration/index and preserves existing prose and code', t => {
+test('legacy init --apply installs the complete project and preserves existing prose and code', t => {
   const f = fixture(t, { doc: false });
   fs.unlinkSync(path.join(f.root, '.doc-driven.json'));
   f.put('docs/README.md', '# Existing handbook\n\nDo not overwrite this.\n');
   const original = fs.readFileSync(path.join(f.root, 'src/main.mjs'), 'utf8');
-  const r = cli('init', [f.root, '--mode', 'full'], f.root);
+  const r = cli('init', [f.root, '--mode', 'full', '--host', 'agents', '--apply'], f.root);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(loadConfig(f.root).adoption, 'full');
   assert.ok(fs.readFileSync(path.join(f.root, 'docs/README.md'), 'utf8').includes('Do not overwrite this.'));
   assert.equal(fs.readFileSync(path.join(f.root, 'src/main.mjs'), 'utf8'), original);
-  assert.ok(!fs.existsSync(path.join(f.root, 'AGENTS.md')));
+  assert.ok(fs.existsSync(path.join(f.root, 'AGENTS.md')));
+  assert.ok(fs.existsSync(path.join(f.root, '.agents/skills/doc-driven-development/SKILL.md')));
+  assert.ok(fs.existsSync(path.join(f.root, '.doc-driven/install.json')));
 });
-test('init is idempotent and does not override existing configuration', t => {
+test('init compatibility install is idempotent and does not override existing configuration', t => {
   const f = fixture(t); const config = fs.readFileSync(path.join(f.root, '.doc-driven.json'), 'utf8');
   const before = fs.readFileSync(path.join(f.root, f.config.index), 'utf8');
-  assert.equal(cli('init', [f.root, '--mode', 'full'], f.root).status, 0);
+  assert.equal(cli('init', [f.root, '--mode', 'full', '--host', 'agents', '--apply'], f.root).status, 0);
   assert.equal(fs.readFileSync(path.join(f.root, '.doc-driven.json'), 'utf8'), config);
   assert.equal(fs.readFileSync(path.join(f.root, f.config.index), 'utf8'), before);
 });

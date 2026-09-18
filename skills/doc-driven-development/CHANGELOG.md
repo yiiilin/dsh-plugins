@@ -1,5 +1,21 @@
 # 版本记录
 
+## 0.2.2 — 2026-09-18
+
+修复“声明项目采用，但 agent 只跑 init，留下 enabled=true 而没有项目 skill/规则入口”的启用断链。
+
+- 安装是所有项目采用模式的前置条件，不再只在用户另说“安装”时触发；完整接入与临时使用明确区分。
+- `install.mjs` 成为唯一推荐的启用入口；配置/索引准备内聚为私有步骤，删除公开 `planInit`。旧 `init.mjs` 兼容转发完整安装 CLI，默认预览，显式 `--apply` 后安装全套产物；这是有意的行为变更。
+- `enabled` 只表示意愿；doctor 输出派生的 `activation` 与 `requestedEnabled`，缺包/收据/入口等为 incomplete，提供安装下一步。版本不匹配也不能当作已装好本版。
+- 预览明确 `setupComplete: false`，执行并静态核验 ready 才报告完成；新配置最后写入，保留回滚与锁检查。
+- 直接修复旧 init-only 项目，无需删除/重写配置或 docs；兼容未改动 v0.2.0/v0.2.1 的安装迁移，保留区块保护、备份、个人改动拒绝覆盖。
+- 更新 SKILL/README/INSTALL/ADOPTION 和缺配置错误信息，清除独立初始化推荐；增加半安装、兼容入口、禁用、失败回滚与文档保护回归测试。
+- 修复多领域文档落点漂移：主入口、模板和接管示例统一为 domains/<domain>/features 与同领域 modules；领域概览只作可选导航，不替代契约，也不继续默认根部 features/modules。
+- 增加 layout: domain/preserve 和只读目录检查。新接入默认领域布局；旧配置无字段按 preserve 读取且不改字节，首次接入已有受管功能/模块时亦保留旧布局。迁移先确认，不自动移动、复制或覆盖正文。
+- doctor 单独报告布局状态，check-doc-set 对 domain 下受管当前规格路径错误报失败；不声称检查器能判断业务领域或检查全部未受管历史文档。
+
+旧版本章节仅是历史记录，不是本版执行入口。
+
 ## 0.2.1 — 2026-09-18
 
 补齐项目安装与生效检查，核心文档/确认/渐进及全量接管协议保持不变。
@@ -40,7 +56,7 @@
 
 ### 旧项目迁移
 
-不自动覆盖旧文档或批量修改代码。先运行新初始化（已有文件会保留），调整 `.doc-driven.json` 的 `docsRoots` 和 `index`，再逐篇接管需要维护的文档。
+不自动覆盖旧文档或批量修改代码。（0.2.0 当时的流程）先运行初始化并映射目录，再逐篇接管文档。0.2.2 已替换为 [完整安装与半安装修复](INSTALL.md)，不要再单独初始化。
 
 旧 `draft` / `awaiting confirmation` 对目标文档映射为 `proposed`；逆向现状应为 `observed`。旧 `confirmed` 只有能找到真实确认记录才映射为 `accepted`。旧 `implemented` 必须拆查确认、实现和验证，不能无证据直接映成 `accepted + complete + passed`。旧 `superseded by ...` 分为 `Status: superseded` 与 `Superseded by`。
 

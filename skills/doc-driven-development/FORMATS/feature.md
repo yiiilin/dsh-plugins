@@ -1,5 +1,7 @@
 # 功能文档模板
 
+默认落点：`<docsRoot>/domains/<domain>/features/<feature>.md`，先按 [布局规则](../LAYOUT.md) 确定领域；旧文档只映射，不自动移动。
+
 按稳定功能维护；默认需求、概要、关键详细设计同篇。删掉不适用的节，不填伪造数据。状态和字段规则见 [参考](../REFERENCE.md)。已有代码用 `observed`；新功能用 `proposed`。示例路径必须替换。
 
 ```markdown

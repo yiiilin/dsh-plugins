@@ -10,6 +10,8 @@ import {
   START, END, candidatePath, resolveBase, changedPaths, docsAtBase,
 } from './lib.mjs';
 
+import { checkLayout } from './doc-layout.mjs';
+
 const STATUSES = ['observed', 'proposed', 'accepted', 'superseded'];
 const TYPES = ['feature', 'architecture', 'module', 'change', 'adoption', 'verification', 'adr', 'requirements'];
 const IMPLEMENTATIONS = ['unknown', 'missing', 'partial', 'complete', 'divergent', 'not-applicable'];
@@ -26,6 +28,9 @@ export function checkRepo(root, config, options = {}) {
   if (options.release && !options.base) throw new Error('--release requires --base to select this change, not every historical observed document.');
   if (options.full && !options.progress) throw new Error('--full requires --progress <path>.');
   const { docs, legacy } = documents(root, config);
+  const layout = checkLayout(config, docs);
+  errors.push(...layout.errors); warnings.push(...layout.warnings);
+  stats.layout = { policy: layout.policy, domainDocuments: layout.domainDocuments, nonconforming: layout.nonconforming };
   for (const p of legacy) warn(`${p}: legacy header detected; not treated as an approved v0.2 document.`);
   const byId = new Map(), byPath = new Map(docs.map(d => [d.path, d]));
   const definitions = new Map(), evidence = [], bodies = new Map();

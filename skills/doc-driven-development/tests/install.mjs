@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   PACKAGE_ROOT as PKG, STATE, LOCK, DEFAULT_SKILL, RULE_START, RULE_END,
-  planInstall, planUninstall, planInit, applyPlan, doctor, readPackage, snapshot, loadState, tree,
+  planInstall, planUninstall, applyPlan, doctor, readPackage, snapshot, loadState, tree,
 } from '../scripts/project-install.mjs';
 import { sha, DEFAULTS, VERSION, inventory, loadConfig, updateIndex, replaceIndex, START, END } from '../scripts/lib.mjs';
 import { decodeText, inspectBlock } from '../scripts/managed-text.mjs';

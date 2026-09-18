@@ -18,6 +18,7 @@ Verification: not-run
 模式：渐进 / 全量。
 本次仅记录现状，不修改业务代码。
 纳入路径、主要功能边界、排除项及理由；已有文档如何映射。
+按领域列出功能/模块真实落点；新布局为 domains/<domain>/features/、domains/<domain>/modules/，旧布局迁移需独立授权。
 
 ## 代码基线与盘点
 实际 Git 提交/工作树情况、inventory 快照。

@@ -1,6 +1,16 @@
 # 项目安装、升级、卸载与生效检查
 
-适用版本：0.2.1。工具需要 Node.js 22+，只用标准库，不联网、不调用模型、不执行项目脚本。
+适用版本：0.2.2。工具需要 Node.js 22+，只用标准库，不联网、不调用模型、不执行项目脚本。
+
+## 0. 启用是一条完整路径，不是 init 加 install 两个选项
+
+用户明确要求在项目采用文档驱动开发时，先只读检查，再完成项目安装，随后进入正常/渐进/全量工作。**不能只运行 init 或写出 `enabled: true` 就交付为“已启用”。**预览成功只说明计划可执行，不代表项目已接入。
+
+`install.mjs` 是唯一推荐的启用/修复/升级入口。配置与索引准备是安装器内部步骤，没有公开的 config-only 初始化 API。旧 `init.mjs` 仅作为同一安装 CLI 的兼容别名：默认预览、`--apply` 完整安装、同样的参数和保护边界。旧脚本依赖其“运行就只写配置”的行为需要更新。
+
+没有安装就从当前完整发行包运行 doctor/install，不要引用项目内尚不存在的路径。已有项目 ready 则无需重复安装。明确只在本次使用、不安装、不改规则或只读时，不写启用配置，不承诺下次生效。
+
+用户已明确授权项目采用、预览未超出必要安装范围且无冲突时，agent 可以按已有授权继续 `--apply`；不要因“还需要一次安装请求”而停在预览。原规则冲突、超范围改动或宿主权限限制必须指出并遵守。项目安装不授权业务功能实现。
 
 ## 1. 安装到项目
 
@@ -21,7 +31,7 @@ node "$SKILL_DIR/scripts/install.mjs" "$PROJECT" --host both --apply
 
 也可以让正在运行的 agent 执行安装：
 
-> 将这个发行包的 doc-driven-development 安装到当前项目，使用合适的宿主适配。先读 INSTALL.md 并运行安装预览，展示要改的路径；确认执行后使用 install.mjs --apply。保留已有规范、配置和设计文档，不手工重建 AGENTS.md，也不要用复制覆盖代替安装器。
+> 在当前项目启用这个发行包的 doc-driven-development。先读 INSTALL.md 并检查接入状态；未完整安装时预览路径，在本次授权内使用 install.mjs --apply 完整部署并核验，不停在 init 或预览。原规则或本地修改冲突时停止，不覆盖 AGENTS.md 或任何已有规范和设计正文。
 
 `--host` 的取值：
 
@@ -76,9 +86,17 @@ node "$SKILL_DIR/scripts/install.mjs" "$PROJECT"
 node "$SKILL_DIR/scripts/install.mjs" "$PROJECT" --apply
 ```
 
-对没有安装收据的 v0.2.0，发行包内包含原发行文件哈希：全部旧发行文件仍与原版一致时，可以直接迁移到 0.2.1。旧目录里额外的个人文件保留；它们与新版本文件重名时停止。修改过、缺文件或无法识别的旧包不会覆盖；先备份到宿主技能发现范围之外并人工对比。
+对没有安装收据的 v0.2.0/v0.2.1，发行包内包含原发行文件哈希：全部旧发行文件仍与原版一致时，可以直接迁移到 0.2.2。旧目录里额外的个人文件保留；它们与新版本文件重名时停止。修改过、缺文件或无法识别的旧包不会覆盖；先备份到宿主技能发现范围之外并人工对比。
 
-本版配置格式与 v0.2.0 相同，原来渐进/全量接管记录继续沿用。`.doc-driven/` 是新增加的安装元数据区域，不进入业务代码快照或全量阅读分母。
+本版配置格式与 v0.2.0/v0.2.1 相同，原来渐进/全量接管记录继续沿用。`.doc-driven/` 是新增加的安装元数据区域，不进入业务代码快照或全量阅读分母。
+
+### 修复历史 config-only 半安装
+
+`.doc-driven.json` 为 `enabled: true`、项目没有 skill 目录和入口区块时，不删除或重新生成配置。使用新解压 v0.2.2 的同一 `install` 命令预览和执行；它保留配置、原有 docs 及规则正文，仅补齐缺失的工具接入和索引区块。已有配置内的目录、语言、模式继续生效。
+
+这个场景无需 `--force`、专用 repair 标志或再次初始化。已有安装收据但发行文件缺失/被人修改时，不等同于可安全覆盖的 config-only 状态；仍拒绝覆盖并要求核对。不要通过删除收据绕过保护。
+
+新项目的新配置排在完整包、规则和收据之后写入；可捕获失败回滚。断电/强杀仍可能造成未完成事务，以残留锁和 doctor 为准，不把多文件安装描述成断电级原子事务。历史已有 true 配置保持原字节，不以切换开关掩盖未完成接入。
 
 ## 4. 静态生效检查：doctor
 
@@ -90,16 +108,29 @@ node .agents/skills/doc-driven-development/scripts/doctor.mjs . --json
 node .agents/skills/doc-driven-development/scripts/doctor.mjs . --strict
 ```
 
-检查安装收据、发行文件哈希、显式启用、索引、规则区块和实际指向的入口；检测根 override 遮蔽，提示嵌套规则、过长入口、旧手工规则、本地宿主设置和 Git 忽略。不会改写规则以解决语义冲突，也不扫描全局用户或组织设置。
+检查安装收据、发行版本/文件哈希、启用意愿、索引、规则区块和实际指向的入口；检测根 override 遮蔽，提示嵌套规则、过长入口、旧手工规则、本地宿主设置和 Git 忽略。不会改写规则以解决语义冲突，也不扫描全局用户或组织设置。
 
 普通 `doctor` 退出 `0` 仅表示所选适配的静态检查通过；警告仍需阅读。明确选择 Codex/both 后发生根 override 遮蔽属于失败；仅选择通用 agents 时，该问题作为 Codex 兼容性警告，不假定用户一定在使用 Codex。`--strict` 将警告也作为失败。`enabled: false`、入口丢失、区块损坏、残留安装锁等不会作为“成功跳过”。
 
 输出始终区分：
 
 ```text
+Requested enabled: true (configuration intent only)
+Project activation: ready
 Static installation: passed
 Agent runtime: not-run
 ```
+
+`activation` 根据本次检查派生，不写回另一份配置：
+
+| 值 | 含义 |
+|---|---|
+| `not-installed` | 没有启用配置/收据及识别到的项目接入，尚未安装 |
+| `incomplete` | 配置、完整包、版本、收据、规则、索引或锁等有问题；包括历史 init-only 状态 |
+| `disabled` | 明确关闭；保留该选择，不自动重新启用 |
+| `ready` | 当前检查器版本的项目安装通过静态检查；不是实际模型加载证明 |
+
+`incomplete`、`not-installed`、`disabled` 均退出 1，不会因配置为 true 报成功。JSON 提供 `requestedEnabled`、`activation` 和 `next`；安装预览还会输出 `setupComplete: false`，只有执行后核验 ready 才是 true。检查器发现项目仍是其他发行版本时要求用相应新包升级，不把旧技能当成已经含有本版修复。
 
 它不调用 AI，所以不伪造“agent 已读过/以后一定遵守”。它检查的是安装与入口；业务文档/代码关系继续由 `check-doc-set.mjs` 和项目测试核对，不混为一个绿色状态。
 
@@ -137,7 +168,7 @@ node .agents/skills/doc-driven-development/scripts/uninstall.mjs . --keep-skill 
 
 默认预览。正式卸载只移除未被手改的受管规则区块、仍匹配登记哈希的发行文件和安装收据；陌生/个人文件保留。首次创建的规则文件只有完全没有其他内容时才删除。原有规则无后续变化时恢复原始字节；边界外后来有个人改动则保留它们，宁可留下空行也不猜测删除。
 
-**所有设计文档、配置和备份保留。**卸载不改 `.doc-driven.json` 的 `enabled`，所以用户级 skill 或手工规则仍可能启用此工作流；彻底停用时由开发者显式将 `enabled` 改为 `false` 并检查手工入口。不要把卸载理解为清除项目设计资料。
+**所有设计文档、配置和备份保留。**卸载不改 `.doc-driven.json` 的 `enabled`；若仍为 true，doctor 会将项目接入报为 incomplete，而不是 ready。用户级 skill/手工规则可能再次触发接入检查；彻底停用时由开发者显式将 `enabled` 改为 `false` 并检查手工入口。不要把卸载理解为清除项目设计资料。
 
 ## 7. 中断恢复与门禁
 
@@ -165,3 +196,11 @@ node .agents/skills/doc-driven-development/scripts/check-doc-set.mjs . --base or
 - [Claude Code 项目记忆](https://code.claude.com/docs/en/memory)：项目入口可为根 `CLAUDE.md` 或 `.claude/CLAUDE.md`，不同于原生读取 `AGENTS.md`。当前文档建议用 `/context` 查看实际 Memory files，`/memory` 用于浏览编辑。内容是行为指引，不是工具权限强制。
 
 只有文件/规则适配与本地程序测试，不声称已在所有宿主和模型上完成真实运行验证。
+
+## v0.2.2 文档布局：安装不是目录迁移
+
+新配置默认 `layout: domain`，功能与模块分别位于文档根的 `domains/<domain>/features/`、`domains/<domain>/modules/`。`<domain>` 是实际领域目录，领域概览只在需要时置于其中的 README/architecture；安装不会创建未经分析的领域或空规格。
+
+`--layout domain|preserve` 仅用于创建新配置。旧配置不覆盖，未含 layout 时按 preserve 读取；首次接入已有受管功能/模块文档时也默认 preserve 并提示。原始正文、目录、历史引用不会因升级而移动。迁移的路径映射、批准和引用核对要求见 [LAYOUT.md](LAYOUT.md)。
+
+Doctor 的 layout 报告与 activation 分开。接入完整不意味着已有文档合乎新目录，安装器不会为让检查通过而搬迁设计。domain 策略下运行 check-doc-set 可拦截当前受管规格的错误落点；preserve 时仅报告差异。不得擅自放宽策略掩盖问题。
