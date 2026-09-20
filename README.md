@@ -10,6 +10,7 @@ own directory.
 | [`@yiln-dsh/dsh-plugin-auth-webserver`](./dsh-plugin-auth-webserver) | Auth-gated reverse proxy with Host/Origin policy, HTTPS/TOTP, sliding sessions, WebSockets, and authenticated remote Settings/Models support. |
 | [`@yiln-dsh/dsh-plugin-file-message`](./dsh-plugin-file-message) | Let the model send workspace-backed files and images into the conversation. |
 | [`@yiln-dsh/dsh-plugin-git-graph`](./dsh-plugin-git-graph) | Contribute a Git Graph page tab to the DSH Web right Sidebar: lane graph, commit and working-tree diffs, and uncommitted changes. |
+| [`@yiln-dsh/dsh-plugin-loopx-view`](./dsh-plugin-loopx-view) | Add a session-scoped LoopX tab beside DSH's Conversation and Trajectory views, with Goal status and execution graph projection. |
 | [`@yiln-dsh/dsh-plugin-llm-adapter`](./dsh-plugin-llm-adapter) | Fork the DSH pi-ai adapter with per-model reasoning/tier controls, optional tool-argument filler cleanup, and reliable image request serialization. |
 | [`@yiln-dsh/dsh-plugin-delete-session`](./dsh-plugin-delete-session) | Add confirmed permanent-delete actions for the current session, session-row menus, and selected session batches. |
 | [`@yiln-dsh/dsh-plugin-web-daemon`](./dsh-plugin-web-daemon) | Manages `dsh web` as a real systemd unit, auto-resumes the sessions **and running subagents** that were interrupted by a restart, shows server CPU/memory/network/filesystem status in the sidebar footer above the Settings action, and edits its configuration from the GUI Settings section. |
@@ -74,6 +75,7 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 | `@yiln-dsh/dsh-plugin-delete-session` | `0.4.2` |
 | `@yiln-dsh/dsh-plugin-file-message` | `0.3.3` |
 | `@yiln-dsh/dsh-plugin-git-graph` | `0.2.0` |
+| `@yiln-dsh/dsh-plugin-loopx-view` | `0.1.0` |
 | `@yiln-dsh/dsh-plugin-llm-adapter` | `0.5.0` |
 | `@yiln-dsh/dsh-plugin-web-daemon` | `0.8.0` |
 | `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.11` |
