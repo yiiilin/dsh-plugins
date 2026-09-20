@@ -11,6 +11,7 @@ import {
 } from './lib.mjs';
 
 import { checkLayout } from './doc-layout.mjs';
+import { DESIGN_FORMAT, designFingerprint, validateDesign } from './design-check.mjs';
 
 const STATUSES = ['observed', 'proposed', 'accepted', 'superseded'];
 const TYPES = ['feature', 'architecture', 'module', 'change', 'adoption', 'verification', 'adr', 'requirements'];
@@ -184,10 +185,17 @@ export function checkRepo(root, config, options = {}) {
     skippedEntries: inv.skipped.length, reviewableCandidates: inv.summary.reviewableCandidates,
     requirementDefinitions: [...definitions.keys()].filter(id => /^[RC]-/.test(id)).length, evidenceRecords: evidence.length, snapshot: inv.snapshot });
 
+  const changedDesignPaths = new Set(), affectedDesignPaths = new Set();
   if (options.base) {
     if (inv.git.enumeration !== 'git') throw new Error('--base requires Git and the actual worktree root.');
     const ref = resolveBase(root, options.base), changed = changedPaths(root, ref), affected = new Set();
     const prior = docsAtBase(root, config, ref);
+    const priorById = new Map(prior.map(d => [d.fields['Doc-ID'], d]));
+    for (const d of docs.filter(d => ['feature', 'module'].includes(d.fields.Type) && d.fields.Status !== 'superseded')) {
+      const before = priorById.get(d.fields['Doc-ID']);
+      if (!before || before.fields.Type !== d.fields.Type || before.fields['Design-Format'] !== d.fields['Design-Format']
+        || designFingerprint(before.text) !== designFingerprint(d.text)) changedDesignPaths.add(d.path);
+    }
     const priorOwners = prior.filter(d => d.fields.Status !== 'superseded' && d.fields.Type !== 'change');
     const changedCode = changed.filter(p => candidatePath(p, config));
     for (const p of changedCode) {
@@ -209,6 +217,7 @@ export function checkRepo(root, config, options = {}) {
       const d = byPath.get(p);
       if (d && d.fields.Status !== 'superseded' && !['adoption', 'verification', 'adr'].includes(d.fields.Type)) affected.add(p);
     }
+    for (const p of affected) affectedDesignPaths.add(p);
     stats.changedCode = changedCode.length; stats.affectedDocuments = [...affected];
     if (options.release) {
       const cleanSource = inv.git.head && !changedPaths(root, inv.git.head).some(p => candidatePath(p, config));
@@ -222,6 +231,31 @@ export function checkRepo(root, config, options = {}) {
       }
     }
   }
+  // Human-facing design structure is independently reported from installation and
+  // metadata validity. Preserve old prose; never auto-rewrite or mark approval here.
+  const designStats = { current: 0, profiled: 0, legacy: 0, strict: 0, incomplete: 0, changedDesigns: [...changedDesignPaths] };
+  const resolveDiagram = (from, link) => {
+    if (!link || /^[a-z][a-z0-9+.-]*:|^\/\/|^#/i.test(link) || link.includes('?')) throw new Error('use a local current managed-document path');
+    const absolute = resolveLink(root, from.path, link);
+    return byPath.get(path.relative(root, absolute).split(path.sep).join('/'));
+  };
+  for (const d of docs.filter(d => ['feature', 'module'].includes(d.fields.Type) && d.fields.Status !== 'superseded')) {
+    designStats.current++;
+    const declared = d.fields['Design-Format'];
+    if (declared) designStats.profiled++; else designStats.legacy++;
+    const forced = Boolean(options.design && (!options.base || affectedDesignPaths.has(d.path) || changedDesignPaths.has(d.path)));
+    const strict = forced || (d.fields.Status === 'accepted' && (Boolean(declared) || changedDesignPaths.has(d.path)));
+    if (strict) designStats.strict++;
+    const issues = validateDesign(d, { resolveReference: resolveDiagram });
+    if (declared && declared !== DESIGN_FORMAT) error(`[design] ${d.path}: unsupported Design-Format ${declared}`);
+    if (changedDesignPaths.has(d.path) && !declared) issues.unshift({ code: 'format', message: 'new/substantively changed feature/module must declare Design-Format: layered-v1; migrate only this scope' });
+    if (issues.length) designStats.incomplete++;
+    if (!declared && !forced && !changedDesignPaths.has(d.path)) {
+      if (issues.length) warn(`[design:legacy] ${d.path}: three-layer design not complete (${issues.map(x => x.code).filter((x, i, a) => a.indexOf(x) === i).join(', ')}); preserved, use --design for details; not a semantic pass`);
+    } else for (const issue of issues) (strict ? error : warn)(`[design] ${d.path}: ${issue.message}`);
+  }
+  stats.design = { ...designStats, status: !designStats.current ? 'not-assessed' : designStats.incomplete ? 'incomplete' : 'structure-passed', semantic: 'not-assessed' };
+
   if (options.progress) {
     const progress = readJSON(safePath(root, options.progress));
     const issue = options.full ? error : warn;
@@ -255,13 +289,13 @@ export function checkRepo(root, config, options = {}) {
     }
   }
   return { errors: [...new Set(errors)], warnings: [...new Set(warnings)], stats,
-    limitations: 'Structural checks only: approval authenticity, code semantics, actual reading/test execution, symbols, Markdown anchors and external links are not verified.' };
+    limitations: 'Structural checks only: approval authenticity, code semantics, actual reading/test execution, diagram semantics/coverage, discussion quality, symbols, Markdown anchors and external links are not verified.' };
 }
 
 function main() {
-  const args = parseCLI(process.argv.slice(2), { '--json': 'flag', '--base': 'value', '--release': 'flag', '--progress': 'value', '--full': 'flag' });
+  const args = parseCLI(process.argv.slice(2), { '--json': 'flag', '--base': 'value', '--release': 'flag', '--progress': 'value', '--full': 'flag', '--design': 'flag' });
   if (args.flags.help) {
-    console.log('Usage: node check-doc-set.mjs [repo] [--json] [--base REF [--release]] [--progress docs/adoption/progress.json [--full]]\nExit 0: structural checks pass (warnings may remain); 1: validation failures; 2: invocation/configuration error.');
+    console.log('Usage: node check-doc-set.mjs [repo] [--json] [--design] [--base REF [--release]] [--progress docs/adoption/progress.json [--full]]\n--design: strictly check current feature/module design bodies; with --base only the affected scope. Draft gaps remain reportable, not auto-fixed.\nExit 0: structural checks pass (warnings may remain); 1: validation failures; 2: invocation/configuration error.');
     return;
   }
   const root = rootDir(args.root), result = checkRepo(root, loadConfig(root), args.flags);

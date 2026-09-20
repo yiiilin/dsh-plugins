@@ -96,7 +96,7 @@ export function readPackage(root = PACKAGE_ROOT) {
   for (const [p, h] of Object.entries(manifest.files)) if (digest(files.get(p)) !== h) throw new Error(`Package missing or changed: ${p}`);
   for (const p of files.keys()) if (p !== 'package-manifest.json' && !own(manifest.files, p)) throw new Error(`Unexpected source package file: ${p}`);
   for (const [version, hashes] of Object.entries(manifest.predecessors ?? {})) {
-    if (!['0.2.0', '0.2.1'].includes(version)) throw new Error(`Unsupported unmanaged predecessor: ${version}`);
+    if (!['0.2.0', '0.2.1', '0.2.2'].includes(version)) throw new Error(`Unsupported unmanaged predecessor: ${version}`);
     hashMap(hashes, `predecessor ${version}`);
   }
   return { files, manifest, hashes: Object.fromEntries([...files].map(([p, r]) => [p, digest(r)])) };
@@ -191,7 +191,9 @@ export function ruleBlock(skill, config) {
 ## 文档驱动开发（项目默认流程）
 本项目使用 doc-driven-development；仅在项目根 \`.doc-driven.json\` 的 \`enabled\` 为 \`true\` 时启用。
 涉及开发、修复、重构和设计恢复，开始前读取仓库相对路径 \`${skill}/SKILL.md\`、\`${config.index}\` 及本次相关规格；不等待用户重复点名。不能读取时说明缺口，不假装已加载。
-重要需求/技术约束变化先写差异并取得具体确认，再实现；恢复已确认行为的修复和等价重构不重复审批。
+主动查找目标、文档与实现中的矛盾、逻辑缺口和隐含假设；能查明的事实先调查，重要问题带具体场景、推荐与代价同使用者探讨，再把结论落成文档。已确认文档可以质疑，不得机械照抄，也不得擅改契约。
+重要需求/技术约束变化取得具体确认后再实现；忠实整理已有批准不重复审批。恢复已确认行为的修复和等价重构不制造无用讨论。
+功能/模块文档保留需求说明、概要设计、详细设计三层；概要用 ASCII 处理流程和数据流，详细设计用状态流转与关键步骤，图后说明条件、归属和异常。按 DESIGN.md 的 layered-v1 模板定稿检查；不适用说明原因，未知不得编成事实。
 代码现状标记 observed，未经确认不改成 accepted；人工改代码也要核对。确认、实现、验证分别记录，未运行测试不写通过。
 创建设计文档前按该 skill 的 LAYOUT.md 确认落点；当前布局策略是 \`${config.layout ?? 'preserve'}\`。新领域的功能/模块分别放在文档根下 domains/<domain>/features/ 和 domains/<domain>/modules/ 内，领域概览不能替代它们；旧目录须映射保留，迁移先确认。
 保留其他项目规范和人的修改。AGENTS.md、CLAUDE.md、索引和已有设计文档不得整篇重建；只修改任务相关段落，受管区块以外内容保持不变。
@@ -363,7 +365,7 @@ export function applyPlan(plan, { beforeWrite } = {}) {
 export function probeText() {
   return '请进行一次只读的项目开发规则检查，不修改任何文件，也不运行项目代码。\n'
     + '先列出本会话自动加载的项目规则来源，区分自动加载与本轮主动读取；再按已加载的规则查找当前开发流程与设计文档入口。\n'
-    + '说明：新增一个改变既有行为的功能前要做什么；恢复既定行为的 BUG 修复是否需要重审全部设计；直接改代码后如何处理文档；怎样保留项目原有规范；多领域功能和模块文档应放在哪里、旧布局如何处理；不能执行测试时如何报告。\n'
+    + '说明：新增一个改变既有行为的功能前要做什么；恢复既定行为的 BUG 修复是否需要重审全部设计；直接改代码后如何处理文档；怎样保留项目原有规范；多领域功能和模块文档应放在哪里、旧布局如何处理；需求含糊或现行文档矛盾时怎样主动讨论而不擅改契约；三层文档、ASCII 处理/数据/状态图各表达什么；不能执行测试时如何报告。\n'
     + '为每项回答指出实际读取的文件和相关段落；无法确认是否自动加载时直说，不根据文件存在猜测。\n';
 }
 function scanRuleFiles(root) {

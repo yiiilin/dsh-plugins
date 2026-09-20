@@ -1,6 +1,6 @@
-# doc-driven-development 0.2.2
+# doc-driven-development 0.2.3
 
-通过讨论文档控制 AI 的实现，而不是只说愿望、事后读大量代码。普通功能默认一篇文档，内部依次区分**需求、概要设计、关键详细设计**；复杂模块才拆开。
+通过讨论文档控制 AI 的实现，而不是只说愿望、事后读大量代码。普通功能默认一篇文档，内部保留清晰的**需求说明、概要设计、详细设计**三层；复杂模块才拆开。AI 应主动查证、找逻辑缺口、带场景和代价与人探讨，再整理结论；已确认文档可以被质疑，不能擅自改变约束。
 
 支持新功能开发、已有项目渐进接管、全量代码设计恢复和人工改代码后的核对。核心流程是 Markdown 规则；附带工具提供项目安装/核验、文件盘点、索引和结构检查，不调用任何模型、不依赖其他 skill、不需要 API 密钥或联网。
 
@@ -29,7 +29,7 @@ node "$SKILL_DIR/scripts/install.mjs" "$PROJECT" --host both --apply
 
 ### 修复旧 init 留下的半安装状态
 
-已有 `.doc-driven.json` 为 `enabled: true`，但缺项目 skill/规则区块时，直接对原项目运行上面的新包 `install` 两条命令。**无需删除配置或已有 docs；原配置逐字节保留，已有规范只追加受管区块。**使用新解压的 v0.2.2，不要继续调用旧全局 v0.2.1 的 init。
+已有 `.doc-driven.json` 为 `enabled: true`，但缺项目 skill/规则区块时，直接对原项目运行上面的新包 `install` 两条命令。**无需删除配置或已有 docs；原配置逐字节保留，已有规范只追加受管区块。**使用新解压的 v0.2.3，不要继续调用旧全局 v0.2.1 的 init。
 
 ## 2. 检查后续会话是否接入
 
@@ -48,7 +48,9 @@ node .agents/skills/doc-driven-development/scripts/doctor.mjs . --probe
 
 ### 正常开发
 
-> 使用 doc-driven-development 为“具体功能”先写需求、概要设计和关键详细设计。先展示本次方案、重要选择、代价和验收方式；没有明确的数值要求时不要编造。先不改业务代码。
+> 为“具体功能”先调查当前文档与代码，主动找出目标、状态和数据处理中的逻辑缺口。带着具体场景、推荐与代价跟我讨论，可以先画 ASCII 草图；讨论收敛后整理需求说明、概要设计、详细设计和验收。不要预先把未经讨论的选择写成既定方案，先不改业务代码。
+
+这应是安装后的默认行为，不要求用户每次重复“主动思考”。已明确的修复和等价重构不强制多轮讨论。共同设计、三类图和机器标记见 [DESIGN.md](DESIGN.md)；人类可读的完整形态见 [导入设计示例](examples/import-design.md)。
 
 确认后：
 
@@ -56,11 +58,11 @@ node .agents/skills/doc-driven-development/scripts/doctor.mjs . --probe
 
 ### 已有项目，逐渐补齐
 
-> 使用渐进接管模式维护“具体功能/缺陷”。先恢复这条功能链及必要上下游的现状设计，再区分本次目标。不要为补文档重写整个项目，不把当前 BUG 写成正确需求。
+> 使用渐进接管模式维护“具体功能/缺陷”。先恢复这条功能链及必要上下游的现状设计，画出实际流程、数据与状态关系，主动指出矛盾，再区分本次目标。不要为补文档重写整个项目，不把当前 BUG 写成正确需求。
 
 ### 先一次性全面梳理
 
-> 使用全量基线模式，分析整个项目并将现有代码恢复成可维护的设计文档。先盘点范围、排除项和代码基线，再按模块及端到端链路分批完成；只写文档，不修改业务代码。事实、推断、未知、疑似缺陷必须区分。每批落盘覆盖进度；没读过或代码已变化的部分不得记为完成。
+> 使用全量基线模式，分析整个项目并将现有代码恢复成可维护的设计文档。先盘点范围、排除项和代码基线，再按模块及端到端链路分批完成；只写文档，不修改业务代码。事实、推断、未知、疑似缺陷必须区分。每批落盘覆盖进度、ASCII 图和按主题归类的待讨论问题；没读过或代码已变化的部分不得记为完成。
 
 全量分析不是只能完成一批：目标是完成约定的整体范围，分批仅为控制上下文和核对质量。遇到会话容量上限应保存当前成果与明确剩余范围，下次从记录恢复，不能悄悄把目标缩成当前修改的文件。
 
@@ -127,6 +129,10 @@ node "$SKILL_DIR/scripts/check-doc-set.mjs" . \
 # 检查本次实质代码变更的文档归属；把 origin/main 换成实际比较基线。
 node "$SKILL_DIR/scripts/check-doc-set.mjs" . --base origin/main
 
+# 定稿前：严格检查本次功能/模块的三层正文与适用 ASCII 图。
+# 没有 --base 时 --design 检查全部当前功能/模块；旧文档不会被改写。
+node "$SKILL_DIR/scripts/check-doc-set.mjs" . --base origin/main --design
+
 # 可选严格交付：受影响文档已确认、实现完成、匹配当前代码基线的证据通过。
 node "$SKILL_DIR/scripts/check-doc-set.mjs" . --base origin/main --release
 
@@ -166,9 +172,17 @@ node "$SKILL_DIR/scripts/check.mjs"
 
 普通 Markdown、项目规则和受管文档目录不进入“代码快照/全量代码阅读”的分母，避免生成文档改变自己的基线；它们仍要按工作流程阅读与核对。无 Git 时使用文件系统盘点，**不声称解析了 `.gitignore`**。符号链接、子模块和被排除生成物在报告中披露；需纳入时作为明确子范围另行分析，不静默跟随。
 
+### 设计正文检查与旧文档兼容
+
+新 feature/module 使用 `Design-Format: layered-v1`：需求层有验收，概要有处理流程和数据流，详细设计有状态转换或具体不适用理由。章节可用项目语言，通过稳定标记识别。pending 在草稿中提示，在 accepted/严格检查中不能冒充完整。
+
+普通检查对未改的无格式旧文档仅报告缺口；`--base` 检测到新文档或实质设计变化时按新格式检查。定稿用 `--base REF --design` 聚焦本次，不自动重写历史。不添加新的项目配置开关，不覆盖 .doc-driven.json。`stats.design` 与安装/证据状态分开，结构通过不证明图正确或讨论真实发生。完整约定见 [DESIGN.md](DESIGN.md)。
+
 ## 6. 检查能够与不能证明的事
 
 脚本能核对当前受管功能/模块的领域目录形状（不推断领域是否正确），检查标识是否重复、链接目标是否存在、当前主要归属是否冲突、提案是否引用过时修订、重要条目是否关联证据、阅读记录是否仍匹配文件哈希。
+
+设计正文检查只核三层骨架、验收入口、简单占位、图容器及引用；不证明状态转换合理、异常分支穷尽、图文代码一致或模型主动思考。
 
 它不能证明模型确实读懂了源码、人的批准真实、命令真的执行、算法正确或性能达标；不解析语言符号/配置字段、不校验 Markdown 标题锚点或联网检查链接。Markdown 检查支持常见内联/引用式路径，复杂 HTML/自定义扩展需用项目自己的文档工具。
 
@@ -178,6 +192,6 @@ CI 中可以使用这些脚本作底线，再配合项目测试、审阅权限�
 
 ## 7. 包内资料
 
-[SKILL.md](SKILL.md) 是模型入口；[REFERENCE.md](REFERENCE.md) 是字段与核对规则；[ADOPTION.md](ADOPTION.md) 是两种接管流程；[FORMATS/](FORMATS/) 是按需模板；[examples/scenarios.md](examples/scenarios.md) 展示具体文档及评估场景；[scripts/](scripts/) 是本地工具；[tests/run.mjs](tests/run.mjs) 是隔离测试。
+[SKILL.md](SKILL.md) 是模型入口；[DESIGN.md](DESIGN.md) 规定共同设计与 ASCII 图；[REFERENCE.md](REFERENCE.md) 是字段与核对规则；[ADOPTION.md](ADOPTION.md) 是两种接管流程；[FORMATS/](FORMATS/) 是按需模板；[examples/scenarios.md](examples/scenarios.md) 展示具体文档及评估场景；[scripts/](scripts/) 是本地工具；[tests/run.mjs](tests/run.mjs) 是隔离测试。
 
 [INSTALL.md](INSTALL.md) 说明安全安装、升级、卸载和两层生效检查；[CHANGELOG.md](CHANGELOG.md) 列出删减、迁移和机制变化；[TESTING.md](TESTING.md) 记录本次实际验证及未验证范围；[LICENSE](LICENSE) 与 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 保留原始许可与归属。
