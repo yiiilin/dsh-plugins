@@ -8,7 +8,7 @@ const { Config, apply, blankOptionalArgNormalizer } = await import(pathToFileURL
 
 const credentials = { resolve: async () => ({ value: "test-key" }) };
 
-function mount(models, attachments) {
+function mount(models, attachments, providerOptions = {}) {
   let adapter;
   const ctx = {
     llm: {
@@ -42,6 +42,7 @@ function mount(models, attachments) {
       baseURL: "https://sub2api.yiln.de/v1",
       reasoning: "max",
       models,
+      ...providerOptions,
     },
   } }));
   assert.ok(adapter, "the fork must register an adapter");
@@ -335,6 +336,80 @@ function responsesStream(events) {
   const body = events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
   return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
+
+function continuousResponsesStream(intervalMs = 5, signal) {
+  const encoder = new TextEncoder();
+  let timer;
+  let controllerRef;
+  const stop = () => {
+    clearInterval(timer);
+    try {
+      controllerRef?.close();
+    } catch {}
+  };
+  const stream = new ReadableStream({
+    start(controller) {
+      controllerRef = controller;
+      signal?.addEventListener("abort", stop, { once: true });
+      const push = (type, data) => controller.enqueue(encoder.encode(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`));
+      push("response.created", { response: { id: "resp-continuous" } });
+      push("response.output_item.added", {
+        output_index: 0,
+        item: {
+          type: "function_call",
+          id: "fc-continuous",
+          call_id: "call-continuous",
+          name: "bash",
+          arguments: "",
+        },
+      });
+      timer = setInterval(() => push("response.function_call_arguments.delta", {
+        output_index: 0,
+        item_id: "fc-continuous",
+        delta: "x",
+      }), intervalMs);
+    },
+    cancel() {
+      stop();
+    },
+  });
+  return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
+}
+
+test("enforces total timeout while tool-call deltas keep arriving", async () => {
+  const adapter = mount([{ ...commonModel, id: "gpt-5.6-luna" }], undefined, {
+    streamIdleTimeoutMs: 1000,
+    totalTimeoutMs: 50,
+  });
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  let consume;
+  globalThis.fetch = async (_url, init) => continuousResponsesStream(5, init.signal);
+  try {
+    consume = (async () => {
+      for await (const _chunk of adapter.stream({
+        provider: "sub2api-gpt",
+        model: "gpt-5.6-luna",
+        messages: [userMessage()],
+        signal: controller.signal,
+      })) {}
+    })();
+    let timer;
+    const result = await Promise.race([
+      consume.then(() => ({ kind: "completed" }), (error) => ({ kind: "error", error })),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve({ kind: "test-timeout" }), 300);
+      }),
+    ]);
+    clearTimeout(timer);
+    assert.equal(result.kind, "error", "the total deadline must finish the stream before the test guard");
+    assert.match(result.error.message, /total timeout/i);
+  } finally {
+    controller.abort();
+    await consume?.catch(() => {});
+    globalThis.fetch = originalFetch;
+  }
+});
 
 async function streamToolCall(adapter, item) {
   const originalFetch = globalThis.fetch;

@@ -3,7 +3,7 @@ import * as dshLlm from "@deepseek-ai/dsh-llm";
 import * as dshSettings from "@deepseek-ai/dsh-settings";
 import { createModels, createProvider, getSupportedThinkingLevels, isContextOverflow, clampThinkingLevel } from "@earendil-works/pi-ai";
 import { buildBaseOptions } from "@earendil-works/pi-ai/api/simple-options";
-import { MAX_TIMER_DELAY_MS, idleWatchdog, timeoutOf } from "@deepseek-ai/dsh-timeout";
+import { MAX_TIMER_DELAY_MS, deadline, idleWatchdog, timeoutOf } from "@deepseek-ai/dsh-timeout";
 import z from "@deepseek-ai/schemastery";
 import { credentialKey, credentialKeyId, credentialKeyScope, credentialRef, isCredentialKeySegment, isCredentialRefName } from "@deepseek-ai/dsh-credentials";
 import { builtinProviders, getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
@@ -970,6 +970,9 @@ function buildProvider(spec) {
 */
 /** Default maximum idle interval while an adapter stream read is outstanding. */
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 3e5;
+/** Default wall-clock bound for one model stream, including active output. */
+const DEFAULT_TOTAL_TIMEOUT_MS = 3e5;
+const TOTAL_TIMEOUT_CODE = "LLM_TOTAL_TIMEOUT";
 /**
 * Default request-level bound on base64-encoded image payload. Every image in
 * history is re-encoded into every request body, so an unbounded conversation
@@ -1103,6 +1106,7 @@ const profile = z.object({
 		"auto"
 	]),
 	timeoutMs: z.natural(),
+	totalTimeoutMs: z.number().step(1).min(1).max(MAX_TIMER_DELAY_MS).default(DEFAULT_TOTAL_TIMEOUT_MS),
 	websocketConnectTimeoutMs: z.natural(),
 	streamIdleTimeoutMs: z.number().min(Number.MIN_VALUE).max(MAX_TIMER_DELAY_MS).default(DEFAULT_STREAM_IDLE_TIMEOUT_MS),
 	maxRequestImageBytes: z.number().step(1).min(1).default(DEFAULT_MAX_REQUEST_IMAGE_BYTES),
@@ -1161,6 +1165,8 @@ function resolveProfiles(providers, validation = "strict") {
 		assertValidHeaders(provider, source.headers);
 		const streamIdleTimeoutMs = source.streamIdleTimeoutMs ?? 3e5;
 		if (!Number.isFinite(streamIdleTimeoutMs) || streamIdleTimeoutMs <= 0 || streamIdleTimeoutMs > MAX_TIMER_DELAY_MS) throw new Error(`llm-pi-ai: provider "${provider}" streamIdleTimeoutMs must be a positive finite number no greater than ${MAX_TIMER_DELAY_MS}`);
+		const totalTimeoutMs = source.totalTimeoutMs ?? DEFAULT_TOTAL_TIMEOUT_MS;
+		if (!Number.isSafeInteger(totalTimeoutMs) || totalTimeoutMs <= 0 || totalTimeoutMs > MAX_TIMER_DELAY_MS) throw new Error(`llm-pi-ai: provider "${provider}" totalTimeoutMs must be a positive safe integer no greater than ${MAX_TIMER_DELAY_MS}`);
 		const maxRequestImageBytes = source.maxRequestImageBytes ?? 20971520;
 		if (!Number.isInteger(maxRequestImageBytes) || maxRequestImageBytes <= 0) throw new Error(`llm-pi-ai: provider "${provider}" maxRequestImageBytes must be a positive integer`);
 		const requestImagePixelBudget = source.requestImagePixelBudget ?? 4194304;
@@ -1205,6 +1211,7 @@ function resolveProfiles(providers, validation = "strict") {
 			displayName,
 			...apiKeyEnv === void 0 ? {} : { apiKeyEnv: credentialRef(apiKeyEnv) },
 			streamIdleTimeoutMs,
+			totalTimeoutMs,
 			maxRequestImageBytes,
 			requestImagePixelBudget,
 			requestImageMaxBytes,
@@ -1854,10 +1861,35 @@ function profileOptions(profile, reasoning, apiKey) {
 		maxRetries: 0
 	};
 }
+/* Keep active model streams bounded even when they continue emitting deltas. */
+function nextWithSignal(watchdog, iterator, signal) {
+	if (signal.aborted) return Promise.reject(signal.reason ?? new Error("LLM stream aborted"));
+	let onAbort;
+	const aborted = new Promise((_, reject) => {
+		onAbort = () => reject(signal.reason ?? new Error("LLM stream aborted"));
+		signal.addEventListener("abort", onAbort, { once: true });
+	});
+	return Promise.race([watchdog.next(iterator), aborted]).finally(() => {
+		if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
+	});
+}
+async function closeStreamIterator(iterator, signal) {
+	let closing;
+	try {
+		closing = iterator.return?.(void 0);
+	} catch {}
+	if (signal.aborted) {
+		void Promise.resolve(closing).catch(() => {});
+		return;
+	}
+	try {
+		await closing;
+	} catch {}
+}
 /**
-* The profile default this exact model can actually take, for DESCRIBING it.
-* A configured level the model does not support yields none rather than
-* throwing: `resolveModel` builds the model catalog, and a catalog that fails
+ * The profile default this exact model can actually take, for DESCRIBING it.
+ * A configured level the model does not support yields none rather than
+ * throwing: `resolveModel` builds the model catalog, and a catalog that fails
 * takes its whole provider out of every picker — so one mis-set profile field
 * would hide every model on the route, including the ones that support the
 * level. The request path still refuses, which is where a bad configuration
@@ -2022,8 +2054,11 @@ var PiAiAdapter = class extends LlmAdapter {
 			const apiKey = await this.config.resolveApiKey(options.provider, profile);
 			const consumer = new AbortController();
 			const upstream = options.signal === void 0 ? consumer.signal : AbortSignal.any([options.signal, consumer.signal]);
+			const totalTimeoutMs = profile.totalTimeoutMs;
+			const callDeadline = __addDisposableResource(env_1, deadline(upstream, totalTimeoutMs, TOTAL_TIMEOUT_CODE), false);
+			const streamSignal = callDeadline.signal;
 			const streamIdleTimeoutMs = profile.streamIdleTimeoutMs;
-			const watchdog = __addDisposableResource(env_1, idleWatchdog(upstream, streamIdleTimeoutMs, "LLM_STREAM_IDLE_TIMEOUT"), false);
+			const watchdog = __addDisposableResource(env_1, idleWatchdog(streamSignal, streamIdleTimeoutMs, "LLM_STREAM_IDLE_TIMEOUT"), false);
 			try {
 				const containsImage = options.messages.some((message) => contentHasImage(message.content));
 				if (containsImage && !model.input.includes("image")) throw new LlmError(`pi-ai model "${model.id}" does not support image input`, "UNSUPPORTED_CONTENT");
@@ -2036,13 +2071,12 @@ var PiAiAdapter = class extends LlmAdapter {
 						reason
 					});
 				};
-				const context = attachments === void 0 ? toPiContext(options, void 0, onReplayDegrade) : await toPiContext({
-					...options,
-					signal: watchdog.signal
-				}, attachments, onReplayDegrade, profile.maxRequestImageBytes, {
+				const requestOptions = { ...options, signal: watchdog.signal };
+				const context = attachments === void 0 ? toPiContext(requestOptions, void 0, onReplayDegrade) : await toPiContext(requestOptions, attachments, onReplayDegrade, profile.maxRequestImageBytes, {
 					maxPixels: profile.requestImagePixelBudget,
 					maxBytes: profile.requestImageMaxBytes
 				});
+				watchdog.signal.throwIfAborted();
 				const iterator = toStreamChunks(snapshot.models.streamSimple(model, context, {
 					...profileOptions(profile, reasoning, apiKey),
 					...options.temperature === void 0 ? {} : { temperature: options.temperature },
@@ -2054,9 +2088,11 @@ var PiAiAdapter = class extends LlmAdapter {
 				let exhausted = false;
 				try {
 					while (true) {
-						const result = await watchdog.next(iterator);
-						const timeout = timeoutOf(watchdog.signal, "LLM_STREAM_IDLE_TIMEOUT");
-						if (timeout !== void 0) throw timeout;
+						const result = await nextWithSignal(watchdog, iterator, watchdog.signal);
+						const totalTimeout = timeoutOf(callDeadline.signal, TOTAL_TIMEOUT_CODE);
+						if (totalTimeout !== void 0) throw totalTimeout;
+						const idleTimeout = timeoutOf(watchdog.signal, "LLM_STREAM_IDLE_TIMEOUT");
+						if (idleTimeout !== void 0) throw idleTimeout;
 						if (result.done) {
 							exhausted = true;
 							return;
@@ -2066,13 +2102,14 @@ var PiAiAdapter = class extends LlmAdapter {
 				} finally {
 					if (!exhausted) {
 						consumer.abort("pi-ai stream consumer stopped");
-						try {
-							await iterator.return(void 0);
-						} catch (_abortedSdkTeardown) {}
+						await closeStreamIterator(iterator, watchdog.signal);
 					}
 				}
 			} catch (error) {
-				if (timeoutOf(watchdog.signal, "LLM_STREAM_IDLE_TIMEOUT") !== void 0) throw new LlmError(`pi-ai stream idle timeout after ${streamIdleTimeoutMs}ms`, "TIMEOUT", { cause: error });
+				const totalTimeout = timeoutOf(callDeadline.signal, TOTAL_TIMEOUT_CODE);
+				if (totalTimeout !== void 0) throw new LlmError(`pi-ai total timeout after ${totalTimeoutMs}ms`, "TIMEOUT", { cause: error });
+				const idleTimeout = timeoutOf(watchdog.signal, "LLM_STREAM_IDLE_TIMEOUT");
+				if (idleTimeout !== void 0) throw new LlmError(`pi-ai stream idle timeout after ${streamIdleTimeoutMs}ms`, "TIMEOUT", { cause: error });
 				if (options.signal?.aborted) throw new LlmError("pi-ai request aborted by caller", "ABORTED", { cause: error });
 				throw error;
 			} finally {

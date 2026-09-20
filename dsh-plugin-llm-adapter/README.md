@@ -44,6 +44,19 @@ history for pi-ai models. The Settings Models extension tolerates the current
 upstream editor signature and uses the Settings Remote operations; changes reach
 the next request without replacing the provider route.
 
+The adapter keeps the upstream `timeoutMs` semantics for the initial provider request and adds an independent wall-clock limit for the complete model stream:
+
+```yaml
+llm-pi-ai:
+  providers:
+    sub2api-gpt:
+      timeoutMs: 30000            # wait for the response headers
+      streamIdleTimeoutMs: 90000  # fail after a silent stream gap
+      totalTimeoutMs: 300000      # fail the complete model call after 5 minutes
+```
+
+`totalTimeoutMs` defaults to five minutes and still applies while tool-call argument deltas are arriving. When it expires, the adapter aborts the provider stream, closes the iterator without waiting indefinitely for provider cleanup, and returns a `TIMEOUT` failure. The normal DSH retry policy still decides whether that failure is retried.
+
 ## `dropArgumentFillers`
 
 Some models answer with **every** property their tool schema advertises instead of only the ones they mean. `gpt-5.6-luna` is one: it sends `justification: ""` next to a `sandbox_permissions` it never intended to use, and `provider: ""` / `model: ""` on delegation tools.
@@ -70,8 +83,9 @@ The flag is off by default and belongs on the model that has the habit, not on t
 
 ## Catalog and Settings editor resilience
 
-Two behaviours changed in 0.5.0:
+Two behaviours changed in 0.6.0:
 
+- Every model stream now has a five-minute wall-clock deadline by default, including streams that continue emitting tool-call arguments. Configure `totalTimeoutMs` per provider to change it; the existing `timeoutMs` remains the initial response-header timeout.
 - A provider whose stored catalog disagrees with the installed one — a
   `modelOverrides` entry naming a model the catalog no longer describes, or a
   compatibility field the provider cannot offer — no longer fails the whole
@@ -97,4 +111,4 @@ The Host bundle patch replaces the stock `llm-pi-ai` row by id and injects the m
 
 `priority` only has an effect when the upstream gateway implements the OpenAI Responses `service_tier` field. The adapter cannot create priority capacity that the gateway does not provide.
 
-The published package is `@yiln-dsh/dsh-plugin-llm-adapter@0.5.0`.
+The published package is `@yiln-dsh/dsh-plugin-llm-adapter@0.6.0`.
