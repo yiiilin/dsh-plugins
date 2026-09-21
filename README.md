@@ -71,17 +71,17 @@ The published bundle plugins in the `yiln-dsh` organization currently use:
 
 | Package | Version |
 | --- | --- |
-| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.10.0` |
-| `@yiln-dsh/dsh-plugin-delete-session` | `0.4.2` |
-| `@yiln-dsh/dsh-plugin-file-message` | `0.3.3` |
-| `@yiln-dsh/dsh-plugin-git-graph` | `0.2.0` |
-| `@yiln-dsh/dsh-plugin-loopx-view` | `0.1.0` |
-| `@yiln-dsh/dsh-plugin-llm-adapter` | `0.6.0` |
-| `@yiln-dsh/dsh-plugin-web-daemon` | `0.8.0` |
-| `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.11` |
-| `@yiln-dsh/dsh-plugin-web-browser` | `0.1.5` |
+| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.10.1` |
+| `@yiln-dsh/dsh-plugin-delete-session` | `0.4.3` |
+| `@yiln-dsh/dsh-plugin-file-message` | `0.3.4` |
+| `@yiln-dsh/dsh-plugin-git-graph` | `0.2.1` |
+| `@yiln-dsh/dsh-plugin-loopx-view` | `0.1.1` |
+| `@yiln-dsh/dsh-plugin-llm-adapter` | `0.6.1` |
+| `@yiln-dsh/dsh-plugin-web-daemon` | `0.8.1` |
+| `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.12` |
+| `@yiln-dsh/dsh-plugin-web-browser` | `0.1.6` |
 | `@yiln-dsh/dsh-plugin-session-list-cache` | `0.1.1` |
-| `@yiln-dsh/dsh-plugin-voice-input` | `0.1.3` |
+| `@yiln-dsh/dsh-plugin-voice-input` | `0.1.4` |
 
 Each plugin's version is the `version` field in its own `package.json`.
 Semantic versioning is recommended: patch for fixes, minor for additive
@@ -90,6 +90,9 @@ features, major for breaking changes.
 The version controls npm ranges, tarball file names, and package metadata.
 A `file:` source install uses the source tree as-is. A direct GitHub install
 is pinned by the commit or branch after `#`, not by `package.json` alone.
+
+See [`COMPATIBILITY.md`](./COMPATIBILITY.md) for the tested DSH package lines,
+the rc.2/alpha.2 compatibility seams, and the release smoke checks.
 
 ## Distributing a plugin
 

@@ -9,6 +9,7 @@ Owns: —
 Implementation: missing
 Verification: not-run
 Design-Format: layered-v1
+Evidence-Format: bound-v1
 
 ## 摘要
 
@@ -157,6 +158,9 @@ D-DEMO-IMPORT-003：故障后执行权如何回收，未知提交怎样得到确
 
 ### E-DEMO-IMPORT-001 场景验证计划
 Covers: R-DEMO-IMPORT-001, R-DEMO-IMPORT-002, C-DEMO-IMPORT-001
+Kind: verification
+Spec-Refs: unknown
+Environment: unknown
 Method: 在隔离存储环境覆盖非法末行、并发相同请求、提交后丢响应和重启核对；具体命令待实现后确定。
 Result: not-run
 Baseline: unknown

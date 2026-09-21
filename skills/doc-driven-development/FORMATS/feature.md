@@ -15,6 +15,7 @@ Baseline: unknown
 Owns: src/example/**
 Implementation: missing
 Verification: not-run
+Evidence-Format: bound-v1
 Design-Format: layered-v1
 
 ## 摘要
@@ -94,6 +95,9 @@ D-EXAMPLE-001：具体场景、选项、推荐、理由、代价、影响、确�
 
 ### E-EXAMPLE-001 核对记录
 Covers: R-EXAMPLE-001, C-EXAMPLE-001
+Kind: verification
+Spec-Refs: unknown
+Environment: unknown
 Method: 待替换为实际测试命令、人工步骤或测量方法
 Result: not-run
 Baseline: unknown
@@ -104,3 +108,5 @@ Detail: 尚未执行，不宣称通过。
 ````
 
 pending 是真实草稿缺口，不能原样作为完成设计；定稿前沿图走查并运行定稿检查。无状态说明依据，复用图用 ref。获批后补真实 Approval/Approved revision；实现、验证分别更新。字段见 [REFERENCE.md](../REFERENCE.md)。
+
+每轮明确决定立即小范围记入当前提案/草稿，不等定稿。实施前真实评审并按 [REFERENCE.md](../REFERENCE.md) 保存 `Kind: design-review` 的 E 记录；这不是批准或测试。新通过证据须绑定真实规格修订/指纹与代码基线，并说明环境；上下文刷新见 [CONTEXT.md](../CONTEXT.md)。不要让旧 passed 自动沿用新正文。

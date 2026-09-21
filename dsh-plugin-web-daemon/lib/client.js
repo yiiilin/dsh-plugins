@@ -670,11 +670,24 @@ window.__ModuleLoader__.load({
 				inject: () => ({}),
 			}, ServerStatus));
 			const WebDaemonCard = createWebDaemonCard(t);
-			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
-				name: "settings.plugin.item",
-				key: "web-daemon",
-				inject: () => ({ timer })
-			}, WebDaemonCard));
+			const registerSettingsCard = (name) => slots.inject(name, () => slots.register(
+				name === "plugins.item"
+					? {
+						name,
+						id: "web-daemon",
+						order: 110,
+						label: () => t("daemon.title"),
+						inject: () => ({ timer }),
+					}
+					: {
+						name,
+						key: "web-daemon",
+						inject: () => ({ timer }),
+					},
+				WebDaemonCard,
+			));
+			registerSettingsCard("settings.plugin.item");
+			registerSettingsCard("plugins.item");
 		}
 
 		exports.apply = apply;

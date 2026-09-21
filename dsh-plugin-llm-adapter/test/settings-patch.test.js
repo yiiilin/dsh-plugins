@@ -27,6 +27,52 @@ test("patches the upstream Models editor with provider-wide model controls", () 
   assert.ok(patched.indexOf("function LlmAdapterModelFields") < patched.indexOf("function ModelListEditor"));
 });
 
+const ALPHA_MODELS_BUNDLE = String.raw`
+const EN = { maxTokensPlaceholder: "Uses the provider default", };
+const ZH = { maxTokensPlaceholder: "使用提供方默认值", };
+const ModelsSection_module_css_default = {};
+function ModelRow(props) {
+	const { model, position, t, disabled } = props;
+	return (0, react_jsx_runtime.jsxs)("div", { children: [props.expanded ? (0, react_jsx_runtime.jsxs)("div", {
+		className: ModelsSection_module_css_default["modelAdvanced"],
+		children: [(0, react_jsx_runtime.jsx)(ModelInputTypes, {
+			model,
+			field: props.inputField,
+			position,
+			fallback: props.inputFallback,
+			disabled,
+			t,
+			onChange: props.onChange
+		})]
+	}) : null] });
+}
+		//#endregion
+function ModelListEditor(props) {
+	const { models, onChange, probe, operations, t, disabled } = props;
+	const { catalogProvider } = props;
+	const rows = models.map((model, index) => (0, react_jsx_runtime.jsx)(ModelRow, {
+		model,
+		position: index + 1,
+	}));
+	const catalogProps = {
+		models,
+		overridden: modelsOverridden,
+		t,
+	};
+}
+`;
+
+test("patches the alpha Models editor shape", () => {
+  const patched = patchModelsSettingsClient(ALPHA_MODELS_BUNDLE);
+  assert.notEqual(patched, null);
+  new vm.Script(patched);
+  assert.match(patched, /function LlmAdapterModelFields/u);
+  assert.match(patched, /adapterControls: true, defaultReasoning, defaultServiceTier/u);
+  assert.match(patched, /update\(index, "serviceTier"/u);
+  assert.match(patched, /update\(index, "reasoningEffort"/u);
+  assert.match(patched, /fastInherited/u);
+});
+
 
 test("rebuilds the combo bundle and restores the source on disposal", () => {
   const directory = mkdtempSync(join(process.cwd(), ".tmp-llm-settings-patch-"));

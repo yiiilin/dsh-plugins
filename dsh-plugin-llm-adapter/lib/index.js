@@ -30,7 +30,6 @@ const {
 	isContextWindowExceededError,
 	isQuotaExceededError,
 	normalizeApiKey,
-	offloadRequestImagesWithPolicy,
 	requestImageHandleText,
 	resolveRetryPolicy,
 } = dshLlm;
@@ -40,6 +39,90 @@ const CallId = typeof dshLlm.ToolCallId === "function"
 	: typeof dshLlm.CallId === "function"
 		? dshLlm.CallId
 		: (value) => value;
+
+function imageBase64Length(bytes) {
+	return Math.ceil(bytes / 3) * 4;
+}
+
+function imagePrefixCount(lengths, policy) {
+	const total = lengths.reduce((sum, bytes) => sum + bytes, 0);
+	const excessCount = policy.maxImages === undefined ? 0 : Math.max(0, lengths.length - policy.maxImages);
+	const excessBytes = policy.maxBytes === undefined ? 0 : Math.max(0, total - policy.maxBytes);
+	if (excessCount === 0 && excessBytes === 0) return 0;
+	const countQuantum = policy.countQuantum ?? 1;
+	const byteQuantum = policy.byteQuantum ?? 1;
+	const removeCount = excessCount === 0 ? 0 : Math.ceil(excessCount / countQuantum) * countQuantum;
+	const removeBytes = excessBytes === 0 ? 0 : Math.ceil(excessBytes / byteQuantum) * byteQuantum;
+	let count = 0;
+	let removedBytes = 0;
+	for (const imageBytes of lengths) {
+		const byteTargetMet = removeBytes === 0
+			|| (byteQuantum === 1 ? removedBytes >= removeBytes : removedBytes > removeBytes);
+		if (count >= removeCount && byteTargetMet) break;
+		removedBytes += imageBytes;
+		count += 1;
+	}
+	return count;
+}
+
+function collectImageLengths(blocks, lengths, policy) {
+	for (const block of blocks) {
+		if (block.type === "image") {
+			const bytes = typeof policy.byteLength === "function"
+				? policy.byteLength(block.attachment)
+				: block.attachment.bytes;
+			lengths.push(policy.representation === "base64" ? imageBase64Length(bytes) : bytes);
+		} else if (block.type === "tool-result") {
+			collectImageLengths(block.content, lengths, policy);
+		}
+	}
+}
+
+function replaceOldestImages(blocks, remaining, placeholder) {
+	let next;
+	for (const [index, block] of blocks.entries()) {
+		if (block.type === "image" && remaining.count > 0) {
+			remaining.count -= 1;
+			next ??= blocks.slice(0, index);
+			next.push({ type: "text", text: placeholder(block.attachment) });
+			continue;
+		}
+		if (block.type === "tool-result") {
+			const content = replaceOldestImages(block.content, remaining, placeholder);
+			if (content !== block.content) {
+				next ??= blocks.slice(0, index);
+				next.push({ ...block, content });
+				continue;
+			}
+		}
+		next?.push(block);
+	}
+	return next ?? blocks;
+}
+
+function localOffloadRequestImages(messages, policy) {
+	const lengths = [];
+	for (const message of messages) collectImageLengths(message.content, lengths, policy);
+	const count = imagePrefixCount(lengths, policy);
+	if (count === 0) return messages;
+	const placeholder = policy.placeholder
+		?? (typeof dshLlm.offloadedImageText === "function" ? dshLlm.offloadedImageText : (ref) => `Image omitted: ${ref.name ?? ref.attachmentId}`);
+	const remaining = { count };
+	return messages.map((message) => {
+		const content = replaceOldestImages(message.content, remaining, placeholder);
+		return content === message.content ? message : { ...message, content };
+	});
+}
+
+function offloadRequestImages(messages, policy) {
+	const placeholder = policy.placeholder
+		?? (typeof dshLlm.offloadedImageText === "function" ? dshLlm.offloadedImageText : undefined);
+	const upstream = dshLlm.offloadRequestImagesWithPolicy;
+	if (typeof upstream === "function") {
+		return upstream(messages, placeholder === undefined ? policy : { ...policy, placeholder });
+	}
+	return localOffloadRequestImages(messages, policy);
+}
 
 function deepEqualJson(left, right) {
 	if (Object.is(left, right)) return true;
@@ -1387,14 +1470,14 @@ async function toPiContextWithImages(options, attachments, onReplayDegrade, maxR
 }) {
 	assertSupportedImageRoles(options.messages);
 	const split = splitSystemPrompt(options);
-	const requestMessages = offloadRequestImagesWithPolicy(split.messages, {
+	const requestMessages = offloadRequestImages(split.messages, {
 		representation: "base64",
 		...maxRequestImageBytes === void 0 ? {} : { maxBytes: maxRequestImageBytes },
 		byteQuantum: 1,
 		byteLength: (ref) => Math.min(ref.bytes, requestImagePolicy.maxBytes)
 	});
 	const requestImages = await prepareRequestImages(requestMessages, attachments, requestImagePolicy, options.signal);
-	const exactMessages = offloadRequestImagesWithPolicy(requestMessages, {
+	const exactMessages = offloadRequestImages(requestMessages, {
 		representation: "base64",
 		...maxRequestImageBytes === void 0 ? {} : { maxBytes: maxRequestImageBytes },
 		byteQuantum: 1,

@@ -15,14 +15,18 @@ Targets: docs/domains/example-domain/features/example.md@1
 Affects: src/example/**
 Implementation: missing
 Verification: not-run
+Evidence-Format: bound-v1
 Approval: none
 
 ## 为什么改
 问题、目标与明确不做的事。
 
-## 讨论与探索结果
+## 决定与继续入口（边讨论边更新）
 已查明事实、发现的矛盾/缺口、具体场景、推荐与代价。
-记录已确认结论及来源、尚需裁决的部分；已批准的整理不重复请示。
+D-EXAMPLE-001：场景、决定、适用边界/例外、理由、确认来源、是否授权实施、尚需裁决的部分。
+每次明确确认/撤回/范围变化本轮即记录并给保存回执；写前核对外部修改。
+已读材料及修订/指纹、上次核对时间/范围、下一步；快照只证明文件版本不证明已读。
+已批准的整理不重复请示，不将未确认事项写成已定；解释性对话没有新决定不强制写入。
 没有真实待决问题时简述依据，不制造问卷。
 
 ## 契约差异
@@ -44,3 +48,5 @@ Approval: none
 新建目标用 `@new`，并明确计划的路径。`Targets` 中的修订号锁定评审基线；目标变更后应重新对比，不能悄悄覆盖。
 
 确认后在本提案记录 `Approval` 与 `Approved revision`。实现及核对后更新当前文档，保留真实批准来源；本提案标 `superseded`，用 `Superseded by` 指向当前文档，并在正文列出全部合入结果。不要让当前文档只能靠读一串历史提案才能理解。
+
+每轮明确决定立即小范围记入当前提案/草稿，不等定稿。实施前真实评审并按 [REFERENCE.md](../REFERENCE.md) 保存 `Kind: design-review` 的 E 记录；这不是批准或测试。新通过证据须绑定真实规格修订/指纹与代码基线，并说明环境；上下文刷新见 [CONTEXT.md](../CONTEXT.md)。不要让旧 passed 自动沿用新正文。

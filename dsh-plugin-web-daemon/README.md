@@ -45,7 +45,7 @@ A record is only discarded when its session is genuinely gone: if the persistenc
 - A resumed session restores its transcript and Agent. If the previous process stopped while the session was marked running, the plugin queues one internal recovery notice to continue it. Tool calls marked as unknown are explicitly left for the model to verify before retrying.
 - A running subagent child is re-attached to its parent with the same continuation notice, because a restart kills the child too and its in-flight turn is just as interrupted as its parent's. See [Subagent recovery](#subagent-recovery) for what that path can and cannot restore.
 - Registers the `web-daemon` settings namespace in the Host settings service
-  (the card is keyed by that namespace on `settings.plugin.item`).
+  (the card is keyed by that namespace on both the legacy `settings.plugin.item` slot and the newer `plugins.item` slot).
 - The worker runs `dsh web --profile <profile> --no-open --port <port>` bound
   to loopback; LAN exposure is the job of `@yiln-dsh/dsh-plugin-auth-webserver`.
 - The unit gets `DSH_WEB_DAEMON_WORKER=1`; a daemonized GUI detects this and
@@ -62,7 +62,7 @@ A record is only discarded when its session is genuinely gone: if the persistenc
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.8.0`.
+The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.8.1`.
 
 ### npm package
 

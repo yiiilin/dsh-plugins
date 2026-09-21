@@ -606,6 +606,7 @@ export function apply(ctx, config = {}) {
   ctx.effect(() => webServer.registerUpgrade({
     path: WS_PATH,
     handler: (req, socket, head) => {
+      let url
       let sessionId
       try {
         url = new URL(req.url || '', 'http://127.0.0.1')

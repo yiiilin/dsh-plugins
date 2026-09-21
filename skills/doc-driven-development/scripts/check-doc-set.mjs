@@ -11,7 +11,8 @@ import {
 } from './lib.mjs';
 
 import { checkLayout } from './doc-layout.mjs';
-import { DESIGN_FORMAT, designFingerprint, validateDesign } from './design-check.mjs';
+import { DESIGN_FORMAT, designFingerprint, validateDesign, scanDesign } from './design-check.mjs';
+import { EVIDENCE_FORMAT, bindingStatus, parseSpecRefs, contractHash, evidenceSections, meaningful } from './contract.mjs';
 
 const STATUSES = ['observed', 'proposed', 'accepted', 'superseded'];
 const TYPES = ['feature', 'architecture', 'module', 'change', 'adoption', 'verification', 'adr', 'requirements'];
@@ -35,6 +36,10 @@ export function checkRepo(root, config, options = {}) {
   for (const p of legacy) warn(`${p}: legacy header detected; not treated as an approved v0.2 document.`);
   const byId = new Map(), byPath = new Map(docs.map(d => [d.path, d]));
   const definitions = new Map(), evidence = [], bodies = new Map();
+  const bindingCounts = { current: 0, unbound: 0, stale: 0, semantic: 'not-assessed' };
+  // Cache immutable document identities once per check, not once per requirement/evidence pair.
+  const contractHashes = new Map(docs.map(d => [d, contractHash(d)]));
+  const bindingState = (e, d) => bindingStatus(e, d, contractHashes.get(d));
   const owners = [], nameOwners = new Map();
   const addDefinition = (id, info) => {
     if (definitions.has(id)) error(`${info.doc.path}: duplicate item ID ${id}, already defined in ${definitions.get(id).doc.path}`);
@@ -47,6 +52,7 @@ export function checkRepo(root, config, options = {}) {
     for (const k of d.duplicates) error(`${d.path}: duplicate header ${k}`);
     if (!ID.test(h['Doc-ID'] ?? '')) error(`${d.path}: invalid Doc-ID`);
     if (byId.has(h['Doc-ID'])) error(`${d.path}: duplicate Doc-ID ${h['Doc-ID']}`); else byId.set(h['Doc-ID'], d);
+    if (h['Evidence-Format'] && h['Evidence-Format'] !== EVIDENCE_FORMAT) error(`${d.path}: unsupported Evidence-Format ${h['Evidence-Format']}`);
     if (!TYPES.includes(h.Type)) error(`${d.path}: invalid Type ${h.Type}`);
     if (!STATUSES.includes(h.Status)) error(`${d.path}: invalid Status ${h.Status}`);
     if (!/^[1-9]\d*$/.test(h.Revision ?? '')) error(`${d.path}: Revision must be a positive integer`);
@@ -70,13 +76,20 @@ export function checkRepo(root, config, options = {}) {
         else nameOwners.set(name, d.path);
       }
     }
-    const clean = stripFences(d.text), headings = [...clean.matchAll(/^#{1,6}\s+([^\n]+)$/gm)];
+    const scan = scanDesign(d.text), headings = scan.headings;
+    const clean = scan.visible.join('\n');
     if (h.Status !== 'superseded') bodies.set(d.path, clean);
+    const records = evidenceSections(d.text).sections;
     for (let i = 0; i < headings.length; i++) {
-      const item = headings[i][1].match(/^([CRE]-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d+)\b/);
+      const heading = headings[i], item = heading.title.match(/^([CRE]-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d+)\b/);
       if (!item || h.Status === 'superseded') continue;
-      const id = item[1], content = clean.slice(headings[i].index + headings[i][0].length, headings[i + 1]?.index ?? clean.length);
-      const info = { id, doc: d, fields: header(content).fields };
+      const id = item[1];
+      if (/^[RC]-/.test(id) && records.some(e => heading.line > e.start && heading.line < e.end))
+        error(`${d.path}: requirement/constraint ${id} cannot be defined inside excluded evidence records`);
+      const end = headings[i + 1]?.line ?? scan.lines.length;
+      const content = scan.visible.slice(heading.line + 1, end).join('\n');
+      const parsed = header(content), info = { id, doc: d, fields: parsed.fields };
+      for (const key of parsed.duplicates) error(`${d.path}: ${id} duplicate record field ${key}`);
       addDefinition(id, info);
       if (id.startsWith('E-')) evidence.push(info);
     }
@@ -112,6 +125,10 @@ export function checkRepo(root, config, options = {}) {
       }
     }
   }
+  for (const d of docs.filter(d => d.fields.Status !== 'superseded')) for (const id of list(d.fields['Depends on'])) {
+    const target = byId.get(id) ?? definitions.get(id)?.doc;
+    if (!target || target.fields.Status === 'superseded') error(`${d.path}: Depends on missing/current identity: ${id}`);
+  }
   for (const [p, body] of bodies) for (const m of body.matchAll(ITEM))
     if (!definitions.has(m[0])) error(`${p}: undefined requirement/constraint/evidence reference ${m[0]}`);
   for (const e of evidence) {
@@ -127,6 +144,51 @@ export function checkRepo(root, config, options = {}) {
     if (!h.Detail?.trim()) error(`${e.doc.path}: ${e.id} requires Detail`);
     if (h.Result === 'passed' && h.Baseline === 'unknown') error(`${e.doc.path}: ${e.id} cannot pass on an unknown Baseline`);
   }
+  // Evidence is a claim about BOTH a specification revision/content and code baseline.
+  // Legacy records remain readable, but cannot satisfy strict release or review gates.
+  for (const e of evidence) {
+    const h = e.fields, kind = h.Kind ?? 'verification';
+    if (!['verification', 'design-review'].includes(kind)) error(`${e.doc.path}: ${e.id} invalid evidence Kind`);
+    if (kind === 'design-review') {
+      if (['passed', 'failed'].includes(h.Result) && !meaningful(h.Reviewer)) error(`${e.doc.path}: ${e.id} design-review requires Reviewer (self/independent must be honest)`);
+      if ((['passed', 'failed'].includes(h.Result) || meaningful(h['Open blockers'])) && !/^(?:0|[1-9]\d*)$/.test(h['Open blockers'] ?? '')) error(`${e.doc.path}: ${e.id} requires integer Open blockers`);
+      if (h.Result === 'passed' && h['Open blockers'] !== '0') error(`${e.doc.path}: ${e.id} review cannot pass with open blockers`);
+    }
+    if (['passed', 'failed'].includes(h.Result) && meaningful(h['Spec-Refs']) && (!meaningful(h.Method) || !meaningful(h.Detail)))
+      error(`${e.doc.path}: ${e.id} completed bound records require non-placeholder Method and Detail`);
+    if (kind === 'verification' && h.Result === 'passed' && meaningful(h['Spec-Refs']) && !meaningful(h.Environment))
+      error(`${e.doc.path}: ${e.id} bound passed verification requires Environment`);
+    try {
+      const refs = parseSpecRefs(h['Spec-Refs']);
+      for (const ref of refs) {
+        const target = byId.get(ref.id);
+        if (!target || target.fields.Status === 'superseded') error(`${e.doc.path}: ${e.id} Spec-Refs target missing/historical: ${ref.id}`);
+        else if (bindingState(e, target) !== 'current') warn(`${e.doc.path}: ${e.id} stale Spec-Refs for ${ref.id}; re-read/review or rerun, do not just refresh the hash`);
+      }
+      const targets = [...new Set(list(h.Covers).map(id => byId.get(id) ?? definitions.get(id)?.doc).filter(Boolean))];
+      for (const target of targets) {
+        const status = bindingState(e, target);
+        if (status === 'current') bindingCounts.current++; else if (status === 'unbound') bindingCounts.unbound++; else bindingCounts.stale++;
+        if (h.Result === 'passed' && status !== 'current') {
+          warn(`${e.doc.path}: ${e.id} ${status} specification evidence for ${target.fields['Doc-ID']}; not verified against the current contract`);
+        }
+      }
+    } catch (ex) { error(`${e.doc.path}: ${e.id}: ${ex.message}`); }
+  }
+  const requirementsFor = d => {
+    const items = [...definitions.values()].filter(x => x.doc.path === d.path && /^[RC]-/.test(x.id)).map(x => x.id);
+    return items.length ? items : [d.fields['Doc-ID']];
+  };
+  const isBound = (e, d) => { try { return bindingState(e, d) === 'current'; } catch { return false; } };
+  const checkBoundVerification = d => {
+    for (const id of requirementsFor(d)) {
+      const matches = evidence.filter(e => (e.fields.Kind ?? 'verification') === 'verification' && list(e.fields.Covers).includes(id)
+        && e.fields.Baseline === d.fields.Baseline && isBound(e, d));
+      if (!matches.some(e => e.fields.Result === 'passed' && meaningful(e.fields.Environment)))
+        error(`${d.path}: current specification revision/content lacks bound passed evidence for ${id} (Spec-Refs + Environment required)`);
+      if (matches.some(e => e.fields.Result === 'failed')) error(`${d.path}: bound evidence fails ${id}`);
+    }
+  };
   for (const d of docs.filter(d => d.fields.Verification === 'passed' && d.fields.Status !== 'superseded')) {
     if (d.fields.Baseline === 'unknown') error(`${d.path}: Verification passed needs a known Baseline`);
     const requirements = [...definitions.values()].filter(x => x.doc.path === d.path && /^[RC]-/.test(x.id)).map(x => x.id);
@@ -134,11 +196,14 @@ export function checkRepo(root, config, options = {}) {
       error(`${d.path}: passed feature/module/requirements needs at least one numbered requirement or constraint`);
     const needed = requirements.length ? requirements : [d.fields['Doc-ID']];
     for (const id of needed) {
-      const relevant = evidence.filter(e => e.doc.fields.Status !== 'superseded' && list(e.fields.Covers).includes(id) && e.fields.Baseline === d.fields.Baseline);
+      const relevant = evidence.filter(e => (e.fields.Kind ?? 'verification') === 'verification' && e.doc.fields.Status !== 'superseded' && list(e.fields.Covers).includes(id) && e.fields.Baseline === d.fields.Baseline
+        && (!meaningful(e.fields['Spec-Refs']) || isBound(e, d)));
       if (!relevant.some(e => e.fields.Result === 'passed')) error(`${d.path}: passed lacks matching-baseline passed evidence for ${id}`);
       if (relevant.some(e => e.fields.Result === 'failed')) error(`${d.path}: current evidence fails ${id}, cannot claim Verification passed`);
     }
   }
+  for (const d of docs.filter(d => d.fields.Verification === 'passed' && d.fields.Status !== 'superseded' && (d.fields['Evidence-Format'] === EVIDENCE_FORMAT || evidence.some(e => meaningful(e.fields['Spec-Refs']) && list(e.fields.Covers).some(id => requirementsFor(d).includes(id)))))) checkBoundVerification(d);
+  stats.evidenceBindings = bindingCounts;
   const index = safePath(root, config.index);
   if (!fs.existsSync(index)) error(`${config.index}: missing index; run index.mjs`);
   else {
@@ -191,6 +256,13 @@ export function checkRepo(root, config, options = {}) {
     const ref = resolveBase(root, options.base), changed = changedPaths(root, ref), affected = new Set();
     const prior = docsAtBase(root, config, ref);
     const priorById = new Map(prior.map(d => [d.fields['Doc-ID'], d]));
+    for (const d of docs.filter(d => d.fields.Status !== 'superseded' && !['adoption', 'verification'].includes(d.fields.Type))) {
+      const before = priorById.get(d.fields['Doc-ID']);
+      if (before && contractHash(before) !== contractHash(d) && Number(d.fields.Revision) <= Number(before.fields.Revision)) {
+        const strict = options.release || d.fields['Evidence-Format'] === EVIDENCE_FORMAT;
+        (strict ? error : warn)(`${d.path}: contract content changed without increasing Revision; review/approval/evidence cannot silently carry over`);
+      }
+    }
     for (const d of docs.filter(d => ['feature', 'module'].includes(d.fields.Type) && d.fields.Status !== 'superseded')) {
       const before = priorById.get(d.fields['Doc-ID']);
       if (!before || before.fields.Type !== d.fields.Type || before.fields['Design-Format'] !== d.fields['Design-Format']
@@ -226,6 +298,7 @@ export function checkRepo(root, config, options = {}) {
         if (h.Status !== 'accepted') error(`${p}: release requires accepted, found ${h.Status}`);
         if (h.Implementation !== 'complete') error(`${p}: release requires Implementation complete`);
         if (h.Verification !== 'passed') error(`${p}: release requires Verification passed`);
+        checkBoundVerification(d);
         const currentBaseline = h.Baseline === `snapshot:${inv.snapshot}` || (cleanSource && h.Baseline?.startsWith('git:') && inv.git.head?.startsWith(h.Baseline.slice(4)));
         if (!currentBaseline) error(`${p}: release Baseline does not match the current code snapshot/clean Git HEAD`);
       }
@@ -256,6 +329,24 @@ export function checkRepo(root, config, options = {}) {
   }
   stats.design = { ...designStats, status: !designStats.current ? 'not-assessed' : designStats.incomplete ? 'incomplete' : 'structure-passed', semantic: 'not-assessed' };
 
+  // Explicit pre-implementation review gate; a design review is NOT a behavior test.
+  stats.review = { status: 'not-assessed', checked: 0, semantic: 'not-assessed' };
+  if (options.review) {
+    const scope = docs.filter(d => d.fields.Status !== 'superseded' && ['feature', 'module', 'architecture', 'requirements', 'change'].includes(d.fields.Type)
+      && (!options.base || affectedDesignPaths.has(d.path) || changedDesignPaths.has(d.path)));
+    const cleanCode = inv.git.head && !changedPaths(root, inv.git.head).some(p => candidatePath(p, config));
+    const currentCode = value => value === `snapshot:${inv.snapshot}` || (cleanCode && value?.startsWith('git:') && inv.git.head.startsWith(value.slice(4)));
+    let failures = 0;
+    for (const d of scope) {
+      const reviews = evidence.filter(e => e.fields.Kind === 'design-review' && isBound(e, d) && currentCode(e.fields.Baseline)
+        && list(e.fields.Covers).includes(d.fields['Doc-ID']));
+      if (!reviews.some(e => e.fields.Result === 'passed' && e.fields['Open blockers'] === '0' && meaningful(e.fields.Reviewer))
+        || reviews.some(e => e.fields.Result === 'failed' || Number(e.fields['Open blockers']) > 0)) {
+        error(`${d.path}: --review requires a current spec/code-bound design-review with no unresolved blockers`); failures++;
+      }
+    }
+    stats.review = { status: failures ? 'incomplete' : scope.length ? 'record-structure-passed' : 'not-assessed', checked: scope.length, semantic: 'not-assessed' };
+  }
   if (options.progress) {
     const progress = readJSON(safePath(root, options.progress));
     const issue = options.full ? error : warn;
@@ -293,9 +384,9 @@ export function checkRepo(root, config, options = {}) {
 }
 
 function main() {
-  const args = parseCLI(process.argv.slice(2), { '--json': 'flag', '--base': 'value', '--release': 'flag', '--progress': 'value', '--full': 'flag', '--design': 'flag' });
+  const args = parseCLI(process.argv.slice(2), { '--json': 'flag', '--base': 'value', '--release': 'flag', '--progress': 'value', '--full': 'flag', '--design': 'flag', '--review': 'flag' });
   if (args.flags.help) {
-    console.log('Usage: node check-doc-set.mjs [repo] [--json] [--design] [--base REF [--release]] [--progress docs/adoption/progress.json [--full]]\n--design: strictly check current feature/module design bodies; with --base only the affected scope. Draft gaps remain reportable, not auto-fixed.\nExit 0: structural checks pass (warnings may remain); 1: validation failures; 2: invocation/configuration error.');
+    console.log('Usage: node check-doc-set.mjs [repo] [--json] [--design] [--review] [--base REF [--release]] [--progress docs/adoption/progress.json [--full]]\n--design: strictly check current feature/module design bodies; with --base only the affected scope. Draft gaps remain reportable, not auto-fixed.\n--review: require version-bound design-review records for the selected scope; never invokes a reviewer or proves review quality.\n--release also requires spec-revision/content-bound execution evidence; legacy unbound claims cannot pass.\nExit 0: structural checks pass (warnings may remain); 1: validation failures; 2: invocation/configuration error.');
     return;
   }
   const root = rootDir(args.root), result = checkRepo(root, loadConfig(root), args.flags);

@@ -1446,11 +1446,24 @@ window.__ModuleLoader__.load({
 				priority: -1,
 				order: 0,
 			}, SettingsEditorAction)), "auth-webserver: settings editor action");
-			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
-				name: "settings.plugin.item",
-				key: "auth-webserver",
-				inject: () => ({})
-			}, AuthWebserverCard));
+			const registerSettingsCard = (name) => slots.inject(name, () => slots.register(
+				name === "plugins.item"
+					? {
+						name,
+						id: "auth-webserver",
+						order: 100,
+						label: () => t("card.title"),
+						inject: () => ({}),
+					}
+					: {
+						name,
+						key: "auth-webserver",
+						inject: () => ({}),
+					},
+				AuthWebserverCard,
+			));
+			registerSettingsCard("settings.plugin.item");
+			registerSettingsCard("plugins.item");
 		}
 
 		exports.apply = apply;

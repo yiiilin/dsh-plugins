@@ -819,6 +819,7 @@ window.__ModuleLoader__.load({
         priority: 'extension',
         title: () => t('browser.title'),
         guide: [{
+          id: 'browser',
           order: 31,
           title: () => t('browser.title'),
           description: () => t('browser.guide'),

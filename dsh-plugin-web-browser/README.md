@@ -81,4 +81,4 @@ Restart `dsh web` after installing.
 - `dsh-deeptutor` renders answers to self-contained HTML files (`html` parameter, `html-doc` skill). With `allowFile: true`, those files can be opened directly in this panel.
 - `dsh-plugin-browser-use` drives its own headless Chromium for agent tool calls. Sharing a single browser session between the agent's tools and this visible panel is planned (both speak CDP); in this release they are independent.
 
-The published package is `@yiln-dsh/dsh-plugin-web-browser@0.1.5`.
+The published package is `@yiln-dsh/dsh-plugin-web-browser@0.1.6`.

@@ -508,6 +508,7 @@ window.__ModuleLoader__.load({
         priority: 'extension',
         title: () => t('terminal.title'),
         guide: [{
+          id: 'terminal',
           order: 30,
           title: () => t('terminal.title'),
           description: () => t('terminal.guide'),

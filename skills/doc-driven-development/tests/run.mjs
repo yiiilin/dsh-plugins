@@ -11,6 +11,7 @@ import {
   START, END, parseCLI, header, stripFences, changedPaths, resolveBase, git,
 } from '../scripts/lib.mjs';
 import { checkRepo } from '../scripts/check-doc-set.mjs';
+import { specRef } from '../scripts/contract.mjs';
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DOC = 'docs/features/main.md';
@@ -42,7 +43,7 @@ function cli(name, args, cwd) {
 const fails = (report, part) => assert.ok(report.errors.some(e => e.includes(part)), `${part}\n${JSON.stringify(report, null, 2)}`);
 const ok = report => assert.deepEqual(report.errors, []);
 function evidence(baseline, result = 'passed', covers = 'R-MAIN-001', id = 'E-MAIN-001') {
-  return `${baseBody}\n## Evidence\n\n### ${id} Unit check\nCovers: ${covers}\nMethod: node --test test/main.test.mjs\nResult: ${result}\nBaseline: ${baseline}\nDetail: Synthetic fixture for validating record structure, not an assertion this command ran.\n`;
+  return `${baseBody}\n## Evidence\n\n### ${id} Unit check\nCovers: ${covers}\nMethod: node --test test/main.test.mjs\nResult: ${result}\nBaseline: ${baseline}\nSpec-Refs: ${specRef({fields: header(textDoc()).fields, text: textDoc()})}\nEnvironment: Synthetic isolated Node fixture\nDetail: Synthetic fixture for validating record structure, not an assertion this command ran.\n`;
 }
 function approve(f, baseline) {
   f.doc({ Status: 'accepted', Approval: 'Test fixture: explicit approval of revision 1; not a real project approval.',

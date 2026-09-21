@@ -96,7 +96,7 @@ export function readPackage(root = PACKAGE_ROOT) {
   for (const [p, h] of Object.entries(manifest.files)) if (digest(files.get(p)) !== h) throw new Error(`Package missing or changed: ${p}`);
   for (const p of files.keys()) if (p !== 'package-manifest.json' && !own(manifest.files, p)) throw new Error(`Unexpected source package file: ${p}`);
   for (const [version, hashes] of Object.entries(manifest.predecessors ?? {})) {
-    if (!['0.2.0', '0.2.1', '0.2.2'].includes(version)) throw new Error(`Unsupported unmanaged predecessor: ${version}`);
+    if (!['0.2.0', '0.2.1', '0.2.2', '0.2.3'].includes(version)) throw new Error(`Unsupported unmanaged predecessor: ${version}`);
     hashMap(hashes, `predecessor ${version}`);
   }
   return { files, manifest, hashes: Object.fromEntries([...files].map(([p, r]) => [p, digest(r)])) };
@@ -191,8 +191,13 @@ export function ruleBlock(skill, config) {
 ## 文档驱动开发（项目默认流程）
 本项目使用 doc-driven-development；仅在项目根 \`.doc-driven.json\` 的 \`enabled\` 为 \`true\` 时启用。
 涉及开发、修复、重构和设计恢复，开始前读取仓库相对路径 \`${skill}/SKILL.md\`、\`${config.index}\` 及本次相关规格；不等待用户重复点名。不能读取时说明缺口，不假装已加载。
-主动查找目标、文档与实现中的矛盾、逻辑缺口和隐含假设；能查明的事实先调查，重要问题带具体场景、推荐与代价同使用者探讨，再把结论落成文档。已确认文档可以质疑，不得机械照抄，也不得擅改契约。
+主动查找目标、文档与实现中的矛盾、逻辑缺口和隐含假设；能查明的事实先调查，重要问题带具体场景、推荐与代价同使用者探讨，并在每轮明确决定后立即小范围记录，不能等全部讨论结束或让用户催写。已确认文档可以质疑，不得机械照抄，也不得擅改契约。
 重要需求/技术约束变化取得具体确认后再实现；忠实整理已有批准不重复审批。恢复已确认行为的修复和等价重构不制造无用讨论。
+陌生概念先说明什么时候发生、上下文、期望结果、推荐怎么做和代价，再命名术语；事实由 AI 查证，只将真正需裁决的行为/取舍交给人。
+每轮确认/撤回/范围变更在本轮结束前写入已有提案或草稿，记录场景、边界、理由、来源和未决项并给实际保存回执；保留原生效规格。只读或写入受阻时说明未保存，不能声称记住。
+实施前按风险做设计评审：评审者只读、主 agent 整合，先核实问题，不盲从子 agent；修改后定向复核。无独立评审能力时如实标明自审。
+设计、实施、评审、交付及主题切换前刷新相关文件/工作树版本；上下文和依赖索引仅辅助定位，回读当前原文，过时提案不覆盖生效约束。
+交付必须双向核对要求到实现及代码差异到授权；验证证据绑定规格修订/内容和代码基线，旧证据不得靠刷新哈希冒充重测。
 功能/模块文档保留需求说明、概要设计、详细设计三层；概要用 ASCII 处理流程和数据流，详细设计用状态流转与关键步骤，图后说明条件、归属和异常。按 DESIGN.md 的 layered-v1 模板定稿检查；不适用说明原因，未知不得编成事实。
 代码现状标记 observed，未经确认不改成 accepted；人工改代码也要核对。确认、实现、验证分别记录，未运行测试不写通过。
 创建设计文档前按该 skill 的 LAYOUT.md 确认落点；当前布局策略是 \`${config.layout ?? 'preserve'}\`。新领域的功能/模块分别放在文档根下 domains/<domain>/features/ 和 domains/<domain>/modules/ 内，领域概览不能替代它们；旧目录须映射保留，迁移先确认。
@@ -365,7 +370,7 @@ export function applyPlan(plan, { beforeWrite } = {}) {
 export function probeText() {
   return '请进行一次只读的项目开发规则检查，不修改任何文件，也不运行项目代码。\n'
     + '先列出本会话自动加载的项目规则来源，区分自动加载与本轮主动读取；再按已加载的规则查找当前开发流程与设计文档入口。\n'
-    + '说明：新增一个改变既有行为的功能前要做什么；恢复既定行为的 BUG 修复是否需要重审全部设计；直接改代码后如何处理文档；怎样保留项目原有规范；多领域功能和模块文档应放在哪里、旧布局如何处理；需求含糊或现行文档矛盾时怎样主动讨论而不擅改契约；三层文档、ASCII 处理/数据/状态图各表达什么；不能执行测试时如何报告。\n'
+    + '说明：新增一个改变既有行为的功能前要做什么；恢复既定行为的 BUG 修复是否需要重审全部设计；直接改代码后如何处理文档；怎样保留项目原有规范；多领域功能和模块文档应放在哪里、旧布局如何处理；需求含糊或现行文档矛盾时怎样主动讨论而不擅改契约；三层文档、ASCII 处理/数据/状态图各表达什么；本轮已明确确认但后续仍在讨论时何时保存、如何保留边界；陌生技术概念怎样先用场景解释；如何核实评审意见而不盲从；相关文件中途变化时怎样刷新上下文；需求修订而代码未变时旧证据能否继续使用；不能执行测试时如何报告。\n'
     + '为每项回答指出实际读取的文件和相关段落；无法确认是否自动加载时直说，不根据文件存在猜测。\n';
 }
 function scanRuleFiles(root) {

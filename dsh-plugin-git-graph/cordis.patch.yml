@@ -8,4 +8,7 @@
       name: '@yiln-dsh/dsh-plugin-git-graph'
       inject:
         - webServer
+        - subprocess
+        - fs
+        - sandboxPolicy
       config: {}

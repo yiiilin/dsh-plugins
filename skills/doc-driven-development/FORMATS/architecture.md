@@ -15,6 +15,7 @@ Baseline: unknown
 Owns: —
 Implementation: unknown
 Verification: not-run
+Evidence-Format: bound-v1
 
 ## 摘要与范围
 系统目的、外部参与方、明确边界、已分析与未分析的部分。
@@ -59,3 +60,5 @@ Verification: not-run
 图规则与沿图走查见 [DESIGN.md](../DESIGN.md)，填写示例见 [导入示例](../examples/import-design.md)。图后解释关键前提与条件；历史架构若有矛盾要主动指出，不机械照抄。
 
 默认 `Owns: —`，由功能/模块拥有具体代码；只有确有独立架构配置才给它主要归属，避免与所有功能重复。
+
+每轮明确决定立即小范围记入当前提案/草稿，不等定稿。实施前真实评审并按 [REFERENCE.md](../REFERENCE.md) 保存 `Kind: design-review` 的 E 记录；这不是批准或测试。新通过证据须绑定真实规格修订/指纹与代码基线，并说明环境；上下文刷新见 [CONTEXT.md](../CONTEXT.md)。不要让旧 passed 自动沿用新正文。

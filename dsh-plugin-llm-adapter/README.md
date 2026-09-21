@@ -40,8 +40,8 @@ explicit session/request selection > model default > provider default
 For an OpenAI Responses model, `serviceTier: priority` is sent as `service_tier: priority`. `reasoningEffort` is exposed as the model's default reasoning selection and is still overridable from the conversation model picker.
 
 The Models page renders both fields inline for every provider's model editor, directly below the context-window and max-output-token fields. The adapter also preserves image request metadata when serializing admitted image
-history for pi-ai models. The Settings Models extension tolerates the current
-upstream editor signature and uses the Settings Remote operations; changes reach
+history for pi-ai models. The Settings Models extension tolerates both the current
+upstream editor signature and the alpha.2 `ModelRow` shape, and uses the Settings Remote operations; changes reach
 the next request without replacing the provider route.
 
 The adapter keeps the upstream `timeoutMs` semantics for the initial provider request and adds an independent wall-clock limit for the complete model stream:
@@ -83,7 +83,7 @@ The flag is off by default and belongs on the model that has the habit, not on t
 
 ## Catalog and Settings editor resilience
 
-Two behaviours changed in 0.6.0:
+Two behaviours changed in 0.6.1:
 
 - Every model stream now has a five-minute wall-clock deadline by default, including streams that continue emitting tool-call arguments. Configure `totalTimeoutMs` per provider to change it; the existing `timeoutMs` remains the initial response-header timeout.
 - A provider whose stored catalog disagrees with the installed one — a
@@ -111,4 +111,4 @@ The Host bundle patch replaces the stock `llm-pi-ai` row by id and injects the m
 
 `priority` only has an effect when the upstream gateway implements the OpenAI Responses `service_tier` field. The adapter cannot create priority capacity that the gateway does not provide.
 
-The published package is `@yiln-dsh/dsh-plugin-llm-adapter@0.6.0`.
+The published package is `@yiln-dsh/dsh-plugin-llm-adapter@0.6.1`.

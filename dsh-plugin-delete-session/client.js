@@ -482,7 +482,8 @@ window.__ModuleLoader__.load({
                 return !selectedSet.has(id) && sessionIsVisible(summary, list.current, archived) && summary.blank !== true;
               });
               if (nextSessionId !== undefined && typeof sessions?.open === "function") sessions.open(nextSessionId);
-              else if (typeof sessions?.clear === "function") sessions.clear();
+              else if (typeof sessions?.clear === "function") sessions.clear(); else if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
+
             }
             await refreshSessionList(sessions);
           } catch (reason) {
@@ -518,7 +519,8 @@ window.__ModuleLoader__.load({
                 return id !== target.id && sessionIsVisible(summary, list.current, archived) && summary.blank !== true;
               });
               if (nextSessionId !== undefined && typeof sessions?.open === "function") sessions.open(nextSessionId);
-              else if (typeof sessions?.clear === "function") sessions.clear();
+              else if (typeof sessions?.clear === "function") sessions.clear(); else if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
+
             }
             await refreshSessionList(sessions);
           } catch (reason) {
@@ -728,7 +730,8 @@ window.__ModuleLoader__.load({
           // The slot's own props carry no `sessions` seat, so the service is the
           // one closed over at registration — the same one the batch action uses.
           if (nextSessionId !== undefined && typeof sessions?.open === "function") sessions.open(nextSessionId);
-          else if (typeof sessions?.clear === "function") sessions.clear();
+          else if (typeof sessions?.clear === "function") sessions.clear(); else if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
+
           await refreshSessionList(sessions);
         } catch (reason) {
           setError(messageOf(reason, t));

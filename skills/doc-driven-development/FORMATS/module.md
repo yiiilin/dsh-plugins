@@ -15,6 +15,7 @@ Baseline: unknown
 Owns: src/shared/example/**
 Implementation: unknown
 Verification: not-run
+Evidence-Format: bound-v1
 Design-Format: layered-v1
 
 ## 摘要
@@ -74,6 +75,9 @@ C-MODULE-001 对应的实际实现路径/符号和 E-MODULE-001。
 
 ### E-MODULE-001 核对记录
 Covers: C-MODULE-001
+Kind: verification
+Spec-Refs: unknown
+Environment: unknown
 Method: 待填写实际方法
 Result: not-run
 Baseline: unknown
@@ -81,3 +85,5 @@ Detail: 未执行。
 ````
 
 原文局部补齐，不整篇重建；独立图按 ref 复用，不能复制形成两个主契约。定稿检查只核结构，模块行为仍需真实审阅与测试。
+
+每轮明确决定立即小范围记入当前提案/草稿，不等定稿。实施前真实评审并按 [REFERENCE.md](../REFERENCE.md) 保存 `Kind: design-review` 的 E 记录；这不是批准或测试。新通过证据须绑定真实规格修订/指纹与代码基线，并说明环境；上下文刷新见 [CONTEXT.md](../CONTEXT.md)。不要让旧 passed 自动沿用新正文。

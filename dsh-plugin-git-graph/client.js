@@ -1868,6 +1868,7 @@ window.__ModuleLoader__.load({
 					priority: 'extension',
 					title: () => t('git.title'),
 					guide: [{
+						id: 'git-graph',
 						order: 21,
 						title: () => t('git.title'),
 						description: () => t('guide.git.description'),

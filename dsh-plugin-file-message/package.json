@@ -1,6 +1,6 @@
 {
   "name": "@yiln-dsh/dsh-plugin-file-message",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "publishConfig": {
     "access": "public"
   },
@@ -31,11 +31,11 @@
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
-    "@deepseek-ai/dsh-client-ui-tool": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-fs": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-host-webserver": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-session-persistence": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-tools": ">=0.1.5-rc.1"
+    "@deepseek-ai/dsh-client-ui-tool": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3",
+    "@deepseek-ai/dsh-fs": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3",
+    "@deepseek-ai/dsh-host-webserver": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3",
+    "@deepseek-ai/dsh-session-persistence": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3",
+    "@deepseek-ai/dsh-tools": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3"
   },
   "engines": {
     "node": ">=22"

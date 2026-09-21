@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { decodeText, mergeBlock } from './managed-text.mjs';
 
-export const VERSION = '0.2.3';
+export const VERSION = '0.2.4';
 export const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 export const DEFAULTS = {
   schemaVersion: 1, enabled: true, docsRoots: ['docs'], index: 'docs/README.md',

@@ -9,4 +9,6 @@
       inject:
         - webServer
         - agents
+        - sandboxPolicy
+        - subprocess
       config: {}

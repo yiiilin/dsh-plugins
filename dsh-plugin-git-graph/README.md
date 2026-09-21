@@ -33,11 +33,11 @@ registers only the Git page kind.
 | --- | --- |
 | `index.js` | Host half: read-only git routes under `/_dsh/git-graph` (`git-log`, `git-commit`, `git-diff`, `git-status`) that run `git` with machine-readable separators and return JSON only, plus the bundled-asset routes for the monaco tree and markdown-it. |
 | `client.js` | Client half: registers the Git page kind in `ctx.sidebarRightTabs` and its body in the `sidebar.right.pane.tab` seat. |
-| `cordis.patch.yml` | Composition patch that mounts the host row — declared with `inject: [webServer]`, so it activates only after the stock webserver service is up. |
+| `cordis.patch.yml` | Composition patch that mounts the host row — declared with `inject: [webServer, subprocess, fs, sandboxPolicy]`, so it activates only after the stock webserver service is up and receives the capabilities used by the Git routes. |
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-git-graph@0.2.0`.
+The published package is `@yiln-dsh/dsh-plugin-git-graph@0.2.1`.
 
 ```bash
 dsh plugin --profile web add file:/path/to/dsh-plugin-git-graph

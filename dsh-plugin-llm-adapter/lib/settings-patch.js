@@ -3,6 +3,130 @@ import { readFileSync, writeFileSync } from "node:fs";
 const SETTINGS_MODELS_CLIENT_PATH = "/plugins/@deepseek-ai/dsh-client-ui-settings-models/client.js";
 const PATCH_MARKER = "dsh-plugin-llm-adapter settings patch";
 
+function patchAlphaModelsSettingsClient(source, englishAnchor, chineseAnchor, modelEditorAnchor, modelDestructureAnchor, catalogPropsAnchor) {
+  let patched = source.replace(englishAnchor, (match) => `${match}
+\t\t\tfastServiceTier: "Service tier",
+\t\t\tfastReasoningEffort: "Default reasoning effort",
+\t\t\tfastTierDefault: "Default",
+\t\t\tfastTierPriority: "Priority",
+\t\t\tfastReasoningOff: "Off",
+\t\t\tfastInherited: "Uses the provider default",
+\t\t\tfastReasoningMinimal: "Minimal",
+\t\t\tfastReasoningLow: "Low",
+\t\t\tfastReasoningMedium: "Medium",
+\t\t\tfastReasoningHigh: "High",
+\t\t\tfastReasoningXhigh: "Xhigh",
+\t\t\tfastReasoningMax: "Max",
+\t\t\t`);
+  patched = patched.replace(chineseAnchor, (match) => `${match}
+\t\t\tfastServiceTier: "服务等级",
+\t\t\tfastReasoningEffort: "默认推理等级",
+\t\t\tfastTierDefault: "默认",
+\t\t\tfastTierPriority: "优先",
+\t\t\tfastReasoningOff: "关闭",
+\t\t\tfastInherited: "跟随提供方默认值",
+\t\t\tfastReasoningMinimal: "Minimal",
+\t\t\tfastReasoningLow: "Low",
+\t\t\tfastReasoningMedium: "Medium",
+\t\t\tfastReasoningHigh: "High",
+\t\t\tfastReasoningXhigh: "Xhigh",
+\t\t\tfastReasoningMax: "Max",
+\t\t\t`);
+
+  const component = String.raw`function LlmAdapterModelFields({ model, index, update, disabled, defaultReasoning, defaultServiceTier, adapterControls, t }) {
+  if (!adapterControls) return null;
+  const tierLabels = {
+    default: "fastTierDefault",
+    priority: "fastTierPriority",
+  };
+  const reasoningLabels = {
+    off: "fastReasoningOff",
+    minimal: "fastReasoningMinimal",
+    low: "fastReasoningLow",
+    medium: "fastReasoningMedium",
+    high: "fastReasoningHigh",
+    xhigh: "fastReasoningXhigh",
+    max: "fastReasoningMax",
+  };
+  const tiers = Object.keys(tierLabels);
+  const efforts = Object.keys(reasoningLabels);
+  const modelTier = typeof model.serviceTier === "string" ? model.serviceTier : void 0;
+  const serviceTier = tiers.includes(modelTier) ? modelTier : tiers.includes(defaultServiceTier) ? defaultServiceTier : "";
+  const modelReasoning = typeof model.reasoningEffort === "string" ? model.reasoningEffort : void 0;
+  const reasoning = efforts.includes(modelReasoning) ? modelReasoning : efforts.includes(defaultReasoning) ? defaultReasoning : "";
+  return (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+    (0, react_jsx_runtime.jsxs)("label", { className: ModelsSection_module_css_default["modelField"], children: [
+      (0, react_jsx_runtime.jsx)("span", { className: ModelsSection_module_css_default["modelFieldLabel"], children: t("fastServiceTier") }),
+      (0, react_jsx_runtime.jsx)("select", {
+        className: ModelsSection_module_css_default["input"],
+        value: serviceTier,
+        "aria-label": t("fastServiceTier"),
+        disabled,
+        onChange: (event) => update(index, "serviceTier", event.target.value),
+        children: [(0, react_jsx_runtime.jsx)("option", { value: "", children: t("fastInherited") }), ...tiers.map((value) => (0, react_jsx_runtime.jsx)("option", { value, children: t(tierLabels[value]) }, value))],
+      }),
+    ] }),
+    (0, react_jsx_runtime.jsxs)("label", { className: ModelsSection_module_css_default["modelField"], children: [
+      (0, react_jsx_runtime.jsx)("span", { className: ModelsSection_module_css_default["modelFieldLabel"], children: t("fastReasoningEffort") }),
+      (0, react_jsx_runtime.jsx)("select", {
+        className: ModelsSection_module_css_default["input"],
+        value: reasoning,
+        "aria-label": t("fastReasoningEffort"),
+        disabled,
+        onChange: (event) => update(index, "reasoningEffort", event.target.value),
+        children: [(0, react_jsx_runtime.jsx)("option", { value: "", children: t("fastInherited") }), ...efforts.map((value) => (0, react_jsx_runtime.jsx)("option", { value, children: t(reasoningLabels[value]) }, value))],
+      }),
+    ] }),
+  ] });
+}
+/* ${PATCH_MARKER} */
+`;
+
+  patched = patched.replace(/function ModelRow\(props\) \{/, `${component}function ModelRow(props) {`);
+  patched = patched.replace(
+    /function ModelRow\(props\) \{\s*const \{ model, position, t, disabled \} = props;/,
+    'function ModelRow(props) {\n\t\t\tconst { model, position, t, disabled, adapterControls, defaultReasoning, defaultServiceTier } = props;',
+  );
+
+  const rowStart = patched.search(/function ModelRow\(props\) \{/);
+  const listStart = patched.search(modelEditorAnchor);
+  if (rowStart < 0 || listStart < 0 || rowStart > listStart) return null;
+  const rowEnd = patched.indexOf("\n\t\t//#endregion", rowStart);
+  if (rowEnd < 0) return null;
+  const rowBody = patched.slice(rowStart, rowEnd);
+  const rowFields = /(\(0, react_jsx_runtime\.jsx\)\(ModelInputTypes, \{[\s\S]*?onChange: props\.onChange\s*\n\s*\}\))\]\s*\}\) : null\]/;
+  if (!rowFields.test(rowBody)) return null;
+  const nextRowBody = rowBody.replace(rowFields, `$1, (0, react_jsx_runtime.jsx)(LlmAdapterModelFields, {
+\t\t\t\t\t\t\t\t\tmodel,
+\t\t\t\t\t\t\t\t\tindex: position - 1,
+\t\t\t\t\t\t\t\t\tupdate: (at, key, value) => props.onFieldChange(key, value),
+\t\t\t\t\t\t\t\t\tdisabled,
+\t\t\t\t\t\t\t\t\tdefaultReasoning,
+\t\t\t\t\t\t\t\t\tdefaultServiceTier,
+\t\t\t\t\t\t\t\t\tadapterControls,
+\t\t\t\t\t\t\t\t\tt
+\t\t\t\t\t\t\t\t})]\n\t\t\t\t\t\t}) : null]`);
+  patched = patched.slice(0, rowStart) + nextRowBody + patched.slice(rowEnd);
+
+  const listDestructure = /const\s*\{\s*models,\s*onChange,\s*probe,\s*(api|operations),\s*t,\s*disabled\s*\}\s*=\s*props;/;
+  const listMatch = listDestructure.exec(patched.slice(listStart));
+  if (listMatch === null) return null;
+  const listOffset = listStart + listMatch.index;
+  patched = patched.slice(0, listOffset) + listMatch[0].replace(/\s*\}\s*=\s*props;$/, ', defaultReasoning, defaultServiceTier } = props;') + patched.slice(listOffset + listMatch[0].length);
+  const rowCall = /(\(0, react_jsx_runtime\.jsx\)\(ModelRow, \{\s*)model,/;
+  const afterList = patched.slice(listStart);
+  if (!rowCall.test(afterList)) return null;
+  patched = patched.slice(0, listStart) + afterList.replace(rowCall, '$1adapterControls: true, defaultReasoning, defaultServiceTier, model,') ;
+
+  const catalogMatch = catalogPropsAnchor.exec(patched);
+  if (catalogMatch === null) return null;
+  patched = patched.replace(catalogPropsAnchor, `${catalogMatch[0]}
+\t\t\t\t\tdefaultReasoning: stringAt(fallback, "reasoning") ?? "",
+\t\t\t\t\tdefaultServiceTier: stringAt(fallback, "serviceTier") ?? "",
+\t\t\t\t\tadapterControls: true,`);
+  return patched;
+}
+
 /** Patch the shipped Models editor without replacing its page or provider rows. */
 export function patchModelsSettingsClient(source) {
   if (source.includes(PATCH_MARKER)) return source;
@@ -18,12 +142,16 @@ export function patchModelsSettingsClient(source) {
   const advancedAnchor = /className:\s*[A-Za-z0-9_$]*\["modelAdvanced"\],\s*children:\s*\[/;
   const catalogPropsAnchor = /const catalogProps\s*=\s*\{\s*models,\s*overridden:\s*modelsOverridden,/;
   const modelDestructureMatch = modelDestructureAnchor.exec(source);
+  const hasAlphaModelRows = /function ModelRow\s*\(\s*props\s*\)\s*\{/.test(source) && source.includes("catalogProvider");
   if (!englishAnchor.test(source)
     || !chineseAnchor.test(source)
     || !modelEditorAnchor.test(source)
     || modelDestructureMatch === null
-    || !advancedAnchor.test(source)
     || !catalogPropsAnchor.test(source)) return null;
+  if (hasAlphaModelRows) {
+    return patchAlphaModelsSettingsClient(source, englishAnchor, chineseAnchor, modelEditorAnchor, modelDestructureAnchor, catalogPropsAnchor);
+  }
+  if (!advancedAnchor.test(source)) return null;
 
   let patched = source.replace(englishAnchor, (match) => `${match}
 \t\t\tfastServiceTier: "Service tier",

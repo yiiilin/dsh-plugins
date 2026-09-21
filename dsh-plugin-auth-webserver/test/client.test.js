@@ -22,11 +22,13 @@ test("keeps the zh/en dictionary key sets identical", () => {
   assert.deepEqual([...zh].sort(), [...en].sort());
 });
 
-test("declares the settings plugin Slot dependency", () => {
+test("declares the settings plugin Slot dependencies", () => {
   assert.match(PACKAGE_SOURCE, /@deepseek-ai\/dsh-client-ui-settings-plugins/u);
-  assert.match(CLIENT_SOURCE, /name: "settings\.plugin\.item"/u);
+  assert.match(CLIENT_SOURCE, /registerSettingsCard\("settings\.plugin\.item"\)/u);
+  assert.match(CLIENT_SOURCE, /registerSettingsCard\("plugins\.item"\)/u);
   assert.match(CLIENT_SOURCE, /const changed = meta !== null/u);
   assert.match(CLIENT_SOURCE, /key: "auth-webserver"/u);
+  assert.match(CLIENT_SOURCE, /id: "auth-webserver"/u);
 });
 
 test("declares the online-client and revoke contracts in the client bundle", () => {

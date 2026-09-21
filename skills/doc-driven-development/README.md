@@ -1,8 +1,31 @@
-# doc-driven-development 0.2.3
+# doc-driven-development 0.2.4
 
 通过讨论文档控制 AI 的实现，而不是只说愿望、事后读大量代码。普通功能默认一篇文档，内部保留清晰的**需求说明、概要设计、详细设计**三层；复杂模块才拆开。AI 应主动查证、找逻辑缺口、带场景和代价与人探讨，再整理结论；已确认文档可以被质疑，不能擅自改变约束。
 
 支持新功能开发、已有项目渐进接管、全量代码设计恢复和人工改代码后的核对。核心流程是 Markdown 规则；附带工具提供项目安装/核验、文件盘点、索引和结构检查，不调用任何模型、不依赖其他 skill、不需要 API 密钥或联网。
+
+
+## v0.2.4：让讨论、记录、评审和实施形成闭环
+
+每轮明确决定及时小范围保存到已有提案/草稿；先场景和上下文解释，再使用术语；实施前按风险评审，主 agent 查证意见、修改后定向复核。已确认文档可质疑但不能擅改，阶段切换刷新当前材料，不凭旧聊天执行。
+
+新证据使用 `Spec-Refs` 同时绑定目标规格修订/正文；`Baseline` 继续绑定实现/测试/配置，执行证据补真实 `Environment`。新增 `--review` 核对真实设计评审记录；设计评审不算实现测试。旧未绑定记录保留并警告，但不能通过严格交付。新格式 `Evidence-Format: bound-v1` 的 passed 也不能没有有效绑定。流程细则见 [DESIGN.md](DESIGN.md)、[REFERENCE.md](REFERENCE.md)。
+
+新增 [context.mjs](scripts/context.mjs) 每次读当前文件构建依赖索引和版本报告，默认只读；可按 ID/中文子串查询、反查影响、比较旧快照、取得实际检查应使用的规格身份。没有 SQLite、npm 包、常驻进程或 API；索引不替代原文，未做大仓性能保证。见 [CONTEXT.md](CONTEXT.md)。
+
+```sh
+# 这些命令在项目根执行；SKILL_DIR 指向实际完整安装目录。
+node "$SKILL_DIR/scripts/context.mjs" . --doc FEAT-IMPORT --bindings
+node "$SKILL_DIR/scripts/context.mjs" . --query "幂等"
+
+# 实施前：先实际评审并记录，再检查结构和版本。REF 换成真实 Git 基线。
+node "$SKILL_DIR/scripts/check-doc-set.mjs" . --base REF --design --review
+
+# 实施后：先真实测试及双向核对，再检查交付。
+node "$SKILL_DIR/scripts/check-doc-set.mjs" . --base REF --design --release
+```
+
+旧记录不批量补假 Spec-Refs/Approval，只有实际重新核对后才记录当前版本；未实施、不允许改代码、纯设计恢复不是 release。升级保护原有正文/配置/规则，未修改的真实 v0.2.3 发行包可由新 install 安全升级。使用旧包目录里的命令仍是旧行为，必须从新包启动升级。
 
 ## 1. 安装到项目
 
@@ -29,7 +52,7 @@ node "$SKILL_DIR/scripts/install.mjs" "$PROJECT" --host both --apply
 
 ### 修复旧 init 留下的半安装状态
 
-已有 `.doc-driven.json` 为 `enabled: true`，但缺项目 skill/规则区块时，直接对原项目运行上面的新包 `install` 两条命令。**无需删除配置或已有 docs；原配置逐字节保留，已有规范只追加受管区块。**使用新解压的 v0.2.3，不要继续调用旧全局 v0.2.1 的 init。
+已有 `.doc-driven.json` 为 `enabled: true`，但缺项目 skill/规则区块时，直接对原项目运行上面的新包 `install` 两条命令。**无需删除配置或已有 docs；原配置逐字节保留，已有规范只追加受管区块。**使用新解压的 v0.2.4，不要继续调用旧全局 v0.2.1 的 init。
 
 ## 2. 检查后续会话是否接入
 
@@ -48,7 +71,7 @@ node .agents/skills/doc-driven-development/scripts/doctor.mjs . --probe
 
 ### 正常开发
 
-> 为“具体功能”先调查当前文档与代码，主动找出目标、状态和数据处理中的逻辑缺口。带着具体场景、推荐与代价跟我讨论，可以先画 ASCII 草图；讨论收敛后整理需求说明、概要设计、详细设计和验收。不要预先把未经讨论的选择写成既定方案，先不改业务代码。
+> 为“具体功能”先调查当前文档与代码，主动找出目标、状态和数据处理中的逻辑缺口。带着具体场景、推荐与代价跟我讨论，可以先画 ASCII 草图；每个明确决定本轮就保存，主题收敛后整理需求说明、概要设计、详细设计和验收。不要预先把未经讨论的选择写成既定方案，先不改业务代码。
 
 这应是安装后的默认行为，不要求用户每次重复“主动思考”。已明确的修复和等价重构不强制多轮讨论。共同设计、三类图和机器标记见 [DESIGN.md](DESIGN.md)；人类可读的完整形态见 [导入设计示例](examples/import-design.md)。
 
@@ -111,6 +134,7 @@ node .agents/skills/doc-driven-development/scripts/doctor.mjs . --probe
 | `init.mjs` | 已弃用的兼容文件名，转发完整 `install`；不再单独初始化，不推荐新调用 |
 | `inventory.mjs` | 盘点文件、代码快照、归属映射和排除项；不做语义分析 |
 | `index.mjs` | 从文档头重建索引区块；其他人工文字保持原样 |
+| `context.mjs` | 当前显式依赖/标识检索、版本变化、规格绑定；默认只读，快照不是阅读记录 |
 | `check-doc-set.mjs` | 检查受管文档结构、链接、归属、引用、证据字段及可选覆盖/交付条件 |
 | `check.mjs` | 检查本 skill 的包完整性与脚本语法，并运行隔离自测；不是目标项目测试 |
 
@@ -195,3 +219,5 @@ CI 中可以使用这些脚本作底线，再配合项目测试、审阅权限�
 [SKILL.md](SKILL.md) 是模型入口；[DESIGN.md](DESIGN.md) 规定共同设计与 ASCII 图；[REFERENCE.md](REFERENCE.md) 是字段与核对规则；[ADOPTION.md](ADOPTION.md) 是两种接管流程；[FORMATS/](FORMATS/) 是按需模板；[examples/scenarios.md](examples/scenarios.md) 展示具体文档及评估场景；[scripts/](scripts/) 是本地工具；[tests/run.mjs](tests/run.mjs) 是隔离测试。
 
 [INSTALL.md](INSTALL.md) 说明安全安装、升级、卸载和两层生效检查；[CHANGELOG.md](CHANGELOG.md) 列出删减、迁移和机制变化；[TESTING.md](TESTING.md) 记录本次实际验证及未验证范围；[LICENSE](LICENSE) 与 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 保留原始许可与归属。
+
+[多轮协作示例](examples/collaboration-session.md) 展示部分确认、解释、错误评审意见和恢复；[真实 agent 评估计划](examples/evaluation.md) 尚未执行，不能当作模型效果证明。

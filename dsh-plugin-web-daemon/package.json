@@ -1,6 +1,6 @@
 {
   "name": "@yiln-dsh/dsh-plugin-web-daemon",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "publishConfig": {
     "access": "public"
   },
@@ -38,11 +38,11 @@
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
-    "@deepseek-ai/dsh-agent-presets": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-client-ui-settings-plugins": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-llm": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-settings": ">=0.1.5-rc.1",
+    "@deepseek-ai/dsh-agent-presets": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3",
+    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3",
+    "@deepseek-ai/dsh-client-ui-settings-plugins": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3",
+    "@deepseek-ai/dsh-llm": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3",
+    "@deepseek-ai/dsh-settings": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3",
     "@deepseek-ai/schemastery": ">=3.0.0"
   },
   "engines": {

@@ -44,7 +44,7 @@ key leaves the machine: this plugin talks to no speech service.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-voice-input@0.1.3`.
+The published package is `@yiln-dsh/dsh-plugin-voice-input@0.1.4`.
 
 Local source directory:
 

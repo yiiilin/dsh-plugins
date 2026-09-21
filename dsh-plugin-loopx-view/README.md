@@ -1,6 +1,6 @@
 # dsh-plugin-loopx-view
 
-The package version is `@yiln-dsh/dsh-plugin-loopx-view@0.1.0`.
+The package version is `@yiln-dsh/dsh-plugin-loopx-view@0.1.1`.
 
 Adds a session-scoped `LoopX` tab beside DSH's native `对话` and `轨迹` views.
 The page reads the current live DSH Session's exact LoopX binding, then renders
