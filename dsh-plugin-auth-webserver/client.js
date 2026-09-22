@@ -7,6 +7,10 @@
  * namespace). The card chrome (header, disclosure, footer) is implemented
  * here because the client bundle purity gate forbids importing the official
  * card chrome as values; only the slot registration protocol is shared.
+ *
+ * The bundle also carries the resume watchdog: a phone that locks its screen
+ * kills the realtime connection silently, so returning to the page rebuilds
+ * it (and reloads into the login page when the gateway session expired).
  */
 window.__ModuleLoader__.load({
 	id: "@yiln-dsh/dsh-plugin-auth-webserver",
@@ -16,7 +20,7 @@ window.__ModuleLoader__.load({
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 		let React = require("react");
 
-		const inject = ["slots"];
+		const inject = ["connection", "slots"];
 
 		const STYLE_ID = "dsh-plugin-auth-webserver-settings";
 		if (typeof document !== "undefined" && document.getElementById(STYLE_ID) === null) {
@@ -1428,7 +1432,80 @@ window.__ModuleLoader__.load({
 		};
 		}
 
+		/** Absence after which returning to the page rebuilds the realtime connection. */
+		const RESUME_REBUILD_AFTER_MS = 6e4;
+		/** Two lifecycle events may announce one and the same return (e.g. a bfcache restore). */
+		const RESUME_REBUILD_DEDUP_MS = 2e3;
+		/** Gateway endpoint answering 200 while the browser session is alive and 401 once it expired. */
+		const AUTH_STATE_PATH = "/_dsh/auth-webserver/state";
+
+		/**
+		 * Resume watchdog for phone sleep and other page suspensions.
+		 *
+		 * A suspended mobile browser kills the realtime carrier silently: the
+		 * shared Remote stream WebSocket stays "open" but delivers nothing and
+		 * never emits close, so the connection controller never learns the
+		 * generation died and the GUI freezes until a manual reload. Returning to
+		 * the page after a real absence therefore rebuilds through the
+		 * controller's own recovery — `connection.reconnect()` replaces the
+		 * carrier and reopens the generation, which the UI resyncs from — while a
+		 * back-forward-cache restore keeps the old dead socket and always
+		 * rebuilds. The gateway session may also have expired while the page
+		 * slept: a 401 on the auth state probe then reloads into the login page.
+		 */
+		function installResumeWatchdog(win, connection) {
+			const doc = win === undefined || win === null ? undefined : win.document;
+			if (doc === undefined || typeof connection?.reconnect !== "function") return () => {};
+			let awaySince = Date.now();
+			let rebuiltAt = 0;
+			let disposed = false;
+			const markAway = () => {
+				awaySince = Date.now();
+			};
+			const probeSession = () => {
+				try {
+					Promise.resolve(win.fetch(AUTH_STATE_PATH, { cache: "no-store", credentials: "same-origin" })).then((response) => {
+						if (disposed || response === undefined || response === null) return;
+						if (response.status === 401 || response.status === 403) win.location.reload();
+					}, () => {});
+				} catch (_error) {
+					/* a broken probe must never disturb the page */
+				}
+			};
+			const rebuild = (always) => {
+				const now = Date.now();
+				const gap = now - awaySince;
+				awaySince = now;
+				if (disposed || now - rebuiltAt < RESUME_REBUILD_DEDUP_MS) return;
+				if (!always && gap < RESUME_REBUILD_AFTER_MS) return;
+				rebuiltAt = now;
+				connection.reconnect();
+				probeSession();
+			};
+			const onVisibility = () => {
+				if (doc.visibilityState === "hidden") markAway();
+				else rebuild(false);
+			};
+			const onPageShow = (event) => {
+				rebuild(Boolean(event?.persisted));
+			};
+			doc.addEventListener("visibilitychange", onVisibility);
+			win.addEventListener("pagehide", markAway);
+			win.addEventListener("pageshow", onPageShow);
+			return () => {
+				disposed = true;
+				doc.removeEventListener("visibilitychange", onVisibility);
+				win.removeEventListener("pagehide", markAway);
+				win.removeEventListener("pageshow", onPageShow);
+			};
+		}
+
 		function apply(ctx) {
+			const view = typeof window === "undefined" ? undefined : window;
+			const connection = ctx.get("connection");
+			if (view !== undefined && connection !== undefined) {
+				ctx.effect(() => installResumeWatchdog(view, connection), "auth-webserver: resume watchdog");
+			}
 			const slots = ctx.get("slots");
 			if (slots === undefined) return;
 			const locale = ctx.get("locale");

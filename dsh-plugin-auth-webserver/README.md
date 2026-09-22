@@ -29,6 +29,11 @@ A DSH `dsh.bundle` that keeps the stock webserver untouched and adds an
   which also edits the idle window and ceiling those records obey;
 - the gateway supplies a complete PWA manifest, 180/192/512px PNG icons,
   iOS home-screen metadata, and a pass-through service worker;
+- a resume watchdog rebuilds the realtime connection when the page returns
+  after a real absence: a phone that locks its screen kills the shared stream
+  socket silently and the stock client never notices, so without this the GUI
+  stays frozen until a manual reload; when the gateway session expired while
+  the page slept, the page reloads itself into the login page;
 - optional WebAuthn Passkeys can replace password entry for enrolled devices,
   while password/TOTP recovery remains available;
 - an auth-owned in-app configuration editor replaces the server-native **Open
@@ -47,7 +52,7 @@ authentication.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.10.1`.
+The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.10.2`.
 
 The plugin is plain JavaScript source; there is no build step.
 
@@ -116,7 +121,7 @@ The plugin version is defined by the `version` field in `package.json`:
 ```json
 {
   "name": "@yiln-dsh/dsh-plugin-auth-webserver",
-  "version": "0.10.1"
+  "version": "0.10.2"
 }
 ```
 
@@ -227,6 +232,17 @@ about 138px and leaves a right-aligned, half-empty second line. The mobile
 override stops that wrap, tightens the toolbar spacing to 8px, and lets the
 trailing cluster absorb the squeeze; the official model trigger already
 ellipsizes its own label, so no control is dropped.
+
+Locked phones also come back alive. A suspended mobile browser kills the
+realtime stream socket without telling the page — no close event ever arrives —
+so the stock client sits on a dead connection and stops updating until a manual
+reload. The client bundle therefore watches the page lifecycle: returning to
+the page after an absence of a minute or more (or restoring it from the
+back/forward cache) rebuilds the connection through the controller's own
+recovery, which reopens the event stream and resyncs the whole GUI. The same
+return probes `/_dsh/auth-webserver/state`, and when the gateway session
+expired during the sleep the page reloads itself into the login page instead
+of hanging on a connection that can never come back.
 
 Or start it explicitly:
 
