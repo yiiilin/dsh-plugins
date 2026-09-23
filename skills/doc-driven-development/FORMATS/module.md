@@ -15,7 +15,6 @@ Baseline: unknown
 Owns: src/shared/example/**
 Implementation: unknown
 Verification: not-run
-Evidence-Format: bound-v1
 Verification-Format: runner-v1
 Verification-Plan: pending
 Design-Format: layered-v1
@@ -74,26 +73,15 @@ Design-Format: layered-v1
 局部实现自由、需人裁决的技术取舍、未知假设及影响。
 
 ## 4. 实现与验证
-C-MODULE-001 对应的实际实现路径/符号和 E-MODULE-001。
 
-### 核对记录
-<!-- ddd:item E-MODULE-001 -->
-Covers: C-MODULE-001
-Kind: verification
-Spec-Refs: unknown
-Environment: unknown
-Method: 待填写实际方法
-Result: not-run
-Baseline: unknown
-Detail: 未执行。
+| 要求/约束（自然名称） | 实现入口 | 验证来源 |
+|---|---|---|
+| 模块契约 | 实际调用方与模块入口 | 文档头的 Verification-Receipt |
+
+未执行时保持 not-run。验收场景在需求层定义，不在这里再写一套。
+真实运行后只在文档头加入 Verification-Receipt: 实际run.json路径#sha256。
+需要的设计评审/人工核对独立记录；不把它们当运行测试。
+
 ````
 
-原文局部补齐，不整篇重建；独立图按 ref 复用，不能复制形成两个主契约。定稿检查只核结构，模块行为仍需真实审阅与测试。
-
-每轮明确决定立即小范围记入当前提案/草稿，不等定稿。实施前真实评审并按 [REFERENCE.md](../REFERENCE.md) 保存 `Kind: design-review` 的 E 记录；这不是批准或测试。新通过证据须绑定真实规格修订/指纹与代码基线，并说明环境；上下文刷新见 [CONTEXT.md](../CONTEXT.md)。不要让旧 passed 自动沿用新正文。
-
-模块契约存在不等于功能已接入；本次交付要指出实际调用方和运行入口，以及如何验证真实消费。自然标题和隐藏稳定标识见 [COMMUNICATION.md](../COMMUNICATION.md)，执行责任见 [EXECUTION.md](../EXECUTION.md)。
-
-## v0.3 执行验证
-
-先从上文验收条件挑出本次必需的命名场景，按 [验证协议](../VERIFICATION.md) 创建真实计划，将 Verification-Plan 的 pending 替换为实际路径。草稿允许 pending；本次交付必须有实际运行且当前有效的记录。证据片段由 `verify.mjs --report ... --evidence` 输出，核对后小范围合入本页验证区，不手填通过。旧文档不由升级器自动纳管。
+定稿沿真实正常/失败/适用边界走查；图不适用给具体理由，未知不冒充完成。审批与字段见 [REFERENCE.md](../REFERENCE.md)，运行与单行引用见 [VERIFICATION.md](../VERIFICATION.md)。保留原文局部修改；图、接口、状态及验收用词一致。新 runner 结果不必创建重复 E，历史 E 仍兼容。

@@ -231,9 +231,13 @@ test('feature and module template bodies retain explicit draft gaps, not fake co
     const s = scanDesign(content); assert.deepEqual(s.sections.filter(x => x.key).map(x => x.key), ['requirements', 'overview', 'detail']);
   }
 });
-test('installed rule and fresh-session probe include discussion, document challenge and graph roles', () => {
+test('installed rule routes to substantive design rules; probe still checks actual discussion and diagrams', () => {
   const r = ruleBlock(DEFAULT_SKILL, DEFAULTS), probe = probeText();
-  for (const term of ['主动', '场景', '代价', '已确认文档可以质疑', '需求说明', '概要设计', '详细设计', 'ASCII', '不得整篇重建']) assert.ok(r.includes(term), term);
+  const skill=fs.readFileSync(path.join(PKG,'SKILL.md'),'utf8');
+  const design=fs.readFileSync(path.join(PKG,'DESIGN.md'),'utf8');
+  assert.ok(r.includes(`${DEFAULT_SKILL}/SKILL.md`)); assert.match(r,/不得覆盖/);
+  assert.match(skill,/DESIGN\.md/);
+  for(const term of ['场景','代价','需求说明','概要设计','详细设计','ASCII'])assert.ok(design.includes(term),term);
   for (const term of ['矛盾', '主动讨论', '三层文档', 'ASCII']) assert.ok(probe.includes(term), term);
 });
 test('known v0.2.2 unmanaged predecessor is included for safe upgrade', () => {
@@ -243,7 +247,7 @@ test('fresh install adds new discussion rule but never rewrites existing specs/c
   const f = fixture(t), rules = '\ufeff# 项目规则\r\n中文与安全边界。', cfg = f.read('.doc-driven.json');
   f.put('AGENTS.md', rules); f.save(doc({ 'Design-Format': null }, '## Notes\nOriginal hand-written design.\n'));
   const original = f.read(FILE), plan = planInstall(f.root, { host: 'agents' }); applyPlan(plan);
-  assert.ok(f.read('AGENTS.md').startsWith(rules)); assert.ok(f.read('AGENTS.md').includes('主动查找'));
+  assert.ok(f.read('AGENTS.md').startsWith(rules)); assert.ok(f.read('AGENTS.md').includes(`${DEFAULT_SKILL}/SKILL.md`));
   assert.equal(f.read('.doc-driven.json'), cfg); assert.equal(f.read(FILE), original); assert.equal(doctor(f.root).activation, 'ready');
   assert.equal(planInstall(f.root, { host: 'agents' }).writes.length, 0);
 });

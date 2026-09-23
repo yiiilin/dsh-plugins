@@ -15,7 +15,6 @@ Baseline: unknown
 Owns: src/example/**
 Implementation: missing
 Verification: not-run
-Evidence-Format: bound-v1
 Verification-Format: runner-v1
 Verification-Plan: pending
 Design-Format: layered-v1
@@ -92,32 +91,15 @@ D-EXAMPLE-001：具体场景、选项、推荐、理由、代价、影响、确�
 
 ## 4. 实现与验证
 
-| 要求/约束 | 实现入口 | 证据 |
+| 要求/约束（自然名称） | 实现入口 | 验证来源 |
 |---|---|---|
-| R-EXAMPLE-001 | 实际路径与符号 | E-EXAMPLE-001 |
-| C-EXAMPLE-001 | 实际接口或配置 | E-EXAMPLE-001 |
+| 可观察行为 | 实际入口及路径 | 文档头的 Verification-Receipt |
+| 关键约束 | 实际机制及位置 | 同一运行记录中的对应检查 |
 
-### 核对记录
-<!-- ddd:item E-EXAMPLE-001 -->
-Covers: R-EXAMPLE-001, C-EXAMPLE-001
-Kind: verification
-Spec-Refs: unknown
-Environment: unknown
-Method: 待替换为实际测试命令、人工步骤或测量方法
-Result: not-run
-Baseline: unknown
-Detail: 尚未执行，不宣称通过。
+未执行时保持 not-run。验收场景在需求层定义，不在这里再写一套。
+真实运行后只在文档头加入 Verification-Receipt: 实际run.json路径#sha256。
+需要的设计评审/人工核对独立记录；不把它们当运行测试。
 
-## 5. 偏差、未知和继续入口
-已观察到的冲突、疑似问题、尚未完成的阅读/实验、讨论下一步。
 ````
 
-pending 是真实草稿缺口，不能原样作为完成设计；定稿前沿图走查并运行定稿检查。无状态说明依据，复用图用 ref。获批后补真实 Approval/Approved revision；实现、验证分别更新。字段见 [REFERENCE.md](../REFERENCE.md)。
-
-每轮明确决定立即小范围记入当前提案/草稿，不等定稿。实施前真实评审并按 [REFERENCE.md](../REFERENCE.md) 保存 `Kind: design-review` 的 E 记录；这不是批准或测试。新通过证据须绑定真实规格修订/指纹与代码基线，并说明环境；上下文刷新见 [CONTEXT.md](../CONTEXT.md)。不要让旧 passed 自动沿用新正文。
-
-按 [COMMUNICATION.md](../COMMUNICATION.md) 让读者通过自然标题定位；隐藏 ddd:item 保持旧标识稳定。按 [EXECUTION.md](../EXECUTION.md) 为本次实施列可观察行为、正式入口/调用者/消费者、必测场景和当前接线状态，不以编号闭合冒充完成。验收及证据可以链接独立共享记录，不为每次升级给正文增加固定行数。
-
-## v0.3 执行验证
-
-先从上文验收条件挑出本次必需的命名场景，按 [验证协议](../VERIFICATION.md) 创建真实计划，将 Verification-Plan 的 pending 替换为实际路径。草稿允许 pending；本次交付必须有实际运行且当前有效的记录。证据片段由 `verify.mjs --report ... --evidence` 输出，核对后小范围合入本页验证区，不手填通过。旧文档不由升级器自动纳管。
+定稿沿真实正常/失败/适用边界走查；图不适用给具体理由，未知不冒充完成。审批与字段见 [REFERENCE.md](../REFERENCE.md)，运行与单行引用见 [VERIFICATION.md](../VERIFICATION.md)。保留原文局部修改；图、接口、状态及验收用词一致。新 runner 结果不必创建重复 E，历史 E 仍兼容。

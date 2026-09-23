@@ -116,9 +116,13 @@ test('review CLI advertises records-only limits and accepts the explicit option'
   const f=fixture(t),p=path.join(PKG,'scripts/check-doc-set.mjs');const a=spawnSync(process.execPath,[p,'--help'],{encoding:'utf8'});assert.equal(a.status,0);assert.match(a.stdout,/--review/);
   const b=spawnSync(process.execPath,[p,f.root,'--review','--json'],{encoding:'utf8'});assert.equal(b.status,1);assert.match(b.stdout,/semantic/);
 });
-test('installed entry and design references contain concrete capture/explain/review/refresh triggers',()=>{
-  const skill=fs.readFileSync(path.join(PKG,'SKILL.md'),'utf8'),design=fs.readFileSync(path.join(PKG,'DESIGN.md'),'utf8'),rules=fs.readFileSync(path.join(PKG,'scripts/project-install.mjs'),'utf8');
-  for(const text of [skill,design,rules]){assert.match(text,/本轮结束前|本轮即记录/);assert.match(text,/场景|什么时候/);assert.match(text,/自审|self-review/);assert.match(text,/旧证据|Spec-Refs|代码版本/);}
+test('short installed entry routes to the primary capture/explain/review/refresh protocol',()=>{
+  const read=p=>fs.readFileSync(path.join(PKG,p),'utf8');
+  const skill=read('SKILL.md'), design=read('DESIGN.md'), rules=read('scripts/project-install.mjs');
+  assert.match(rules,/SKILL\.md/); assert.match(skill,/DESIGN\.md/); assert.match(skill,/CONTEXT\.md/);
+  for(const re of [/本轮结束前/,/什么时候/,/自审/,/代码版本/])assert.match(design,re);
+  assert.match(rules,/每轮明确决定及时保存/); assert.match(rules,/只读\/暂停/);
+  assert.match(rules,/旧证据/); assert.match(rules,/受管区块之外内容不得覆盖/);
 });
 
 for (const state of ['not-run', 'blocked']) test(`unperformed review ${state} can truthfully keep reviewer/blockers unknown`,t=>{

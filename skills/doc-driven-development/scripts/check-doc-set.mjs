@@ -12,6 +12,7 @@ import {
 
 import { itemHeadings } from './identity.mjs';
 import { checkRun, receiptCovers } from './verification.mjs';
+import { parseReceiptRef } from './receipt-view.mjs';
 import { checkDelivery } from './delivery.mjs';
 import { checkLayout } from './doc-layout.mjs';
 import { DESIGN_FORMAT, designFingerprint, validateDesign, scanDesign } from './design-check.mjs';
@@ -186,10 +187,12 @@ export function checkRepo(root, config, options = {}) {
   };
   const isBound = (e, d) => { try { return bindingState(e, d) === 'current'; } catch { return false; } };
   const checkBoundVerification = d => {
+    // runner-v1 execution truth is checked below from captured receipts, not E copies.
+    const runner = d.fields['Verification-Format'] === 'runner-v1';
     for (const id of requirementsFor(d)) {
       const matches = evidence.filter(e => (e.fields.Kind ?? 'verification') === 'verification' && list(e.fields.Covers).includes(id)
         && e.fields.Baseline === d.fields.Baseline && isBound(e, d));
-      if (!matches.some(e => e.fields.Result === 'passed' && meaningful(e.fields.Environment)))
+      if (!runner && !matches.some(e => e.fields.Result === 'passed' && meaningful(e.fields.Environment)))
         error(`${d.path}: current specification revision/content lacks bound passed evidence for ${id} (Spec-Refs + Environment required)`);
       if (matches.some(e => e.fields.Result === 'failed')) error(`${d.path}: bound evidence fails ${id}`);
     }
@@ -203,7 +206,7 @@ export function checkRepo(root, config, options = {}) {
     for (const id of needed) {
       const relevant = evidence.filter(e => (e.fields.Kind ?? 'verification') === 'verification' && e.doc.fields.Status !== 'superseded' && list(e.fields.Covers).includes(id) && e.fields.Baseline === d.fields.Baseline
         && (!meaningful(e.fields['Spec-Refs']) || isBound(e, d)));
-      if (!relevant.some(e => e.fields.Result === 'passed')) error(`${d.path}: passed lacks matching-baseline passed evidence for ${id}`);
+      if (d.fields['Verification-Format'] !== 'runner-v1' && !relevant.some(e => e.fields.Result === 'passed')) error(`${d.path}: passed lacks matching-baseline passed evidence for ${id}`);
       if (relevant.some(e => e.fields.Result === 'failed')) error(`${d.path}: current evidence fails ${id}, cannot claim Verification passed`);
     }
   }
@@ -405,24 +408,49 @@ export function checkRepo(root, config, options = {}) {
     const issues=[...v.errors];
     if(!x || x.kind!=='test' || x.status!=='passed' || !(x.level===e.fields.Level || x.alsoLevels?.includes(e.fields.Level)) || !list(e.fields.Covers).every(id=>x.covers.includes(id)))issues.push('Evidence fields do not match the recorded runner check.');
     if(v.report && e.fields.Baseline!==v.report.initial.codeBaseline)issues.push('Evidence baseline differs from runner receipt.');
+    if(x && v.plan){
+      const required=v.plan.checks.find(c=>c.id===x.id)?.requiredCases ?? [];
+      for(const [key,value] of [['Executed',String(required.length)],['Skipped','0'],['Failed','0']])
+        if(e.fields[key]!==undefined && e.fields[key]!==value)issues.push(`Copied ${key} disagrees with the runner required-case result.`);
+    }
     for(const issue of issues)(e.fields.Baseline===currentSnapshot?error:warn)(`${e.doc.path}: ${e.id}: ${issue}`);
   }
-  let runnerRequired=0;
-  for(const d of docs.filter(d=>d.fields.Status!=='superseded' && d.fields['Verification-Format'])) {
-    if(d.fields['Verification-Format']!=='runner-v1'){error(`${d.path}: unsupported Verification-Format`);continue;}
+  let runnerRequired=0, runnerVerified=0;
+  for(const d of docs.filter(d=>d.fields.Status!=='superseded')) {
+    const profile=d.fields['Verification-Format'], pointer=d.fields['Verification-Receipt'];
+    if(pointer && profile!=='runner-v1') error(`${d.path}: Verification-Receipt requires runner-v1; cannot downgrade to editable evidence.`);
+    if(!profile)continue;
+    if(profile!=='runner-v1'){error(`${d.path}: unsupported Verification-Format`);continue;}
     const selected=!options.base || affectedDesignPaths.has(d.path);
-    if(!selected || !options.release)continue;
-    runnerRequired++;
-    const plan=d.fields['Verification-Plan'];
-    if(!meaningful(plan) || plan==='pending'){error(`${d.path}: runner-v1 requires an actual Verification-Plan before delivery.`);continue;}
-    const candidates=[];
+    const mustVerify=d.fields.Verification==='passed' || (selected && options.release);
+    if(mustVerify)runnerRequired++;
+    const runnerStartErrors=errors.length;
+    const plan=d.fields['Verification-Plan'], candidates=[];
+    const issue=mustVerify?error:warn;
+    if(!meaningful(plan) || plan==='pending'){
+      if(mustVerify || pointer)issue(`${d.path}: runner-v1 requires an actual Verification-Plan before delivery.`);
+      continue;
+    }
+    if(pointer) {
+      try {
+        const ref=parseReceiptRef(pointer), v=readRun(ref.path,ref.hash,plan);
+        candidates.push(v);
+        for(const e of v.errors)issue(`${d.path}: Verification-Receipt: ${e}`);
+        if(mustVerify && v.report && d.fields.Baseline!==v.report.initial.codeBaseline)
+          error(`${d.path}: document Baseline differs from captured runner baseline.`);
+      } catch(e) {error(`${d.path}: ${e.message}`);}
+    }
+    if(!mustVerify)continue;
     if(supplied && supplied.report?.plan===plan)candidates.push(supplied);
+    // Compatibility path: old E references remain readable, but are no longer required.
     for(const e of evidence.filter(e=>e.fields['Runner-Receipt'] && e.fields.Result==='passed' && list(e.fields.Covers).some(id=>requirementsFor(d).includes(id)))){
       const m=e.fields['Runner-Receipt'].match(/^(.+\/run\.json)#([a-f0-9]{64})$/);if(m)candidates.push(readRun(m[1],m[2],plan));
     }
-    for(const id of requirementsFor(d))if(!candidates.some(v=>receiptCovers(v,[id],['acceptance'])))error(`${d.path}: no current runner acceptance receipt for ${id}; hand-written passed cannot complete runner-v1.`);
+    for(const id of requirementsFor(d))if(!candidates.some(v=>receiptCovers(v,[id],['acceptance']) && v.report.initial.codeBaseline===d.fields.Baseline))
+      error(`${d.path}: no current runner acceptance receipt for ${id}; hand-written passed cannot complete runner-v1.`);
+    if(errors.length===runnerStartErrors)runnerVerified++;
   }
-  stats.execution={status:supplied?supplied.status:runnerRequired?'runner-receipts-required':'not-assessed',profiledScope:runnerRequired,semantic:'not-assessed',authenticity:'local-unsigned'};
+  stats.execution={status:runnerRequired?(runnerVerified===runnerRequired && (!supplied || !supplied.errors.length)?'verified':'not-verified'):supplied?supplied.status:'not-assessed',profiledScope:runnerRequired,verifiedScope:runnerVerified,semantic:'not-assessed',authenticity:'local-unsigned'};
   if (options.delivery) {
     const result = checkDelivery(root, config, options.delivery, { complete: Boolean(options.release) });
     errors.push(...result.errors); warnings.push(...result.warnings); stats.delivery = result;

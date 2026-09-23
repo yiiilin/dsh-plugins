@@ -19,7 +19,7 @@ RUN=$(node -e 'const r=require("./.doc-driven/verification-cli.json");process.st
 node "$SKILL_DIR/scripts/verify.mjs" . --plan "$PLAN" --report "$RUN"
 ```
 
-这是实际执行与采证阶段，不会自动更新仓库规格。提交前把 `--evidence` 输出中的证据检查后合入原验证区，维护当前状态和交付包，再执行本次范围的 --design/--release/--delivery。CI 重新运行产生的是独立运行记录，不假装旧的本地 run path 能在另一台机器天然存在。
+这是实际执行与采证阶段，不会自动更新仓库规格。提交前核对 `--summary` 输出，将实际 Verification-Receipt 放在规格头并维护状态；交付包引用 runs，不再复制 E。然后执行本次范围的 --design/--release/--delivery。CI 重新运行产生的是独立运行记录，不假装旧的本地 run path 能在另一台机器天然存在。
 
 历史证据在本地只保留引用、CI 产物下载缺失时，原文档静态检查可能提示本地工件缺失；不能通过虚构路径或改 Evidence 字段消除。可在可信 CI 中取回对应产物后核验，或为本次结果生成新记录。当前工具不是云端工件服务，不自动上传、下载或认证签名。
 

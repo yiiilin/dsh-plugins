@@ -61,4 +61,4 @@ Evidence-Format: bound-v1
 
 默认 `Owns: —`，由功能/模块拥有具体代码；只有确有独立架构配置才给它主要归属，避免与所有功能重复。
 
-每轮明确决定立即小范围记入当前提案/草稿，不等定稿。实施前真实评审并按 [REFERENCE.md](../REFERENCE.md) 保存 `Kind: design-review` 的 E 记录；这不是批准或测试。新通过证据须绑定真实规格修订/指纹与代码基线，并说明环境；上下文刷新见 [CONTEXT.md](../CONTEXT.md)。不要让旧 passed 自动沿用新正文。
+共同设计、及时记录和评审见 [DESIGN.md](../DESIGN.md)，字段见 [REFERENCE.md](../REFERENCE.md)。模板只组织设计正文；实际验证与单行运行引用见 [VERIFICATION.md](../VERIFICATION.md)，不要另抄方法、计数和版本。

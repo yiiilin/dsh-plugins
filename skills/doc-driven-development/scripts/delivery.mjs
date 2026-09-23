@@ -72,6 +72,8 @@ export function checkDelivery(root, config, rel, { complete = false } = {}) {
       if (specRef(d) !== raw) fail(`${d.path}: authorized specification changed; compare scope, do not merely refresh authorization hash.`);
     } catch (e) { fail(`Invalid authorization specRef: ${e.message}`); }
   }
+  if (targets.some(d => d.fields['Verification-Format'] === 'runner-v1') && !runnerMode)
+    fail('Bound runner-v1 specifications require runner-v1 delivery; legacy evidence cannot silently downgrade execution checks.');
   // Whole selected documents by default; selected-item work requires a recorded scope source.
   let required = [...items.entries()].filter(([id, v]) => /^[RC]-/.test(id) && targetIds.has(v.doc.fields['Doc-ID'])).map(([id]) => id);
   if (!required.length) fail('The bound delivery scope needs real requirement/constraint definitions.');
@@ -114,9 +116,10 @@ export function checkDelivery(root, config, rel, { complete = false } = {}) {
     if (complete && u.state !== 'done') fail(`${name}: not done (${u.state}); do not ask whether to implement already-authorized unfinished work.`);
     const checkDone = u.state === 'done';
     if (checkDone) {
-      if (u.codeBaseline !== baseline) fail(`${name}: completion baseline is stale; check actual integration/worktree, not only worker branch.`);
+      if ((!runnerMode || u.codeBaseline !== undefined) && u.codeBaseline !== baseline) fail(`${name}: completion baseline is stale; check actual integration/worktree, not only worker branch.`);
       for (const entry of strings(u.entryPoints) ? u.entryPoints : []) { try { regular(root, entry); } catch (e) { fail(`${name}: missing runtime entry ${entry}: ${e.message}`); } }
-      if (!strings(u.evidence) || !u.evidence.length) fail(`${name}: done requires actual evidence references.`);
+      if (!runnerMode && (!strings(u.evidence) || !u.evidence.length)) fail(`${name}: done requires actual evidence references.`);
+      if (u.evidence !== undefined && !strings(u.evidence)) fail(`${name}: evidence, when provided, must be an array of record references.`);
       const valid = [];
       if (runnerMode) {
         const vr=p.verification;
@@ -151,7 +154,7 @@ export function checkDelivery(root, config, rel, { complete = false } = {}) {
         valid.push(e);
       }
       for (const id of strings(u.covers) ? u.covers : []) for (const level of strings(u.requiredLevels) ? u.requiredLevels : []) {
-        if (!valid.some(e => e.fields.Level === level && list(e.fields.Covers).includes(id))) fail(`${name}: ${items.get(id)?.title ?? id} lacks required ${level} coverage.`);
+        if (!runnerMode && !valid.some(e => e.fields.Level === level && list(e.fields.Covers).includes(id))) fail(`${name}: ${items.get(id)?.title ?? id} lacks required ${level} coverage.`);
       }
     }
     results.push({ name, outcome: u.outcome, state: u.state, nextAction: u.state === 'blocked' ? u.blocker?.nextAction : u.state === 'done' ? 'report-verified-scope' : a?.mode === 'implement' ? 'continue-without-reconfirmation' : 'respect-current-authorization' });

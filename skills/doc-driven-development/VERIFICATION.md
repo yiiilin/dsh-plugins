@@ -1,6 +1,6 @@
 # 可执行验证：从验收约定到实际运行结果
 
-v0.3.0 的闭环是「需求场景 → 三层设计 → 已授权实施 → 实际入口验证 → 自动采证 → 双向核对」。安装、生效检查、设计评审、项目测试、skill 行为评测分别回答不同问题，不用一个绿色状态代替其他层。旧的 bound-v1 记录继续保留；新实施范围逐步采用 runner-v1，不批量重写历史。
+本版的闭环是「需求场景 → 三层设计 → 已授权实施 → 实际入口验证 → 自动采证 → 双向核对」。安装、生效检查、设计评审、项目测试、skill 行为评测分别回答不同问题，不用一个绿色状态代替其他层。旧的 bound-v1 记录继续保留；新实施范围逐步采用 runner-v1，不批量重写历史。
 
 ## 从人的场景出发，不从测试数量出发
 
@@ -52,8 +52,8 @@ node "$SKILL_DIR/scripts/verify.mjs" . --plan docs/changes/import.verify.json \
 # 3. 只读复核本次实际产物；每次运行的路径由命令返回。
 node "$SKILL_DIR/scripts/verify.mjs" . --report .doc-driven/verification/runs/<run-id>/run.json
 
-# 输出可合入原文档验证区的片段，不自动编辑文档。
-node "$SKILL_DIR/scripts/verify.mjs" . --report .doc-driven/verification/runs/<run-id>/run.json --evidence
+# 显示自然名称、场景、限制和单行记录引用；不自动编辑文档。
+node "$SKILL_DIR/scripts/verify.mjs" . --report .doc-driven/verification/runs/<run-id>/run.json --summary
 ```
 
 `--run` 才执行。计划语法错误、指纹不匹配、design-only/hold 或工作流关闭时不执行。安装/upgrade/doctor/index/check-doc-set 都不会因此开始运行项目测试。既有 `init` 仍只转发安全安装。
@@ -63,6 +63,8 @@ node "$SKILL_DIR/scripts/verify.mjs" . --report .doc-driven/verification/runs/<r
 ```text
 Verification-Format: runner-v1
 Verification-Plan: docs/changes/import.verify.json
+# 真实运行后才在文档头加入下面字段（占位不可照搬）：
+Verification-Receipt: .doc-driven/verification/runs/<run-id>/run.json#<sha256>
 ```
 
 计划字段与完整示例见 [FORMATS/verification-plan.md](FORMATS/verification-plan.md)。默认绑定文档全部 R/C；部分范围要有 selectedItems 和实际 scopeSource，不能为了变绿缩小已授权任务。所有列出的检查均为必需检查；可选测试的跳过必须明确命名及理由，不能把必测也放入 optionalCases。
@@ -122,7 +124,11 @@ manual 是显式的未自动完成出口，本版不自动认证人工验收，�
 
 失败和成功分别保留，不提供“不断重试直到绿并删除前次失败”。SIGINT/TERM 会尽力终止进程组并落盘中断结果；强杀/断电可能只留下部分产物与锁，不能当作有效证据。确认原进程已停止后，才手工处理残留锁；不得启动前自动删锁。Linux/macOS 采用进程组清理；Windows 只能尽力终止直接子进程，外部容器/作业对象才是可靠隔离边界。
 
-新交付包增加 `verification: {"mode":"runner-v1", "plan":"实际计划路径"}`；每个完成单元的 runs 绑定 `run.json#sha256`。旧 E 字段仍可由 `--evidence` 生成，新增 Runner-Receipt/Runner-Check 连接实际运行。不要自己改 run.json 或重算校验伪装重测。运行后只增补 E 记录与状态不会使自身指纹循环变化。
+新交付包使用 `verification: {"mode":"runner-v1", "plan":"实际计划路径"}`，完成单元的 runs 绑定 `run.json#sha256`。新规格在文档头记录同一 `Verification-Receipt`。检查器直接从通过当前版本核验的记录判定场景、方法、验证层与代码基线；**不要求再抄完整 E、Executed/Skipped/Failed 或 unit.codeBaseline**。提供旧字段时仍检查矛盾，不默默忽略错误。
+
+`--summary` 是只读视图，不是新证据：输出实际场景、验证层、跳过及限制，不省略失败/受阻/过期；不能因为一个静态检查通过就称业务可用。只有当前核验通过才输出可保存的单行指针。只将引用行放在文档头，正文链接查看结果；把整段动态摘要贴进契约正文仍会改变保守指纹。无需新数据库、总结文档或自动改写正文。
+
+历史 `--evidence` 继续生成完整 E；已有 E 仍兼容且校验，不批量删改。设计评审、批准和人工验收不能由运行记录替代。不要自己改 run.json 或重算校验伪装重测；头部指针更新不使契约自身失效，但不能授权新含义。
 
 ```sh
 node "$SKILL_DIR/scripts/check-doc-set.mjs" . --base <实际比较基线> --design --release \
@@ -130,7 +136,7 @@ node "$SKILL_DIR/scripts/check-doc-set.mjs" . --base <实际比较基线> --desi
 # 复杂交付追加 --delivery docs/changes/<当前提案>.md
 ```
 
-runner-v1 的当前交付范围要求真实当前验收记录，旧手写 passed 不能代替。新检查同时验证 plan、receipt、输出哈希和解析结果，不能只改 Result 字段放行。旧文档未纳管时继续显示 records-only/not-assessed，不暗示已由运行器验证；迁移本次实质修改范围即可，不升级全库或重跑无关历史测试。旧运行在工具实现变化后也需复核，不擅自刷新 toolHash。
+runner-v1 的 passed 声明及当前交付范围都要求真实当前验收记录，旧手写 passed 不能代替。新检查同时验证 plan、receipt、输出哈希和解析结果，不能只改 Result 字段放行。旧文档未纳管时继续显示 records-only/not-assessed，不暗示已由运行器验证；迁移本次实质修改范围即可，不升级全库或重跑无关历史测试。旧运行在工具实现变化后也需复核，不擅自刷新 toolHash。本版保持整库代码快照、规格、计划、输入和工具变化的保守失效判定，不通过缩窄依赖范围来制造少跑测试。
 
 ## 安全与可信度：先讲清楚，不制造新错觉
 
@@ -147,3 +153,9 @@ runner-v1 的当前交付范围要求真实当前验收记录，旧手写 passed
 ## 依据与版本边界
 
 实现使用 [Node.js v22.16.0 child_process](https://nodejs.org/download/release/v22.16.0/docs/api/child_process.html) 的参数数组子进程与 [node:test 自定义 reporter](https://nodejs.org/download/release/v22.16.0/docs/api/test.html)；实际验证版本与操作系统见 [TESTING.md](TESTING.md)。借鉴的是官方执行/事件接口，不是声称所有工具/环境都已经兼容。风险边界和原项目规范继续优先。
+
+## 精简不得改变验证责任
+
+保留场景覆盖的逐项审阅：正常、失败、边界、权限与适用的重复/并发/恢复路径，实际装配及消费者，观察点和反例。loadPlan 只验证声明范围有检查，不会发现所有遗漏业务场景；执行前从原始目标复核范围与测试断言，实施后双向核对。不得以一个 happy path 覆盖 R/C 就声称穷尽。
+
+本版不删任何解析格式、必测、版本、资源或真实性边界。新单行路径和复杂交付都会复核完整计划、每项必需检查、原始输出与报告；部分范围仍需真实 scopeSource，图文说明与人工/独立审阅按风险保留。减少的是同一运行事实在多个文件中的重复记录，而不是覆盖、方法或可信边界。

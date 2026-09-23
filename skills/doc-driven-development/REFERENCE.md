@@ -44,7 +44,10 @@ Verification: not-run
 
 | 字段 | 用途 |
 |---|---|
-| `Evidence-Format` | 新建受管规格使用 `bound-v1`；通过声明须有同时绑定规格修订/正文与代码基线的证据。旧无字段文档保留，未绑定结果普通检查警告、严格交付不认可 |
+| `Evidence-Format` | `bound-v1` 为旧 E/独立评审记录的绑定规范；runner 直接核验运行记录，不强制重复 E。旧未绑定结果普通检查警告、严格交付不认可 |
+| `Verification-Format` | 新实施规格用 `runner-v1`；不能静默删 profile 绕过门禁 |
+| `Verification-Plan` | 真实计划的仓库相对路径；草稿可 pending，交付不可以 |
+| `Verification-Receipt` | 可选的固定 `run.json#sha256` 头部引用，按当前运行核验；不认证审批、也不改实现状态 |
 | `Depends on` | 可选，逗号分隔的当前 Doc-ID 或 R-/C- 等条目标识；只记录实际语义依赖，普通超链接不自动当作强依赖 |
 | `Design-Format` | 新建或本次完成结构升级的 feature/module 填 `layered-v1`；旧文档缺字段不自动改写。检查范围和严重度见 DESIGN.md |
 | `Owns names` | 逗号分隔的稳定接口名，如 `event:import.done`、`package.json#/exports`；全仓唯一主要归属 |
@@ -85,9 +88,11 @@ Verification: not-run
 
 词汇表仅在术语确有歧义时添加；不强制排斥自然同义词，不依赖其他 skill 的术语或 ADR 模板。
 
-## 5. 要求—实现—证据
+## 5. 要求—实现—证据（含历史 E 与独立评审格式）
 
 重要规则使用独立自然标题，后接 `<!-- ddd:item R-IMPORT-001 -->` 定义稳定标识；旧 `### R-IMPORT-001 失败时不发布部分结果` 继续支持。设计约束可用 `C-IMPORT-001`。身份跨仓唯一，定义后不重排；用户导航与报告使用领域/模块/行为，不展示内部代号。局部实现细节不必全部编号。
+
+runner-v1 默认通过文档头 `Verification-Receipt` 关联实际运行，不复制计数/方法/环境；详见 [VERIFICATION.md](VERIFICATION.md)。下面 E 写法用于兼容历史与独立人工/评审记录，不是新 runner 必填项。
 
 用表格关联要求、实现路径与证据；同一模块可以服务多个功能，主契约只写一次。接口名称或配置字段可在 `Owns names` 说明，具体符号和 JSON Pointer 的存在需要语言工具或人工核查，通用脚本不声称完成此检查。
 
@@ -123,7 +128,7 @@ node "$SKILL_DIR/scripts/context.mjs" . --doc FEAT-IMPORT --bindings
 
 需要实现定位表发生变化时，先完成该表再固定本次规格身份；添加新的 E 标题和结果不会改变指纹。一条目标需求或图变化，即使忘记递增修订号也会使旧绑定失效；有 `--base` 时检查器对受管新格式/严格交付进一步检测正文变化未递增修订。指纹不是防篡改审批，随意改内容后重写 Approval/Spec-Refs 仍需独立审阅限制。
 
-历史 E 可以保留当时的 passed/failed 和旧 Spec-Refs；过时记录发警告，不计为当前有效证据。当前 `Verification: passed` 对 `bound-v1` 或已带绑定的声明，必须有当前匹配记录；旧未绑定记录普通检查只警告并统计 unbound，**`--release` 无论文档是否升级格式都不能使用未绑定证据**。不得借删格式字段绕过交付。
+历史 E 可以保留当时的 passed/failed 和旧 Spec-Refs；过时记录发警告，不计为当前有效证据。当前 `Verification: passed` 对非 runner 的 `bound-v1` 或已带绑定的声明，必须有当前匹配 E；runner passed 必须有当前有效的 acceptance 运行记录；旧未绑定记录普通检查只警告并统计 unbound，**`--release` 无论文档是否升级格式都不能使用未绑定证据**。不得借删格式字段绕过交付。
 
 ### 设计评审记录（不是测试证据）
 
@@ -167,7 +172,7 @@ Detail: 尚未执行。实施前替换为真实评审范围、问题裁决与定
 
 工作中允许有显式提案和待验证差异；合并/交付时要报告剩余问题。严格交付检查会拒绝受影响文档未确认、未完整实现或未通过验证的状态；它是可选门禁，不妨碍只做逆向记录或渐进接管。
 
-标准工作顺序：共同讨论并即时记录 → 整理设计与真实评审（`--base REF --design --review`）→ 在明确授权范围实现 → 双向核对与真实测试 → 更新当前文档与版本绑定 → `--base REF --design --release`。纯逆向、未授权实施的设计工作不运行 release 冒充交付。没有 Git 可做普通/全当前 design/review 检查和手工范围核对，release 仍要求明确 Git 基线。修改文档不必机械制造代码改动：获批且已授权实施的契约变更才进入代码闭环；只记录现状或改正描述不自动改代码。
+有新设计的标准工作顺序：共同讨论并即时记录 → 整理设计与真实评审（`--base REF --design --review`）→ 在明确授权范围实现 → 双向核对与真实测试 → 更新当前文档与版本绑定 → `--base REF --design --release`。契约未变的局部修复不重做原设计/审批；按风险自检并补真实回归和集成验收。纯逆向、未授权实施的设计工作不运行 release 冒充交付。没有 Git 可做普通/全当前 design/review 检查和手工范围核对，release 仍要求明确 Git 基线。修改文档不必机械制造代码改动：获批且已授权实施的契约变更才进入代码闭环；只记录现状或改正描述不自动改代码。
 
 同一规格/代码版本下仍留有 failed 记录时，不自动采用“最后一次通过”。须在相关原记录中保留问题及其真实处理/复核来源后更新结论，或在新规格/代码版本下重新验证；不得删除失败记录来掩盖未解决问题。
 
@@ -179,17 +184,15 @@ Detail: 尚未执行。实施前替换为真实评审范围、问题裁决与定
 
 隐藏 `ddd:item` 与旧编号标题都由同一解析器识别，证据 E 子树排除与版本绑定同样有效；标记必须紧随真实标题。只将旧标题 ID 移到标记，且自然标题/正文保持不变时，保守指纹按旧表示规范化；真实内容变更仍使旧证据失效。不得把要求藏在 E 里，不能在代码围栏或任意 HTML 注释里伪造身份。显示迁移须检查标题入链，自动检查不证明锚点兼容。
 
-已有 E 字段继续使用；选择交付包并将单元标 done 时增加：`Level: component / integration / acceptance / regression`、`Executed: 正整数`、`Skipped: 0`、`Artifact: 本地非空日志/报告相对路径`。这些计数是本条必需用例，不等于整个测试套件；可选跳过另行披露。Artifact 不包含密钥/个人数据，工具只核路径及非空，不证明日志真实。`Kind: design-review` 不满足执行验收。
+仅 records-only 兼容路径：选择交付包并将单元标 done 时，旧 E 增加：`Level: component / integration / acceptance / regression`、`Executed: 正整数`、`Skipped: 0`、`Artifact: 本地非空日志/报告相对路径`。这些计数是本条必需用例，不等于整个测试套件；可选跳过另行披露。Artifact 不包含密钥/个人数据，工具只核路径及非空，不证明日志真实。`Kind: design-review` 不满足执行验收。
 
 `check-doc-set --delivery <已有提案.md>` 检查当前声明范围的任务覆盖、持续授权记录和 done 证据；与 `--release` 同用要求各单元全部 done。未选择交付包则 `stats.delivery.status: not-assessed`，不假称真实入口验证过。脚本不执行代码、不启动 agent、不认证授权；实际调用链和验收仍须由执行者和集成人核对。交付包及模型分工均可选，不要求批量改写历史文档。
 
 
-## v0.3 runner-v1：本地实际执行来源
+## runner-v1：运行事实只保存一次
 
-新实施规格头可声明 `Verification-Format: runner-v1` 与 `Verification-Plan: docs/changes/<实际计划>.verify.json`。草稿允许 pending；当前严格交付必须有有效计划和实际验收记录。旧文档不会被安装器补字段；从 base 已有 runner-v1 的当前文档不得删除 profile 来躲避门禁。
+新规格用 Verification-Format/Plan，运行后头部保留 `Verification-Receipt: run.json路径#sha256`。普通 passed 与严格交付都直接核验当前计划、规格/代码/输入/工具、输出及解析的命名验收结果，不需要 E 副本。`verify --report ... --summary` 只读输出引用和面向人的场景/结果/限制；不写文件、不批准、不缩范围。
 
-新 E 仍采用 bound-v1，额外含 `Runner-Receipt: .doc-driven/verification/runs/<ID>/run.json#sha256` 与 `Runner-Check: 命名检查id`，由 `verify --report ... --evidence` 从通过的记录输出。复核原始产物和覆盖后再合入原验证区，不手动造 record，不改用户正文。普通 Artifact 字段兼容历史，但它本身不是执行认证。
+头部指针属于 bookkeeping，不改变契约指纹；正文中的普通摘要仍属于内容，不能在正文隐藏新的要求。采用单行来源后不需重排身份、删除历史或复制旧计数。旧 Runner-Receipt/Runner-Check E 与 --evidence 继续兼容，存在时仍核验真实性边界和一致性。人工批准、人工验收及设计评审不能自动派生。
 
-`--verification-report` 只读检查指定记录的当前规格/计划/代码/工具、输出哈希与解析结果；不会执行命令。`--release` 对 runner-v1 选中范围要求当前实际 acceptance，不将静态 command 当作场景。复杂包使用 `verification.mode=runner-v1`，完成 unit.runs 绑定本次记录；同一次运行若支持多个验证层，在计划 alsoLevels 明示，不能冒充多次独立测试。
-
-手工旧 E 字段、运行器观测、设计评审和人工验收分开。未自动验证的部分保持明确限制；本地哈希不是不可篡改签名。执行、环境和报告格式的详细边界见 [VERIFICATION.md](VERIFICATION.md)。
+复杂交付 unit.runs 直接提供代码基线与各 covers × requiredLevels 的实际执行覆盖；unit.evidence/codeBaseline 不再必填，但提供旧值则检查矛盾。非 runner 交付仍保留全部旧证据要求。本地哈希非签名，详细执行与信任边界只在 [VERIFICATION.md](VERIFICATION.md) 定义。

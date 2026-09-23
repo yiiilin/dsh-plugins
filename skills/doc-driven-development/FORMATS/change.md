@@ -49,7 +49,7 @@ D-EXAMPLE-001：场景、决定、适用边界/例外、理由、确认来源、
 
 确认后在本提案记录 `Approval` 与 `Approved revision`。实现及核对后更新当前文档，保留真实批准来源；本提案标 `superseded`，用 `Superseded by` 指向当前文档，并在正文列出全部合入结果。不要让当前文档只能靠读一串历史提案才能理解。
 
-每轮明确决定立即小范围记入当前提案/草稿，不等定稿。实施前真实评审并按 [REFERENCE.md](../REFERENCE.md) 保存 `Kind: design-review` 的 E 记录；这不是批准或测试。新通过证据须绑定真实规格修订/指纹与代码基线，并说明环境；上下文刷新见 [CONTEXT.md](../CONTEXT.md)。不要让旧 passed 自动沿用新正文。
+共同设计与即时记录见 [DESIGN.md](../DESIGN.md)，字段和独立评审记录见 [REFERENCE.md](../REFERENCE.md)。只记本次差异，不复制流程规章。
 
 ## 实施意图与分工（有实际开发任务时才写）
 

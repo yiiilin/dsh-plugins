@@ -236,9 +236,10 @@ test('maintained entry docs no longer prescribe standalone init as a project act
     assert.ok(!/node[^\n]*scripts\/init\.mjs/.test(text), p);
   }
   const skill = fs.readFileSync(path.join(PKG, 'SKILL.md'), 'utf8');
-  assert.ok(skill.indexOf('## 先完成项目接入') < skill.indexOf('## 先确定工作模式'));
-  for (const term of ['项目级采用', 'activation: ready', 'incomplete', 'enabled: true', '不重复索取', '仅本次'])
+  assert.ok(skill.indexOf('## 任务入口') < skill.indexOf('## 日常主流程'));
+  for (const term of ['INSTALL.md', 'activation: ready', 'enabled: true', '临时', '唯一启用入口'])
     assert.ok(skill.includes(term), term);
+  assert.match(skill, /ready 不重复安装/); assert.match(skill, /disabled 不自行重开/);
 });
 test('package supports known unmanaged 0.2.0 and 0.2.1 predecessors', () => {
   const manifest = installation.readPackage().manifest;

@@ -30,9 +30,7 @@
       "entryPoints": ["src/main.mjs"],
       "runtimePath": "实际入口 -> 后台循环 -> 队列读取 -> 消费者 -> 可观察结果；路径待核对",
       "requiredLevels": ["integration", "acceptance"],
-      "evidence": [],
-      "runs": [],
-      "codeBaseline": "unknown"
+      "runs": []
     }
   ]
 }
@@ -46,20 +44,10 @@
 
 每个 unit 从 queued、implementing、integrating、verifying 到 done；受阻用 blocked，并写 `blocker: {"kind":"decision|environment|dependency|permission", "reason":"具体条件", "nextAction":"谁继续做什么"}`。已经批准的功能缺实现不是新的 decision。并行任务仍由指定集成人核对最终版本。
 
-标 done 后：entryPoints 文件存在（仍须人/agent 检查实际调用），codeBaseline 是最终集成代码快照；每个 covers 对每个 requiredLevels 均有本版有效的通过 E。纯函数/纯局部库没有装配入口时可以 `integration: "not-applicable"` 并写具体 `integrationReason`，不把缺失消费者当不适用。
+标 done 后：entryPoints 存在且实际调用链已核对；runs 引用当前计划下真实 `run.json#sha256`。检查器从运行记录判定最终代码基线、每个 covers × requiredLevels 的真实命名测试覆盖及产物；无有效运行、跳过、失败、过期均拒绝。纯函数可显式 integration=not-applicable 并解释，不以此掩盖缺消费者。
 
-证据写在原规格的验证区或独立共享验证文档，以自然标题 + 隐藏 E 标识组织。除既有字段外：
-
-```text
-Level: integration
-Executed: 1
-Skipped: 0
-Failed: 0
-Artifact: .doc-driven/runs/dispatch-integration.log
-```
-
-这些是字段形态而非真实执行声明。实际记录必需用例的数量、具体环境、方法、结果及非空本地工件；一个 E 只有一个 Level。多个级别可引用同一实际测试产物但需各自说明覆盖，不把同一运行谎称为多次独立验证。设计评审不代替执行证据。保存工件须脱敏；脚本只核路径/版本/非空，不认证它确实来自测试。
+新 runner 路径不要求 unit.evidence 或 codeBaseline 重复字段；提供旧字段时仍核对，不能容忍矛盾。旧 records-only 包仍按原规则要求版本绑定 E、方法/环境、必测 executed/skipped/failed 和非空工件，不能冒充 runner 采证。设计评审不能代替执行。
 
 在同一提案正文可附一段委托约定：主持/写入者、执行者、集成人、允许路径、输入版本、禁止改变、验收前提、预算和停止条件。不强制更多 JSON 字段，也不要求用任意模型 API 执行。
 
-新版完成单元在 runs 填实际 `run.json#sha256`；runner 会检验其当前计划、命名场景、所需验证层与产物，不仅核 E 字段。`--evidence` 可生成对应 E 片段；每个引用来自实际记录，不由执行者任意改状态。计划与边界见 [VERIFICATION.md](../VERIFICATION.md)。
+机器字段只维护范围、分工、入口、所需验证层与实际 runs，不复制执行事实。计划/采证/限制的唯一详细规则见 [VERIFICATION.md](../VERIFICATION.md)。

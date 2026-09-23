@@ -109,7 +109,7 @@ test('original ordinary file permissions survive rule install and uninstall', t 
   applyPlan(planUninstall(f.root)); assert.equal(fs.statSync(path.join(f.root, 'AGENTS.md')).mode & 0o777, 0o640);
 });
 test('modified managed rule block refuses reinstall and uninstall without any writes', t => {
-  const f = fixture(t); f.setup(); f.put('AGENTS.md', f.read('AGENTS.md').toString().replace('observed', 'MY CHOICE'));
+  const f = fixture(t); f.setup(); f.put('AGENTS.md', f.read('AGENTS.md').toString().replace('<!-- doc-driven-development:end -->', 'MY CHOICE\n<!-- doc-driven-development:end -->'));
   expectNoWrite(f, () => planInstall(f.root), /changed or removed/);
   expectNoWrite(f, () => planUninstall(f.root), /changed or missing/);
 });

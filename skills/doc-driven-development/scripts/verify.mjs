@@ -5,20 +5,23 @@ import { fileURLToPath } from 'node:url';
 import { parseCLI, rootDir, loadConfig } from './lib.mjs';
 import { runAsyncCLI } from './run-process.mjs';
 import { previewPlan, runVerification, checkRun, receiptEvidence } from './verification.mjs';
+import { receiptSummary } from './receipt-view.mjs';
 async function main(){
-  const a=parseCLI(process.argv.slice(2),{'--plan':'value','--run':'flag','--expect-plan':'value','--report':'value','--evidence':'flag','--json':'flag'});
+  const a=parseCLI(process.argv.slice(2),{'--plan':'value','--run':'flag','--expect-plan':'value','--report':'value','--evidence':'flag','--summary':'flag','--json':'flag'});
   if(a.flags.help){console.log(`Usage:
   node verify.mjs [repo] --plan docs/changes/task.verify.json [--json]
   node verify.mjs [repo] --plan docs/changes/task.verify.json --run --expect-plan HASH [--json]
-  node verify.mjs [repo] --report .doc-driven/verification/runs/ID/run.json [--plan PATH] [--json | --evidence]
+  node verify.mjs [repo] --report .doc-driven/verification/runs/ID/run.json [--plan PATH] [--json | --summary | --evidence]
 Preview/report are read-only. --run executes reviewed project commands with bounded output/time, no implicit shell, no auto-install/migration/cleanup, and no sandbox.
---evidence prints runner-bound Markdown; does not edit specifications. Exit 0: selected action passed; 1: failed/blocked/stale/manual; 2: invocation/config error.`);return;}
-  if(a.flags.evidence && (!a.flags.report || a.flags.json || a.flags.run))throw new Error('--evidence requires --report and excludes --json/--run.');
+--summary prints a human-readable result and one pinned header reference; never edits documents.
+--evidence is the legacy full Markdown export, optional for runner-v1. Exit 0: selected action passed; 1: failed/blocked/stale/manual; 2: invocation/config error.`);return;}
+  if((a.flags.evidence || a.flags.summary) && (!a.flags.report || a.flags.json || a.flags.run || (a.flags.evidence && a.flags.summary)))throw new Error('--summary/--evidence require --report and exclude each other, --json and --run.');
   if(a.flags.run && (a.flags.report || !a.flags.plan))throw new Error('--run requires --plan and excludes --report.');
   if(a.flags['expect-plan'] && !a.flags.run)throw new Error('--expect-plan only applies to --run.');
   const root=rootDir(a.root),config=loadConfig(root);let result;
   if(a.flags.report){
-    if(a.flags.evidence){console.log(receiptEvidence(root,config,a.flags.report));return;}
+    if(a.flags.summary){const s=receiptSummary(root,config,a.flags.report,{plan:a.flags.plan});console.log(s.text);if(s.errors.length)process.exitCode=1;return;}
+    if(a.flags.evidence){const v=checkRun(root,config,a.flags.report,{plan:a.flags.plan});if(v.errors.length){console.error(v.errors.join('\n'));process.exitCode=1;return;}console.log(receiptEvidence(root,config,a.flags.report));return;}
     result=checkRun(root,config,a.flags.report,{plan:a.flags.plan});if(result.errors.length)process.exitCode=1;
   }else if(a.flags.plan){
     if(a.flags.run){result=await runVerification(root,config,a.flags.plan,{expectPlan:a.flags['expect-plan']});if(result.report.status!=='passed')process.exitCode=1;}

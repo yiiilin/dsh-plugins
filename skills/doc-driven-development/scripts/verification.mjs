@@ -32,7 +32,7 @@ function inputPath(root, rel) {
 function validateInput(rel) {validateRel(rel.startsWith('@skill/')?rel.slice(7):rel);}
 function hashInput(root,rel) { try {return {path:rel,sha256:fileHash(inputPath(root,rel))};} catch(e) {return {path:rel,missing:e.message};} }
 function toolHash() {
-  return sha(JSON.stringify(['verification.mjs','verify.mjs','run-process.mjs','test-results.mjs','node-reporter.mjs','contract.mjs','identity.mjs','lib.mjs','design-check.mjs']
+  return sha(JSON.stringify(['verification.mjs','verify.mjs','receipt-view.mjs','run-process.mjs','test-results.mjs','node-reporter.mjs','contract.mjs','identity.mjs','lib.mjs','design-check.mjs']
     .map(n=>[n,fileHash(path.join(PACKAGE,'scripts',n))])));
 }
 export function loadPlan(root, config, rel) {
