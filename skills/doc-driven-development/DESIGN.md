@@ -195,3 +195,7 @@ node "$SKILL_DIR/scripts/check-doc-set.mjs" . --base origin/main --design
 `stats.design.status` 为 `not-assessed`、`incomplete` 或 `structure-passed`；`semantic` 固定为 `not-assessed`。脚本只核三层、简单占位、图容器/位置/连接符、引用和原因是否存在，**不证明状态机正确、分支穷尽、图与代码一致、问题已被主动挖掘或用户真实批准**。
 
 旧文档保持原始 Doc-ID、批准来源、正文、链接；只在获准范围补结构。纯结构整理不等于改变获批行为；发现旧结论有问题，先讨论再改。永远不调用安装器“修复”设计正文。
+
+## 确认之后不留在讨论阶段
+
+沿用 [EXECUTION.md](EXECUTION.md) 的持续实施意图：原请求要求开发且同意当前方案时，已经确定的部分进入执行，不能重复请示。只有新增重要差异再讨论。补状态和引用是记录维护，不是业务审批。使用者报告与解释依 [COMMUNICATION.md](COMMUNICATION.md) 以自然名称、具体应用场景和按需 ASCII 视图组织；编号在机器层，不再要求用户读懂内部任务代号。

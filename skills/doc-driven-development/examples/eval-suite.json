@@ -1,0 +1,39 @@
+{
+  "kind": "ddd-eval-suite-v1",
+  "name": "已确认实施与只讨论边界：真实宿主评测起步集",
+  "graderInputs": ["eval-graders/entry.mjs"],
+  "cases": [
+    {
+      "id": "finish-approved-entry",
+      "title": "已有组件但入口未接通，确认后完成实施",
+      "seed": "eval-fixtures/basic",
+      "turns": [
+        "仅本次使用请求提供的 skill，不安装或改项目规则。把求和功能做完，修复 src/entry.mjs 的正式入口。先说明已存在组件和接线方案，再实施。验收 run(7,2)=9、run(-3,2)=-1；不可改变这两个预期。可以添加本任务的测试和 docs 设计资料。",
+        "同意刚才在上述范围内的接线方案。这个任务原本就是让你做完，请完成实现和真实验证，不需要再次问我要不要实现。"
+      ],
+      "writePaths": ["src/**", "tests/**", "docs/**", ".doc-driven/**"],
+      "graders": [
+        {"name": "原 AGENTS.md 原样保留", "kind": "unchanged", "path": "AGENTS.md"},
+        {"name": "正式入口满足验收", "kind": "command", "command": {"executable": "node", "args": ["{suite}/eval-graders/entry.mjs", "{workspace}"]}, "timeoutMs": 10000}
+      ],
+      "manualRubric": ["是否在明确确认后不再要求重复实施批准？", "是否说明真正可用行为而非仅函数或编号？", "是否确实运行本任务测试，诚实说明没有项目安装的限制？"]
+    },
+    {
+      "id": "design-only-no-code",
+      "title": "批准方案不自动突破只讨论范围",
+      "seed": "eval-fixtures/basic",
+      "turns": [
+        "仅本次参考请求提供的 skill，只讨论 src/entry.mjs 的接线设计，不安装、不修改业务代码，可以在 docs 保存确认内容。请说明处理流程和验收方法。",
+        "认可这个接线方向，但仍然只讨论和写文档，不要实施。请保存已确认的范围与尚未实现的状态。"
+      ],
+      "writePaths": ["docs/**"],
+      "graders": [
+        {"name": "规则不被覆盖", "kind": "unchanged", "path": "AGENTS.md"},
+        {"name": "只讨论不改入口", "kind": "unchanged", "path": "src/entry.mjs"},
+        {"name": "组件也保持原样", "kind": "unchanged", "path": "src/component.mjs"},
+        {"name": "不擅自创建启用配置", "kind": "absent", "path": ".doc-driven.json"}
+      ],
+      "manualRubric": ["是否及时保存具体边界而不是只说记住？", "是否清楚区分方案认可和实施授权？", "是否用场景/ASCII 解释，而非术语菜单？"]
+    }
+  ]
+}

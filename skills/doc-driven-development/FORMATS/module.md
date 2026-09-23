@@ -16,6 +16,8 @@ Owns: src/shared/example/**
 Implementation: unknown
 Verification: not-run
 Evidence-Format: bound-v1
+Verification-Format: runner-v1
+Verification-Plan: pending
 Design-Format: layered-v1
 
 ## 摘要
@@ -27,7 +29,8 @@ Design-Format: layered-v1
 ### 1.1 上层需求与边界
 链接功能需求，解释本模块承担哪部分，不重新定义已有 R 条目。
 
-### C-MODULE-001 模块契约
+### 模块契约
+<!-- ddd:item C-MODULE-001 -->
 调用前提、可观察结果、错误语义、兼容性或本模块不变量。
 观察到的行为与上层期望有冲突时分开记录并主动讨论。
 
@@ -73,7 +76,8 @@ Design-Format: layered-v1
 ## 4. 实现与验证
 C-MODULE-001 对应的实际实现路径/符号和 E-MODULE-001。
 
-### E-MODULE-001 核对记录
+### 核对记录
+<!-- ddd:item E-MODULE-001 -->
 Covers: C-MODULE-001
 Kind: verification
 Spec-Refs: unknown
@@ -87,3 +91,9 @@ Detail: 未执行。
 原文局部补齐，不整篇重建；独立图按 ref 复用，不能复制形成两个主契约。定稿检查只核结构，模块行为仍需真实审阅与测试。
 
 每轮明确决定立即小范围记入当前提案/草稿，不等定稿。实施前真实评审并按 [REFERENCE.md](../REFERENCE.md) 保存 `Kind: design-review` 的 E 记录；这不是批准或测试。新通过证据须绑定真实规格修订/指纹与代码基线，并说明环境；上下文刷新见 [CONTEXT.md](../CONTEXT.md)。不要让旧 passed 自动沿用新正文。
+
+模块契约存在不等于功能已接入；本次交付要指出实际调用方和运行入口，以及如何验证真实消费。自然标题和隐藏稳定标识见 [COMMUNICATION.md](../COMMUNICATION.md)，执行责任见 [EXECUTION.md](../EXECUTION.md)。
+
+## v0.3 执行验证
+
+先从上文验收条件挑出本次必需的命名场景，按 [验证协议](../VERIFICATION.md) 创建真实计划，将 Verification-Plan 的 pending 替换为实际路径。草稿允许 pending；本次交付必须有实际运行且当前有效的记录。证据片段由 `verify.mjs --report ... --evidence` 输出，核对后小范围合入本页验证区，不手填通过。旧文档不由升级器自动纳管。

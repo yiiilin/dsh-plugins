@@ -26,7 +26,7 @@ export function scanDesign(text) {
       continue;
     }
     if (comment) { visible[i] = ''; if (line.includes('-->')) comment = false; continue; }
-    const mark = line.match(/^\s*<!--\s*ddd:(section|diagram|acceptance)\b\s*([^]*?)\s*-->\s*$/);
+    const mark = line.match(/^\s*<!--\s*ddd:(section|diagram|acceptance|item|delivery)\b\s*([^]*?)\s*-->\s*$/);
     if (mark) { markers.push({ type: mark[1], value: mark[2].trim(), line: i }); visible[i] = ''; continue; }
     if (line.includes('<!--')) { visible[i] = ''; comment = !line.includes('-->', line.indexOf('<!--') + 4); continue; }
     const open = line.match(/^ {0,3}(`{3,}|~{3,})([^]*)$/);

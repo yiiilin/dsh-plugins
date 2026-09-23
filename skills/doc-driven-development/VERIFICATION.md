@@ -1,0 +1,149 @@
+# 可执行验证：从验收约定到实际运行结果
+
+v0.3.0 的闭环是「需求场景 → 三层设计 → 已授权实施 → 实际入口验证 → 自动采证 → 双向核对」。安装、生效检查、设计评审、项目测试、skill 行为评测分别回答不同问题，不用一个绿色状态代替其他层。旧的 bound-v1 记录继续保留；新实施范围逐步采用 runner-v1，不批量重写历史。
+
+## 从人的场景出发，不从测试数量出发
+
+先在现有功能/模块规格的验收部分说清：什么时候发生、从哪个入口操作、期待看到什么、异常时什么不能发生。AI 与人讨论真实选择；已经同意的行为不再次审批。技术前提由 AI 调查。随后在现有 changes 目录放一份短执行计划，引用规格身份与场景，不另抄一套业务需求。
+
+| 三层内容 | 应证明什么 | 不能代替它的东西 |
+|---|---|---|
+| 需求说明 | 使用者可以观察到的成功、失败、边界行为 | 方法存在、日志有字、作者说 done |
+| 概要设计 | 实际装配、调用者、持久化与消费者接通 | 仅 mock 或直接调用组件 |
+| 详细设计 | 接口、算法、不变量、状态和数据约束 | 覆盖率数字本身 |
+
+```text
+[具体场景和已确认边界]
+           |
+           v
+[命名必测 + 实际入口 + 环境前提]
+           |
+           v
+[预览真实命令和计划指纹]
+           |
+           +--仅设计/无权限--> [不执行；说明边界]
+           |
+           v
+[在已有测试授权内运行]
+           |
+           +--失败/必测跳过--> [修复范围内问题；重新运行]
+           +--环境缺失------> [记录受阻；继续无关检查]
+           +--版本改变------> [证据过期；检查差异]
+           +--人工判断------> [待人工验收，不自动通过]
+           |
+           v
+[检查当前记录 -> 回填证据 -> 双向核对 -> 交付]
+```
+
+原任务已要求实施且批准同一方案，普通范围内测试无需再问“是否实现/是否测试”。命令会触及新权限、付费服务、生产资源或破坏性操作时，只就新增边界确认。预览指纹是防止执行另一份计划，不是让用户手工批准哈希。
+
+## 一个入口，三个动作
+
+在项目根执行，SKILL_DIR 指向实际完整安装位置；所有路径只是形态，替换为真实项目路径。
+
+```sh
+# 1. 只读预览，不创建运行目录、不运行项目代码。
+node "$SKILL_DIR/scripts/verify.mjs" . --plan docs/changes/import.verify.json --json
+
+# 2. 核对计划、脚本、环境和已有授权后，使用预览里的 planHash。
+node "$SKILL_DIR/scripts/verify.mjs" . --plan docs/changes/import.verify.json \
+  --run --expect-plan <planHash>
+
+# 3. 只读复核本次实际产物；每次运行的路径由命令返回。
+node "$SKILL_DIR/scripts/verify.mjs" . --report .doc-driven/verification/runs/<run-id>/run.json
+
+# 输出可合入原文档验证区的片段，不自动编辑文档。
+node "$SKILL_DIR/scripts/verify.mjs" . --report .doc-driven/verification/runs/<run-id>/run.json --evidence
+```
+
+`--run` 才执行。计划语法错误、指纹不匹配、design-only/hold 或工作流关闭时不执行。安装/upgrade/doctor/index/check-doc-set 都不会因此开始运行项目测试。既有 `init` 仍只转发安全安装。
+
+新规格头使用：
+
+```text
+Verification-Format: runner-v1
+Verification-Plan: docs/changes/import.verify.json
+```
+
+计划字段与完整示例见 [FORMATS/verification-plan.md](FORMATS/verification-plan.md)。默认绑定文档全部 R/C；部分范围要有 selectedItems 和实际 scopeSource，不能为了变绿缩小已授权任务。所有列出的检查均为必需检查；可选测试的跳过必须明确命名及理由，不能把必测也放入 optionalCases。
+
+## 运行器具体做什么
+
+每次先固定规格、计划、代码快照、测试/配置输入、项目规则及运行工具的内容指纹。开始检查前与结束后再次核对，变化不自动重贴哈希。运行按计划顺序进行；依赖只允许指向前面的检查。失败依赖阻塞下游，不阻止无关检查。一个工作树同一时间只允许一个本运行器实例；锁不是禁止人或其他工具修改代码的权限系统。
+
+工具以参数数组启动真实子进程，不隐式添加 shell。直接记录命令、工作目录、时间、退出码/信号、超时/中断、有限长度的 stdout/stderr，以及支持格式中的个案结果。测试名前后必须精确匹配 requiredCases；不能用不相关的通过用例代替。
+
+判定规则：
+
+| 情况 | 结论 |
+|---|---|
+| 必需的命名用例都执行通过；无失败；当前版本匹配 | 本次声明范围已验证 |
+| 必测 missing / SKIP / TODO、零实际执行、任何实际失败、非零退出 | 失败，不能以总命令返回 ok 覆盖 |
+| 缺必需环境变量、输入或可执行工具，或依赖失败 | 受阻；记录缺失名称，不记录密钥值 |
+| 超时、中断、输出超限或无法解析报告 | 不通过；保留实际结果，不猜计数 |
+| 执行中/执行后代码、规格、计划、输入或检查器改变 | 过期；查差异后重跑相关检查 |
+| manual 检查 | 待人工验收；运行器不伪造人类签字 |
+
+manual 是显式的未自动完成出口，本版不自动认证人工验收，也不提供把 manual 改成绿色的快捷参数。需要人工的交付继续清楚标识，不能宣称所有机器门禁已经完成。
+
+命令型检查（编译、类型、静态检查）使用 exit-code，**没有伪造的测试数量**，只允许 static/component 层次，不可覆盖 integration/acceptance。若同一次真实测试同时支持 integration 和 acceptance，在计划用 alsoLevels 显式声明；仍是一次运行，而不是两次独立验证。
+
+## 支持的报告与适配边界
+
+**Node 原生测试：**使用包内 `node-reporter.mjs`，读取 node:test 的事件而不是 grep 文本。命名用例在一次运行中需唯一，套件可以分组；重复名字会被拒绝，避免混淆。未执行必测、套件跳过、TODO 或断言失败仍会反映到结果。
+
+**跨语言：**采用运行时生成的 `ddd-test-results-v1` JSON。适配脚本必须真实调用原测试工具，保留其失败退出状态，转换逐个测试结果，再输出本次 DDD_RUN_ID；不得只复制旧 XML/JSON 报告。要求 complete: true 及唯一 case name/status，不读取手填总数决定通过。脚本本身进入 inputs 并接受正常审阅。
+
+```json
+{
+  "kind": "ddd-test-results-v1",
+  "runId": "由本次进程的 DDD_RUN_ID 获取，不硬编码",
+  "complete": true,
+  "cases": [
+    {"name": "具体且唯一的用户场景", "status": "passed", "detail": "可选断言说明"}
+  ]
+}
+```
+
+还支持严格的 flat TAP v13：必须有版本和与个案数一致的计划，解析失败/跳过/TODO/退出；遇到嵌套 TAP、重复用例名、Bail out、未知文本或不完整报告拒绝，不猜测。Node 的嵌套 TAP 应使用原生 reporter。**本版不内置所有语言的 JUnit/pytest/Cargo/Go 适配，也不把它们任意文本当作统一报告。**项目已有可信适配可以沿用。未适配测试只能如实说明运行了命令，不能宣布命名业务场景已验证。
+
+## 采证目录与交付接入
+
+运行器只在新目录写入产物，不覆盖历史运行或项目文档：
+
+```text
+.doc-driven/verification/
+  runs/<unique-run-id>/
+    <check>.stdout.log
+    <check>.stderr.log
+    run.json
+    run.sha256
+```
+
+失败和成功分别保留，不提供“不断重试直到绿并删除前次失败”。SIGINT/TERM 会尽力终止进程组并落盘中断结果；强杀/断电可能只留下部分产物与锁，不能当作有效证据。确认原进程已停止后，才手工处理残留锁；不得启动前自动删锁。Linux/macOS 采用进程组清理；Windows 只能尽力终止直接子进程，外部容器/作业对象才是可靠隔离边界。
+
+新交付包增加 `verification: {"mode":"runner-v1", "plan":"实际计划路径"}`；每个完成单元的 runs 绑定 `run.json#sha256`。旧 E 字段仍可由 `--evidence` 生成，新增 Runner-Receipt/Runner-Check 连接实际运行。不要自己改 run.json 或重算校验伪装重测。运行后只增补 E 记录与状态不会使自身指纹循环变化。
+
+```sh
+node "$SKILL_DIR/scripts/check-doc-set.mjs" . --base <实际比较基线> --design --release \
+  --verification-report .doc-driven/verification/runs/<run-id>/run.json
+# 复杂交付追加 --delivery docs/changes/<当前提案>.md
+```
+
+runner-v1 的当前交付范围要求真实当前验收记录，旧手写 passed 不能代替。新检查同时验证 plan、receipt、输出哈希和解析结果，不能只改 Result 字段放行。旧文档未纳管时继续显示 records-only/not-assessed，不暗示已由运行器验证；迁移本次实质修改范围即可，不升级全库或重跑无关历史测试。旧运行在工具实现变化后也需复核，不擅自刷新 toolHash。
+
+## 安全与可信度：先讲清楚，不制造新错觉
+
+运行器**不是沙箱或签名服务**，不能限制被执行脚本的文件、网络或数据库权限。执行前读真实脚本、确认资源和运行目录；测试任务不自动授权安装依赖、迁移数据库、启动真实生产服务或删除卷。没有权限就报告受阻，不用 sudo/prune 解决。
+
+默认只继承基本系统环境；其他环境变量须在 requiresEnv/passEnv 显式列名。不记录值；传入的值在保存输出时做字面脱敏。不能保证检测所有凭据、编码形式或敏感测试数据，argv/计划不能放秘密，产物仅本地保存、审查后才分享。含秘密的环境值不会存哈希，避免对短值进行离线猜测；数据库内容、远程服务状态等不能靠本地哈希验证，须用隔离环境标识和实际检查控制。
+
+只收集声明的输入与既有代码盘点范围。被忽略的测试适配器、构建产物或运行配置要显式加入 inputs；它们缺失会受阻。未声明的隐藏依赖、运行期间改后又恢复、恶意进程伪造输出等不在保证内。
+
+本地 sha256 检测意外变化，**不是防恶意篡改**。同权限进程可以改日志、测试、计划及校验文件。关键交付应由受保护 CI/独立环境重跑，审阅验收计划、测试断言和 CI 的变更；不要声称“执行器存在就不可作弊”。CI 示例见 [examples/verification-ci.md](examples/verification-ci.md)，不会自动安装到项目。
+
+实际断言通过也不能证明需求完整或测试有效。设计前审阅、实现后双向核对以及必要的反例/变异检查保留；评审意见不能把真实失败覆盖成通过。人的批准也不能从测试结果推导。
+
+## 依据与版本边界
+
+实现使用 [Node.js v22.16.0 child_process](https://nodejs.org/download/release/v22.16.0/docs/api/child_process.html) 的参数数组子进程与 [node:test 自定义 reporter](https://nodejs.org/download/release/v22.16.0/docs/api/test.html)；实际验证版本与操作系统见 [TESTING.md](TESTING.md)。借鉴的是官方执行/事件接口，不是声称所有工具/环境都已经兼容。风险边界和原项目规范继续优先。

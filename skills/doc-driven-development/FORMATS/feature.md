@@ -16,6 +16,8 @@ Owns: src/example/**
 Implementation: missing
 Verification: not-run
 Evidence-Format: bound-v1
+Verification-Format: runner-v1
+Verification-Plan: pending
 Design-Format: layered-v1
 
 ## 摘要
@@ -28,7 +30,8 @@ Design-Format: layered-v1
 ### 1.1 使用者、目标与范围
 需求来源、前提、参与方、明确不做的事。推断意图标来源和未知。
 
-### R-EXAMPLE-001 可观察行为
+### 可观察行为
+<!-- ddd:item R-EXAMPLE-001 -->
 前提、输入、结果，以及失败/重复/边界等实际相关行为。
 不得提前夹带尚未讨论的技术方案。
 
@@ -76,7 +79,8 @@ Design-Format: layered-v1
 说明哪个对象的状态、存储位置、谁能修改；转换事件、守卫条件和副作用。
 复杂时附转换表；这是业务状态，不是文档审批状态。
 
-### C-EXAMPLE-001 关键处理与不变量
+### 关键处理与不变量
+<!-- ddd:item C-EXAMPLE-001 -->
 沿正常/失败路径写关键步骤、前后置条件及必须始终成立的规则。
 按适用性展开事务、锁、重试、幂等、取消、清理与恢复。
 图中每个重要转换都应能找到实现依据或明确的设计机制。
@@ -93,7 +97,8 @@ D-EXAMPLE-001：具体场景、选项、推荐、理由、代价、影响、确�
 | R-EXAMPLE-001 | 实际路径与符号 | E-EXAMPLE-001 |
 | C-EXAMPLE-001 | 实际接口或配置 | E-EXAMPLE-001 |
 
-### E-EXAMPLE-001 核对记录
+### 核对记录
+<!-- ddd:item E-EXAMPLE-001 -->
 Covers: R-EXAMPLE-001, C-EXAMPLE-001
 Kind: verification
 Spec-Refs: unknown
@@ -110,3 +115,9 @@ Detail: 尚未执行，不宣称通过。
 pending 是真实草稿缺口，不能原样作为完成设计；定稿前沿图走查并运行定稿检查。无状态说明依据，复用图用 ref。获批后补真实 Approval/Approved revision；实现、验证分别更新。字段见 [REFERENCE.md](../REFERENCE.md)。
 
 每轮明确决定立即小范围记入当前提案/草稿，不等定稿。实施前真实评审并按 [REFERENCE.md](../REFERENCE.md) 保存 `Kind: design-review` 的 E 记录；这不是批准或测试。新通过证据须绑定真实规格修订/指纹与代码基线，并说明环境；上下文刷新见 [CONTEXT.md](../CONTEXT.md)。不要让旧 passed 自动沿用新正文。
+
+按 [COMMUNICATION.md](../COMMUNICATION.md) 让读者通过自然标题定位；隐藏 ddd:item 保持旧标识稳定。按 [EXECUTION.md](../EXECUTION.md) 为本次实施列可观察行为、正式入口/调用者/消费者、必测场景和当前接线状态，不以编号闭合冒充完成。验收及证据可以链接独立共享记录，不为每次升级给正文增加固定行数。
+
+## v0.3 执行验证
+
+先从上文验收条件挑出本次必需的命名场景，按 [验证协议](../VERIFICATION.md) 创建真实计划，将 Verification-Plan 的 pending 替换为实际路径。草稿允许 pending；本次交付必须有实际运行且当前有效的记录。证据片段由 `verify.mjs --report ... --evidence` 输出，核对后小范围合入本页验证区，不手填通过。旧文档不由升级器自动纳管。

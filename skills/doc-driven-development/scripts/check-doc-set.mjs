@@ -10,6 +10,9 @@ import {
   START, END, candidatePath, resolveBase, changedPaths, docsAtBase,
 } from './lib.mjs';
 
+import { itemHeadings } from './identity.mjs';
+import { checkRun, receiptCovers } from './verification.mjs';
+import { checkDelivery } from './delivery.mjs';
 import { checkLayout } from './doc-layout.mjs';
 import { DESIGN_FORMAT, designFingerprint, validateDesign, scanDesign } from './design-check.mjs';
 import { EVIDENCE_FORMAT, bindingStatus, parseSpecRefs, contractHash, evidenceSections, meaningful } from './contract.mjs';
@@ -26,6 +29,7 @@ const notBlank = s => Boolean(s?.trim() && !/^(?:none|—|-|unknown)$/i.test(s.t
 export function checkRepo(root, config, options = {}) {
   const errors = [], warnings = [], stats = {};
   const error = s => errors.push(s), warn = s => warnings.push(s);
+  if (!config.enabled && options['verification-report']) throw new Error('Disabled workflow cannot validate a verification receipt.');
   if (!config.enabled) return { errors, warnings: ['Workflow disabled in .doc-driven.json; no checks performed.'], stats: { disabled: true } };
   if (options.release && !options.base) throw new Error('--release requires --base to select this change, not every historical observed document.');
   if (options.full && !options.progress) throw new Error('--full requires --progress <path>.');
@@ -76,14 +80,15 @@ export function checkRepo(root, config, options = {}) {
         else nameOwners.set(name, d.path);
       }
     }
-    const scan = scanDesign(d.text), headings = scan.headings;
+    const parsedItems = itemHeadings(d.text), scan = parsedItems.scan, headings = parsedItems.headings;
+    for (const message of parsedItems.errors) error(`${d.path}: ${message}`);
     const clean = scan.visible.join('\n');
     if (h.Status !== 'superseded') bodies.set(d.path, clean);
     const records = evidenceSections(d.text).sections;
     for (let i = 0; i < headings.length; i++) {
-      const heading = headings[i], item = heading.title.match(/^([CRE]-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d+)\b/);
-      if (!item || h.Status === 'superseded') continue;
-      const id = item[1];
+      const heading = headings[i];
+      if (!heading.id || h.Status === 'superseded') continue;
+      const id = heading.id;
       if (/^[RC]-/.test(id) && records.some(e => heading.line > e.start && heading.line < e.end))
         error(`${d.path}: requirement/constraint ${id} cannot be defined inside excluded evidence records`);
       const end = headings[i + 1]?.line ?? scan.lines.length;
@@ -258,6 +263,7 @@ export function checkRepo(root, config, options = {}) {
     const priorById = new Map(prior.map(d => [d.fields['Doc-ID'], d]));
     for (const d of docs.filter(d => d.fields.Status !== 'superseded' && !['adoption', 'verification'].includes(d.fields.Type))) {
       const before = priorById.get(d.fields['Doc-ID']);
+      if(before?.fields['Verification-Format']==='runner-v1' && d.fields['Verification-Format']!=='runner-v1') error(`${d.path}: cannot silently remove the runner verification profile; preserve it or perform an explicitly reviewed workflow change.`);
       if (before && contractHash(before) !== contractHash(d) && Number(d.fields.Revision) <= Number(before.fields.Revision)) {
         const strict = options.release || d.fields['Evidence-Format'] === EVIDENCE_FORMAT;
         (strict ? error : warn)(`${d.path}: contract content changed without increasing Revision; review/approval/evidence cannot silently carry over`);
@@ -379,14 +385,56 @@ export function checkRepo(root, config, options = {}) {
       stats.progress = counts;
     }
   }
+  // Runner execution proof is separate from manually supplied evidence metadata.
+  const runCache=new Map();
+  const readRun=(rel,hash,plan)=>{
+    const key=JSON.stringify([rel,hash,plan]);
+    if(!runCache.has(key))runCache.set(key,checkRun(root,config,rel,{hash,plan}));
+    return runCache.get(key);
+  };
+  let supplied=null;
+  if(options['verification-report']) {
+    supplied=readRun(options['verification-report']);
+    errors.push(...supplied.errors.map(e=>`[runner] ${e}`));
+  }
+  const currentSnapshot=`snapshot:${inv.snapshot}`;
+  for(const e of evidence.filter(e=>e.fields['Runner-Receipt'] && e.fields.Result==='passed')) {
+    const m=e.fields['Runner-Receipt'].match(/^(.+\/run\.json)#([a-f0-9]{64})$/);
+    if(!m){error(`${e.doc.path}: invalid Runner-Receipt`);continue;}
+    const v=readRun(m[1],m[2]),x=v.report?.results.find(c=>c.id===e.fields['Runner-Check']);
+    const issues=[...v.errors];
+    if(!x || x.kind!=='test' || x.status!=='passed' || !(x.level===e.fields.Level || x.alsoLevels?.includes(e.fields.Level)) || !list(e.fields.Covers).every(id=>x.covers.includes(id)))issues.push('Evidence fields do not match the recorded runner check.');
+    if(v.report && e.fields.Baseline!==v.report.initial.codeBaseline)issues.push('Evidence baseline differs from runner receipt.');
+    for(const issue of issues)(e.fields.Baseline===currentSnapshot?error:warn)(`${e.doc.path}: ${e.id}: ${issue}`);
+  }
+  let runnerRequired=0;
+  for(const d of docs.filter(d=>d.fields.Status!=='superseded' && d.fields['Verification-Format'])) {
+    if(d.fields['Verification-Format']!=='runner-v1'){error(`${d.path}: unsupported Verification-Format`);continue;}
+    const selected=!options.base || affectedDesignPaths.has(d.path);
+    if(!selected || !options.release)continue;
+    runnerRequired++;
+    const plan=d.fields['Verification-Plan'];
+    if(!meaningful(plan) || plan==='pending'){error(`${d.path}: runner-v1 requires an actual Verification-Plan before delivery.`);continue;}
+    const candidates=[];
+    if(supplied && supplied.report?.plan===plan)candidates.push(supplied);
+    for(const e of evidence.filter(e=>e.fields['Runner-Receipt'] && e.fields.Result==='passed' && list(e.fields.Covers).some(id=>requirementsFor(d).includes(id)))){
+      const m=e.fields['Runner-Receipt'].match(/^(.+\/run\.json)#([a-f0-9]{64})$/);if(m)candidates.push(readRun(m[1],m[2],plan));
+    }
+    for(const id of requirementsFor(d))if(!candidates.some(v=>receiptCovers(v,[id],['acceptance'])))error(`${d.path}: no current runner acceptance receipt for ${id}; hand-written passed cannot complete runner-v1.`);
+  }
+  stats.execution={status:supplied?supplied.status:runnerRequired?'runner-receipts-required':'not-assessed',profiledScope:runnerRequired,semantic:'not-assessed',authenticity:'local-unsigned'};
+  if (options.delivery) {
+    const result = checkDelivery(root, config, options.delivery, { complete: Boolean(options.release) });
+    errors.push(...result.errors); warnings.push(...result.warnings); stats.delivery = result;
+  } else stats.delivery = { status: 'not-assessed', notice: 'No delivery packet selected; doc checks alone do not prove a runtime path works.' };
   return { errors: [...new Set(errors)], warnings: [...new Set(warnings)], stats,
     limitations: 'Structural checks only: approval authenticity, code semantics, actual reading/test execution, diagram semantics/coverage, discussion quality, symbols, Markdown anchors and external links are not verified.' };
 }
 
 function main() {
-  const args = parseCLI(process.argv.slice(2), { '--json': 'flag', '--base': 'value', '--release': 'flag', '--progress': 'value', '--full': 'flag', '--design': 'flag', '--review': 'flag' });
+  const args = parseCLI(process.argv.slice(2), { '--json': 'flag', '--base': 'value', '--release': 'flag', '--progress': 'value', '--full': 'flag', '--design': 'flag', '--review': 'flag', '--delivery': 'value', '--verification-report': 'value' });
   if (args.flags.help) {
-    console.log('Usage: node check-doc-set.mjs [repo] [--json] [--design] [--review] [--base REF [--release]] [--progress docs/adoption/progress.json [--full]]\n--design: strictly check current feature/module design bodies; with --base only the affected scope. Draft gaps remain reportable, not auto-fixed.\n--review: require version-bound design-review records for the selected scope; never invokes a reviewer or proves review quality.\n--release also requires spec-revision/content-bound execution evidence; legacy unbound claims cannot pass.\nExit 0: structural checks pass (warnings may remain); 1: validation failures; 2: invocation/configuration error.');
+    console.log('Usage: node check-doc-set.mjs [repo] [--json] [--design] [--review] [--verification-report .doc-driven/verification/runs/ID/run.json] [--delivery docs/changes/task.md] [--base REF [--release]] [--progress docs/adoption/progress.json [--full]]\n--design: strictly check current feature/module design bodies; with --base only the affected scope. Draft gaps remain reportable, not auto-fixed.\n--review: require version-bound design-review records for the selected scope; never invokes a reviewer or proves review quality.\n--release also requires spec-revision/content-bound execution evidence; legacy unbound claims cannot pass.\nExit 0: structural checks pass (warnings may remain); 1: validation failures; 2: invocation/configuration error.');
     return;
   }
   const root = rootDir(args.root), result = checkRepo(root, loadConfig(root), args.flags);

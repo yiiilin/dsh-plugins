@@ -8,7 +8,7 @@ import {
   parseCLI, runCLI, rootDir, loadConfig, documents, inventory, sha, list, safePath,
   readJSON, writeAtomic, localLinks, resolveLink, globRE, MAX_TEXT_BYTES, git,
 } from './lib.mjs';
-import { scanDesign } from './design-check.mjs';
+import { itemHeadings } from './identity.mjs';
 import { specRef } from './contract.mjs';
 
 const KIND = 'ddd-context-v1';
@@ -27,14 +27,15 @@ export function buildContext(root, config) {
   };
   for (const f of inv.files) files[f.path] = f.sha256 ?? `unreadable:${f.bytes}:${f.modified ?? 0}`;
   for (const d of docs) {
-    const scan = scanDesign(d.text), current = d.fields.Status !== 'superseded';
+    const parsed = itemHeadings(d.text), scan = { ...parsed.scan, headings: parsed.headings }, current = d.fields.Status !== 'superseded';
+    if (parsed.errors.length) throw new Error(`${d.path}: ${parsed.errors.join('; ')}`);
     const n = add({ id: d.fields['Doc-ID'], kind: 'document', path: d.path, title: scan.headings.find(h => h.level === 1)?.title ?? d.fields['Doc-ID'],
       status: d.fields.Status, revision: d.fields.Revision, current, binding: specRef(d) });
     byPath.set(d.path, n); files[d.path] = sha(d.text); queryText.set(n.id, d.text.toLocaleLowerCase());
     if (current) for (const h of scan.headings) {
-      const id = h.title.match(/^([RCDE]-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d+)\b/)?.[1];
+      const id = h.id;
       if (!id) continue;
-      add({ id, kind: 'item', path: d.path, line: h.line + 1, title: h.title, current: true, owner: n.id, status: d.fields.Status, revision: d.fields.Revision });
+      add({ id, kind: 'item', path: d.path, line: h.line + 1, title: h.label, current: true, owner: n.id, status: d.fields.Status, revision: d.fields.Revision });
       edges.push({ from: id, to: n.id, kind: 'defined-in', source: d.path });
     }
   }
@@ -66,9 +67,9 @@ export function buildContext(root, config) {
         if (n && n.id !== id) edge(id, n.id, 'reference', d.path);
       } catch (e) { warnings.push(`${d.path}: ${e.message}`); }
     }
-    const s = scanDesign(d.text);
+    const parsed = itemHeadings(d.text), s = { ...parsed.scan, headings: parsed.headings };
     for (let i = 0; i < s.headings.length; i++) {
-      const h = s.headings[i], eid = h.title.match(/^(E-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d+)\b/)?.[1];
+      const h = s.headings[i], eid = h.id?.startsWith('E-') ? h.id : null;
       if (!eid) continue;
       const content = s.visible.slice(h.line + 1, s.headings[i + 1]?.line ?? s.lines.length).join('\n');
       const covers = content.match(/^Covers:\s*(.+)$/m)?.[1];
@@ -185,12 +186,19 @@ export function contextReport(root, config, options = {}) {
 }
 function main() {
   const args = parseCLI(process.argv.slice(2), { '--doc': 'value', '--query': 'value', '--direction': 'value', '--depth': 'value', '--limit': 'value',
-    '--bindings': 'flag', '--history': 'flag', '--compare': 'value', '--out': 'value', '--json': 'flag' });
+    '--bindings': 'flag', '--human': 'flag', '--history': 'flag', '--compare': 'value', '--out': 'value', '--json': 'flag' });
   if (args.flags.help) {
-    console.log('Usage: node context.mjs [repo] [--doc ID|path] [--query text] [--direction dependencies|impact] [--depth 1..12] [--limit 1..300] [--bindings] [--history] [--compare .doc-driven/context/name.json] [--out .doc-driven/context/new-name.json] [--json]\nAlways rebuilds from current files, never queries a stale cached index. Default read-only. --out saves a NEW fingerprint snapshot, never a read/approval/evidence claim. JSON output; no database, network, model or project code execution.'); return;
+    console.log('Usage: node context.mjs [repo] [--doc ID|path] [--query text] [--direction dependencies|impact] [--depth 1..12] [--limit 1..300] [--bindings] [--human] [--history] [--compare .doc-driven/context/name.json] [--out .doc-driven/context/new-name.json] [--json]\nAlways rebuilds from current files, never queries a stale cached index. Default read-only. --out saves a NEW fingerprint snapshot, never a read/approval/evidence claim. JSON output; no database, network, model or project code execution.'); return;
   }
+  if (args.flags.human && args.flags.json) throw new Error('--human and --json are mutually exclusive');
   const root = rootDir(args.root), result = contextReport(root, loadConfig(root), args.flags);
-  console.log(JSON.stringify(result, null, 2));
+  if (args.flags.human) {
+    console.log('当前设计位置（索引定位，不代表已阅读或验证）：');
+    for (const n of result.matches) console.log(`- ${n.title ?? n.path} — ${n.path}${n.line ? `:${n.line}` : ''}；${n.status ?? n.kind}`);
+    if (result.bindings) console.log('机器版本绑定需去掉 --human 并使用 --bindings 获取；不在用户摘要显示哈希。');
+    if (result.truncated) console.log('结果被截断，请缩小查询范围。');
+    for (const w of result.warnings) console.log(`WARN ${w}`);
+  } else console.log(JSON.stringify(result, null, 2));
   // Changes are data to inspect, not a script failure; operational errors use exit 2.
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) runCLI(main);

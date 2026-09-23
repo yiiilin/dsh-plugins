@@ -4,14 +4,15 @@ import { fileURLToPath } from 'node:url';
 import { parseCLI, runCLI, rootDir } from './lib.mjs';
 import { planInstall, publicPlan, applyPlan, doctor } from './project-install.mjs';
 
-export function runInstall(argv = process.argv.slice(2), { legacyInit = false } = {}) {
+export function runInstall(argv = process.argv.slice(2), { legacyInit = false, upgrade = false } = {}) {
   const args = parseCLI(argv, {
     '--host': 'value', '--rules-file': 'value', '--skill-dir': 'value', '--mode': 'value',
     '--docs-dir': 'value', '--language': 'value', '--layout': 'value', '--apply': 'flag', '--dry-run': 'flag', '--json': 'flag',
   });
+  const command = upgrade ? 'upgrade.mjs' : 'install.mjs';
   if (args.flags.help) {
     if (legacyInit) console.log('init.mjs is a deprecated compatibility alias of install.mjs. No configuration-only initialization remains.');
-    console.log('Usage: node install.mjs [project] [--host auto|agents|codex|claude|both|custom] [--rules-file FILE.md]\n'
+    console.log(`Usage: node ${command} [project] [--host auto|agents|codex|claude|both|custom] [--rules-file FILE.md]\n`
       + '  [--skill-dir .agents/skills/doc-driven-development] [--mode incremental|full]\n'
       + '  [--docs-dir docs] [--language zh-CN] [--layout domain|preserve] [--apply | --dry-run] [--json]\n'
       + 'Default: read-only preview. --apply safely installs/updates owned files and bounded rule blocks.\n'
@@ -21,7 +22,11 @@ export function runInstall(argv = process.argv.slice(2), { legacyInit = false } 
   if (args.flags.apply && args.flags['dry-run']) throw new Error('--apply and --dry-run are mutually exclusive.');
   const root = rootDir(args.root), plan = planInstall(root, args.flags), output = publicPlan(plan);
   const before = doctor(root);
-  output.entrypoint = legacyInit ? 'init-compat' : 'install';
+  output.entrypoint = legacyInit ? 'init-compat' : upgrade ? 'upgrade' : 'install';
+  output.documents = { action: 'preserved', migration: 'not-run', notice: 'Skill update is not a project-document migration or evidence refresh. Read UPGRADE.md.' };
+  output.sourceVersion = output.version;
+  output.previousVersion = before.installedVersion ?? null;
+  output.versionChanged = output.previousVersion !== output.version;
   output.activationBefore = before.activation;
   output.setupComplete = false;
   output.applied = Boolean(args.flags.apply);
@@ -33,6 +38,7 @@ export function runInstall(argv = process.argv.slice(2), { legacyInit = false } 
   output.activation = output.doctor?.activation ?? before.activation;
   if (args.flags.json) console.log(JSON.stringify(output, null, 2));
   else {
+    if (upgrade) console.log('UPGRADE from this local release; no network/latest lookup. Existing project documents and approvals are preserved.');
     if (legacyInit) console.log('DEPRECATED init.mjs -> install.mjs: full setup only; never config-only activation.');
     console.log(`${output.applied ? 'APPLIED' : 'PREVIEW ONLY'}: ${root} — v${output.version}`);
     for (const c of output.changes) console.log(`${c.operation.toUpperCase()} ${c.path} — ${c.reason}`);
@@ -53,7 +59,7 @@ export function runInstall(argv = process.argv.slice(2), { legacyInit = false } 
         console.log(c.proposedText.slice(start, end));
       }
       console.log(`\nCurrent project activation: ${output.activation}. PREVIEW IS NOT ACTIVATION.`);
-      console.log('No files written. Setup is not completed by this command. Review this plan, then rerun install.mjs with the same options and --apply.');
+      console.log(`No files written. Setup is not completed by this command. Review this plan, then rerun ${command} with the same options and --apply.`);
     }
   }
 }

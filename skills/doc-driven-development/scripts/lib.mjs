@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { decodeText, mergeBlock } from './managed-text.mjs';
 
-export const VERSION = '0.2.4';
+export const VERSION = '0.3.0';
 export const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 export const DEFAULTS = {
   schemaVersion: 1, enabled: true, docsRoots: ['docs'], index: 'docs/README.md',
@@ -292,7 +292,10 @@ export function indexBlock(config, docs) {
   for (const d of [...docs].sort((a, b) => a.path.localeCompare(b.path))) {
     const rel = slash(path.relative(path.dirname(config.index), d.path));
     const h = d.fields;
-    lines.push(`| [${cell(h['Doc-ID'])}](${encodeURI(rel).replace(/#/g, '%23').replace(/\?/g, '%3F').replace(/\(/g, '%28').replace(/\)/g, '%29')}) | ${cell(h.Type)} | ${cell(h.Status)} | ${cell(h.Implementation)} | ${cell(h.Verification)} |`);
+    const title = stripFences(d.text).match(/^#\s+(.+)$/m)?.[1] ?? h['Doc-ID'];
+    const domain = d.path.match(/(?:^|\/)domains\/([^/]+)\//)?.[1];
+    const label = domain ? `${domain} / ${title}` : title;
+    lines.push(`| [${cell(label).replace(/[\[\]]/g, '\\$&')}](${encodeURI(rel).replace(/#/g, '%23').replace(/\?/g, '%3F').replace(/\(/g, '%28').replace(/\)/g, '%29')}) | ${cell(h.Type)} | ${cell(h.Status)} | ${cell(h.Implementation)} | ${cell(h.Verification)} |`);
   }
   lines.push(END);
   return lines.join('\n');

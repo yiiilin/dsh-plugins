@@ -26,11 +26,13 @@ Evidence-Format: bound-v1
 
 操作者提交一份文件，业务查询方读取完成导入的数据。需求来源为本文假设场景，不是既有获批规格；状态查询和错误信息只对有权访问该批次的调用者开放。
 
-### R-DEMO-IMPORT-001 无部分结果
+### 无部分结果
+<!-- ddd:item R-DEMO-IMPORT-001 -->
 
 任一行非法或发布明确中止时，本批次不应产生业务可见的部分结果。全部成功后，本批次的数据整体可见；“清理尚未完成”不应改变可见性。
 
-### R-DEMO-IMPORT-002 结果不明与重复请求
+### 结果不明与重复请求
+<!-- ddd:item R-DEMO-IMPORT-002 -->
 
 如果提交结果无法确定，调用方得到“处理中/结果待确认”及可查询的批次标识，不得被告知已经失败。同一请求标识和相同内容重发时返回已有任务，不创建第二次导入；同一标识对应不同内容时拒绝并说明冲突。
 
@@ -126,7 +128,8 @@ Evidence-Format: bound-v1
 | PUBLISHING 到 SUCCEEDED | 存储事务提交事实成立 | 可见性切换与成功状态必须原子关联 |
 | PUBLISHING 到 FAILED | 可以证明发布已中止，不会再晚到提交 | 不能只因为网络超时或查不到成功记录而失败 |
 
-### C-DEMO-IMPORT-001 发布与错误不变量
+### 发布与错误不变量
+<!-- ddd:item C-DEMO-IMPORT-001 -->
 
 暂存写入不对业务开放；发布前验证任务处于允许状态、输入已完整。事务内原子改变可见性和最终成功状态，不能先暴露数据再异步补成功记录。事务失败需要区分“已确认回滚”与“结果不明”；后一种不向调用者伪报失败。
 
@@ -156,7 +159,8 @@ D-DEMO-IMPORT-003：故障后执行权如何回收，未知提交怎样得到确
 | R-DEMO-IMPORT-002 | 尚未实现 | E-DEMO-IMPORT-001 |
 | C-DEMO-IMPORT-001 | 尚未实现 | E-DEMO-IMPORT-001 |
 
-### E-DEMO-IMPORT-001 场景验证计划
+### 场景验证计划
+<!-- ddd:item E-DEMO-IMPORT-001 -->
 Covers: R-DEMO-IMPORT-001, R-DEMO-IMPORT-002, C-DEMO-IMPORT-001
 Kind: verification
 Spec-Refs: unknown

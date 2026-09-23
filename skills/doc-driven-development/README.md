@@ -1,11 +1,72 @@
-# doc-driven-development 0.2.4
+# doc-driven-development 0.3.0
 
 通过讨论文档控制 AI 的实现，而不是只说愿望、事后读大量代码。普通功能默认一篇文档，内部保留清晰的**需求说明、概要设计、详细设计**三层；复杂模块才拆开。AI 应主动查证、找逻辑缺口、带场景和代价与人探讨，再整理结论；已确认文档可以被质疑，不能擅自改变约束。
 
 支持新功能开发、已有项目渐进接管、全量代码设计恢复和人工改代码后的核对。核心流程是 Markdown 规则；附带工具提供项目安装/核验、文件盘点、索引和结构检查，不调用任何模型、不依赖其他 skill、不需要 API 密钥或联网。
 
 
-## v0.2.4：让讨论、记录、评审和实施形成闭环
+## v0.3.0：实际运行、自动采证、当前版本交付
+
+重点不再只是核对 agent 填写的验证字段。新增 [验证闭环](VERIFICATION.md)、[可执行计划模板](FORMATS/verification-plan.md)、`verify.mjs` 实际执行器，以及 [真实 agent 评测入口](EVALUATION.md)。继承此前即时记录、共同讨论、三层设计/ASCII、领域目录、持续实施授权和安全升级。
+
+```text
+[验收场景] -> [计划和实际入口] -> [已授权运行]
+                                     |
+                                     v
+                   [自动结果 + 规格/代码/测试版本]
+                                     |
+                         +-----------+-----------+
+                         v                       v
+                  [失败/受阻/过期]       [当前场景已验证]
+                         |                       |
+                         v                       v
+                    [修复后重跑]          [双向核对与交付]
+```
+
+默认只读预览；只有 `--run --expect-plan` 才运行用户项目命令。不隐式使用 shell、不自动安装依赖、清理资源或触及生产。缺环境、必测 skip/TODO、零用例、未报告命名场景、超时/输出超限、规格/测试/代码变化均不能当作通过。静态检查与行为验收分开，人工步骤不自动签字。原生 Node reporter、规范 JSON 适配和严格 flat TAP；其他格式不猜测。没有 npm/数据库/模型 SDK 依赖。
+
+```sh
+node "$SKILL_DIR/scripts/verify.mjs" . --plan docs/changes/actual.verify.json --json
+node "$SKILL_DIR/scripts/verify.mjs" . --plan docs/changes/actual.verify.json --run --expect-plan <预览指纹>
+node "$SKILL_DIR/scripts/verify.mjs" . --report .doc-driven/verification/runs/<本次ID>/run.json
+node "$SKILL_DIR/scripts/verify.mjs" . --report .doc-driven/verification/runs/<本次ID>/run.json --evidence
+```
+
+新实施规格用 `Verification-Format: runner-v1` 和实际 `Verification-Plan` 路径。`--evidence` 只输出可合入原验证区的当前片段，旧手填记录不自动变成运行事实。严格交付可加 `--verification-report`；复杂交付包加 runner-v1 模式及 pinned runs。所有记录只代表声明场景，非签名、防恶意篡改或正确性证明，重要交付仍需受保护 CI/审阅。
+
+可实际运行的隔离反例：`node "$SKILL_DIR/examples/verification-demo.mjs" --run --out /实际全新目录`。演示入口断开失败、接通通过、规格变化拒绝旧记录、skip+ok 不通过；不运行用户项目或模型。
+
+`eval.mjs` 可通过真实宿主适配器运行多轮任务与独立判定。包内测试用 fixture 适配器，仅证明评测管道；真实模型效果、费用对比和主观交互质量未因此验证。见 [TESTING.md](TESTING.md)。
+
+## 延续 v0.2.5：已确认就执行，按用户可用行为交付
+
+先读原任务：已要求实现且同意同一方案，agent 应继续开发、接入实际入口、测试和核对，不反复询问是否实施；仅设计仍不写业务代码。任务漏项、SKIP+ok、接口存在但没有消费者，不能称完成。见 [EXECUTION.md](EXECUTION.md)。
+
+对人按领域/模块/行为解释，讨论按需图文结合；新正文可隐藏稳定编号，旧编号继续兼容。见 [COMMUNICATION.md](COMMUNICATION.md)。多 agent 可选择强主 agent 主持，或协调主 agent + 按需强设计子 agent；单写入者、明确边界、有限并行和预算，不保证必然省钱。见 [ORCHESTRATION.md](ORCHESTRATION.md)。
+
+**升级优先入口：[UPGRADE.md](UPGRADE.md)。**把可信 TGZ 安全解压到项目之外，从新包运行下列命令；原升级请求覆盖正常受管写入时，agent 预览无冲突后应直接继续 apply，不再让用户重复推动。项目设计保持原样，格式整理单独处理。
+
+```sh
+NEW_SKILL="/实际新包位置/doc-driven-development"
+PROJECT="/实际项目位置"
+node "$NEW_SKILL/scripts/check.mjs" --no-tests
+node "$NEW_SKILL/scripts/upgrade.mjs" "$PROJECT"
+node "$NEW_SKILL/scripts/upgrade.mjs" "$PROJECT" --apply
+node "$NEW_SKILL/scripts/doctor.mjs" "$PROJECT" --json
+```
+
+完成后当前 agent 重读项目实际新入口；新会话加载需真实验证。没有新包不声称已升级，旧发行包运行出来的结果也不是最新版本检查。已存在的 AGENTS/CLAUDE 原文和项目设计不会被整篇重写。
+
+```sh
+# 自然查询；默认 JSON 方式仍兼容旧使用。
+node "$NEW_SKILL/scripts/context.mjs" "$PROJECT" --query "恢复提示词" --human
+# 跨模块/正式入口接线/多 agent 的交付包复用已有 change，先实际做完再检查。
+node "$NEW_SKILL/scripts/delivery.mjs" "$PROJECT" --packet docs/changes/current.md --complete
+```
+
+跨模块、正式入口接线或多 agent 实施维护交付包；简单局部修复可用简短正文核对。隐藏标识迁移可选，不强迫历史文档迁移。节点/字段/日志通过只证明记录结构，不能证明人真的批准、模型真的读懂或生产路径真正正确。工程参考和真实行为评估边界见 [ENGINEERING.md](ENGINEERING.md)、[TESTING.md](TESTING.md)。
+
+## 继续有效的基础机制（v0.2.4 引入）
 
 每轮明确决定及时小范围保存到已有提案/草稿；先场景和上下文解释，再使用术语；实施前按风险评审，主 agent 查证意见、修改后定向复核。已确认文档可质疑但不能擅改，阶段切换刷新当前材料，不凭旧聊天执行。
 
@@ -25,7 +86,7 @@ node "$SKILL_DIR/scripts/check-doc-set.mjs" . --base REF --design --review
 node "$SKILL_DIR/scripts/check-doc-set.mjs" . --base REF --design --release
 ```
 
-旧记录不批量补假 Spec-Refs/Approval，只有实际重新核对后才记录当前版本；未实施、不允许改代码、纯设计恢复不是 release。升级保护原有正文/配置/规则，未修改的真实 v0.2.3 发行包可由新 install 安全升级。使用旧包目录里的命令仍是旧行为，必须从新包启动升级。
+旧记录不批量补假 Spec-Refs/Approval，只有实际重新核对后才记录当前版本；未实施、不允许改代码、纯设计恢复不是 release。升级保护原有正文/配置/规则，未修改的真实 v0.2.5 及此前已支持发行包可由新 upgrade/install 安全升级。使用旧包目录里的命令仍是旧行为，必须从新包启动升级。
 
 ## 1. 安装到项目
 
@@ -52,7 +113,7 @@ node "$SKILL_DIR/scripts/install.mjs" "$PROJECT" --host both --apply
 
 ### 修复旧 init 留下的半安装状态
 
-已有 `.doc-driven.json` 为 `enabled: true`，但缺项目 skill/规则区块时，直接对原项目运行上面的新包 `install` 两条命令。**无需删除配置或已有 docs；原配置逐字节保留，已有规范只追加受管区块。**使用新解压的 v0.2.4，不要继续调用旧全局 v0.2.1 的 init。
+已有 `.doc-driven.json` 为 `enabled: true`，但缺项目 skill/规则区块时，直接对原项目运行上面的新包 `install` 两条命令。**无需删除配置或已有 docs；原配置逐字节保留，已有规范只追加受管区块。**使用新解压的 v0.3.0，不要继续调用旧全局 v0.2.1 的 init。
 
 ## 2. 检查后续会话是否接入
 
@@ -129,6 +190,8 @@ node .agents/skills/doc-driven-development/scripts/doctor.mjs . --probe
 | 命令 | 实际做什么 |
 |---|---|
 | `install.mjs` | 默认预览；显式执行后安装/升级完整 skill 并安全追加项目规则 |
+| `verify.mjs` | 默认预览；显式执行已审阅验收计划、自动采证、只读复核/输出证据片段 |
+| `eval.mjs` | 默认预览；通过真实宿主适配器执行隔离多轮评测；fixture 与真实模式严格区分 |
 | `doctor.mjs` | 只读检查安装与入口，输出新会话探测请求；不假装实际调用过 agent |
 | `uninstall.mjs` | 默认预览；只移除未修改的本工具接入与发行文件，保留项目文档 |
 | `init.mjs` | 已弃用的兼容文件名，转发完整 `install`；不再单独初始化，不推荐新调用 |
@@ -208,7 +271,7 @@ node "$SKILL_DIR/scripts/check.mjs"
 
 设计正文检查只核三层骨架、验收入口、简单占位、图容器及引用；不证明状态转换合理、异常分支穷尽、图文代码一致或模型主动思考。
 
-它不能证明模型确实读懂了源码、人的批准真实、命令真的执行、算法正确或性能达标；不解析语言符号/配置字段、不校验 Markdown 标题锚点或联网检查链接。Markdown 检查支持常见内联/引用式路径，复杂 HTML/自定义扩展需用项目自己的文档工具。
+文档/交付旧记录检查不能证明命令执行；新版 verify 才直接启动进程与采集报告，但仍不是认证或语义证明。所有工具都不能证明模型确实读懂了源码、人的批准真实、算法完整正确或未测性能达标；不解析语言符号/配置字段、不校验 Markdown 标题锚点或联网检查链接。Markdown 检查支持常见内联/引用式路径，复杂 HTML/自定义扩展需用项目自己的文档工具。
 
 CI 中可以使用这些脚本作底线，再配合项目测试、审阅权限和保护分支。修改 `.doc-driven.json`、确认记录或检查脚本本身也需要正常代码审阅；这里没有隐藏的防篡改审批平台。
 
