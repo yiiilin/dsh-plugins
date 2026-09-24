@@ -48,6 +48,8 @@ A record is only discarded when its session is genuinely gone: if the persistenc
   (the card is keyed by that namespace on both the legacy `settings.plugin.item` slot and the newer `plugins.item` slot).
 - The worker runs `dsh web --profile <profile> --no-open --port <port>` bound
   to loopback; LAN exposure is the job of `@yiln-dsh/dsh-plugin-auth-webserver`.
+  Writing `startCommand` replaces that whole line, so the unit runs exactly the
+  command the operator wrote.
 - The unit gets `DSH_WEB_DAEMON_WORKER=1`; a daemonized GUI detects this and
   keeps only **Restart** available (e.g. to pick up plugin updates) — it asks
   systemd to restart its own unit, so the fresh process comes up even though
@@ -62,7 +64,7 @@ A record is only discarded when its session is genuinely gone: if the persistenc
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.8.1`.
+The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.8.2`.
 
 ### npm package
 
@@ -78,18 +80,40 @@ be restarted once so the host row is composed into the profile.
 ## Configure
 
 Open **Settings > Plugins > Plugin configuration > Web daemon** in the GUI.
-There are five fields:
+There are six fields:
 
 - `enabled`: maps to `systemctl enable/disable` plus start on boot.
 - `systemdScope`: `system` or `user`.
 - `systemdUnit`: unit file name (default `dsh-web.service`).
 - `profile`: DSH profile the worker runs.
 - `port`: worker listen port on loopback.
+- `startCommand`: the unit's whole `ExecStart=` line, written by hand.
+
+`startCommand` is the escape hatch for what the fixed fields cannot express — a
+wrapper script, extra flags, a different launcher. Left empty (the default), the
+plugin generates `dsh web --profile <profile> --no-open --port <port>`. A written
+line is used verbatim: the plugin adds no quoting and rewrites nothing, so the
+operator's own quoting is exactly what systemd parses. It must stay on one line —
+a newline would end `ExecStart=` and let the rest act as another unit directive,
+so such a save is refused with that reason — and its first word must be an
+executable systemd can find (an absolute path is safest). While a command is
+written, `profile` and `port` only serve as the values an empty field falls back
+to, and the card greys them out. The `Environment=` lines
+(`DSH_WEB_DAEMON_WORKER=1`, `DSH_HOME`, `HOME`, `PATH`) are still injected around
+whatever command is written, so a wrapper that still launches `dsh web` keeps
+owning the session registry and session recovery.
 
 Everything else is intentionally fixed: `Restart=always` with
 `RestartSec=2`, start-rate limiting left to systemd's defaults, logs in the
 journal (`journalctl -u <unit> -f`). Saving rewrites the unit, reloads the
 daemon, and restarts the worker if it was running.
+
+The unit is regenerated on every save *and* on every boot of any process that
+composes the plugin row, because the generated `ExecStart` embeds the absolute
+interpreter path this process runs under — an nvm node upgrade would otherwise
+leave a unit that systemd rejects with `203/EXEC`. Writing `startCommand` replaces
+that path with whatever the operator wrote, so keeping such a unit working across
+an upgrade is the operator's own concern.
 
 ## Session recovery
 

@@ -63,6 +63,8 @@ window.__ModuleLoader__.load({
 			"profile.hint": "由工作进程启动的 DSH 配置。",
 			port: "端口",
 			"port.hint": "工作进程始终绑定回环地址；局域网访问由 dsh-plugin-auth-webserver 处理。",
+			startCommand: "启动命令",
+			"startCommand.hint": "留空则按以上配置生成；填写后整行原样写入单元的 ExecStart（首词必须是 systemd 能找到的可执行文件，且不能换行）。填写后 profile 与端口仅作为留空时的默认值。",
 			"journal.hint": "日志写入 systemd 日志：journalctl -u {name} -f",
 			"nested.notice": "当前进程即为受管工作进程：可在此重启（例如插件更新后）；启动/停止和配置由单元所有者管理。",
 			unsaved: "有未保存的更改",
@@ -124,6 +126,8 @@ window.__ModuleLoader__.load({
 			"profile.hint": "DSH profile started by the worker.",
 			port: "Port",
 			"port.hint": "Worker always binds loopback; LAN access is handled by dsh-plugin-auth-webserver.",
+			startCommand: "Start command",
+			"startCommand.hint": "Empty generates the command from the fields above; a written line is used verbatim as the unit's ExecStart (its first word must be an executable systemd can find, and it cannot span lines). While it is set, profile and port only serve as the values an empty field falls back to.",
 			"journal.hint": "Logs go to the systemd journal: journalctl -u {name} -f",
 			"nested.notice": "This process is the managed worker. Restart is available here (e.g. after plugin updates); Start/Stop and configuration live on the unit owner.",
 			unsaved: "Unsaved changes",
@@ -158,16 +162,8 @@ window.__ModuleLoader__.load({
 			style.textContent = `
 .dwd-card{display:flex;flex-direction:column;gap:0;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:12px;list-style:none;transition:border-color .16s,background .16s}
 .dwd-card:hover{border-color:var(--dsw-alias-label-dimmed)}
-.dwd-cardOpen{background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-label-dimmed)}
-.dwd-cardHeader{appearance:none;display:flex;align-items:center;width:100%;gap:12px;padding:14px 16px;border:0;border-radius:12px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
-.dwd-cardHeader:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
-.dwd-cardHead{display:flex;flex:1;min-width:0;flex-direction:column;gap:4px}
-.dwd-cardTitle{color:var(--dsw-alias-label-primary);font-size:15px;font-weight:600;line-height:1.4}
-.dwd-cardDesc{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.5}
 .dwd-unsaved{flex:none;white-space:nowrap;padding:1px 8px;border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:500;line-height:17px}
-.dwd-chevron{flex:none;color:var(--dsw-alias-label-tertiary);transition:transform .16s ease}
-.dwd-chevron[data-open="true"]{transform:rotate(180deg)}
-.dwd-cardBody{display:flex;flex-direction:column;gap:14px;margin:0 16px;padding:12px 0 8px;border-top:1px solid var(--dsw-alias-border-l2);background:transparent}
+.dwd-cardBody{display:flex;flex-direction:column;gap:14px;margin:0 16px;padding:14px 0 8px;background:transparent}
 .dwd-status{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-height:38px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.14));border-radius:6px;background:var(--dsw-alias-bg-layer-1, #fff)}
 .dwd-pill{display:inline-flex;align-items:center;gap:6px;min-height:22px;padding:0 8px;border-radius:999px;font-size:12px;font-weight:600}
 .dwd-pill[data-state="running"]{background:rgba(34,197,94,.14);color:#15803d}
@@ -431,7 +427,6 @@ window.__ModuleLoader__.load({
 		function createWebDaemonCard(t) {
 			return function WebDaemonCard(props) {
 			const timer = props.timer;
-			const [open, setOpen] = React.useState(false);
 			const [snapshot, setSnapshot] = React.useState(null);
 			const [draft, setDraft] = React.useState(null);
 			const [busy, setBusy] = React.useState(false);
@@ -511,34 +506,19 @@ window.__ModuleLoader__.load({
 			const writable = snapshot?.writable !== false;
 			const nested = Boolean(snapshot?.nested);
 			const unit = snapshot?.unit || {};
-			const disabled = busy || !writable || nested;
+			// Configuration stays editable from the managed worker: editing it only
+			// rewrites the unit file and takes effect on the next restart, so it is not
+			// a unit-owner operation. Start/Stop remain `nested`-gated below, because
+			// they would kill this very process before its response could be sent.
+			const disabled = busy || !writable;
+			// A written start command is the unit's whole ExecStart, so the profile
+			// and port fields stop feeding the unit while it is in effect.
+			const customCommand = String(config?.startCommand ?? "").trim() !== "";
 
 			return React.createElement(
 				"div",
-				{ className: open ? "dwd-card dwd-cardOpen" : "dwd-card" },
+				{ className: "dwd-card" },
 				React.createElement(
-					"button",
-					{
-						type: "button",
-						className: "dwd-cardHeader",
-						"aria-expanded": open,
-						onClick: () => setOpen(!open),
-					},
-					React.createElement(
-						"span",
-						{ className: "dwd-cardHead" },
-						React.createElement("span", { className: "dwd-cardTitle" }, t("daemon.title")),
-						React.createElement("span", { className: "dwd-cardDesc" }, t("daemon.desc")),
-					),
-					changed ? React.createElement("span", { className: "dwd-unsaved" }, t("unsaved")) : null,
-					React.createElement(
-						"svg",
-						{ className: "dwd-chevron", "data-open": String(open), viewBox: "0 0 14 14", width: 14, height: 14, "aria-hidden": "true" },
-						React.createElement("path", { d: "M3 5l4 4 4-4", fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round", strokeLinejoin: "round" }),
-					),
-				),
-				open
-					? React.createElement(
 							"div",
 							{ className: "dwd-cardBody" },
 							snapshot === null && error === null
@@ -618,15 +598,29 @@ window.__ModuleLoader__.load({
 												"label",
 												{ className: "dwd-field" },
 												React.createElement("span", { className: "dwd-label" }, t("profile")),
-												React.createElement("input", { className: "dwd-input", value: config.profile || "", disabled: disabled, onChange: (event) => update("profile", event.target.value) }),
+												React.createElement("input", { className: "dwd-input", value: config.profile || "", disabled: disabled || customCommand, onChange: (event) => update("profile", event.target.value) }),
 												React.createElement("span", { className: "dwd-hint" }, t("profile.hint")),
 											),
 											React.createElement(
 												"label",
 												{ className: "dwd-field" },
 												React.createElement("span", { className: "dwd-label" }, t("port")),
-												React.createElement("input", { type: "number", min: "0", max: "65535", className: "dwd-input", value: config.port ?? 3081, disabled: disabled, onChange: (event) => update("port", Number(event.target.value)) }),
+												React.createElement("input", { type: "number", min: "0", max: "65535", className: "dwd-input", value: config.port ?? 3080, disabled: disabled || customCommand, onChange: (event) => update("port", Number(event.target.value)) }),
 												React.createElement("span", { className: "dwd-hint" }, t("port.hint")),
+											),
+											React.createElement(
+												"label",
+												{ className: "dwd-field full" },
+												React.createElement("span", { className: "dwd-label" }, t("startCommand")),
+												React.createElement("input", {
+													className: "dwd-input",
+													value: config.startCommand || "",
+													// The generated line the empty field falls back to.
+													placeholder: customCommand ? "" : (snapshot.command || ""),
+													disabled: disabled,
+													onChange: (event) => update("startCommand", event.target.value),
+												}),
+												React.createElement("span", { className: "dwd-hint" }, t("startCommand.hint")),
 											),
 										),
 										snapshot.command
@@ -639,14 +633,16 @@ window.__ModuleLoader__.load({
 											"div",
 											{ className: "dwd-cardFooter" },
 											changed
+												? React.createElement("span", { className: "dwd-unsaved" }, t("unsaved"))
+												: null,
+											changed
 												? React.createElement("button", { type: "button", className: "dwd-btn ghost", disabled: busy, onClick: () => setDraft(null) }, t("discard"))
 												: null,
 											React.createElement("button", { type: "button", className: "dwd-btn primary", disabled: disabled || !changed, onClick: () => void run("save") }, t("save")),
 										),
 									)
 								: null,
-						)
-					: null,
+						),
 			);
 			};
 		}
@@ -670,8 +666,12 @@ window.__ModuleLoader__.load({
 				inject: () => ({}),
 			}, ServerStatus));
 			const WebDaemonCard = createWebDaemonCard(t);
+			const profileForms = ctx.get("configForms");
+			// Only the official `settings.plugins.tab` page is registered: the
+			// collapsible `settings.plugin.item` / `plugins.item` cards are gone, so a
+			// click opens the page instead of unfolding a row.
 			const registerSettingsCard = (name) => slots.inject(name, () => slots.register(
-				name === "plugins.item"
+				name === "settings.plugins.tab"
 					? {
 						name,
 						id: "web-daemon",
@@ -686,8 +686,7 @@ window.__ModuleLoader__.load({
 					},
 				WebDaemonCard,
 			));
-			registerSettingsCard("settings.plugin.item");
-			registerSettingsCard("plugins.item");
+			if (profileForms !== undefined) registerSettingsCard("settings.plugins.tab");
 		}
 
 		exports.apply = apply;

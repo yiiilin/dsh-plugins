@@ -52,7 +52,7 @@ authentication.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.10.2`.
+The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.10.3`.
 
 The plugin is plain JavaScript source; there is no build step.
 

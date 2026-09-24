@@ -152,7 +152,8 @@ function bootstrapRequest(connection, target, timeoutMs, onRequest) {
         const cookie = Array.isArray(setCookies) && setCookies.length === 1
           ? parseCoreSetCookie(setCookies[0])
           : null;
-        if (response.statusCode !== 303 || location !== "/" || cookie === null) {
+        const rootRedirect = location === "/" || location === "./";
+        if (response.statusCode !== 303 || !rootRedirect || cookie === null) {
           reject(new Error("auth-webserver: core authentication exchange was rejected"));
           return;
         }

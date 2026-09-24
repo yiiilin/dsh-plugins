@@ -1,0 +1,25 @@
+# dsh-plugin-mentor bundle patch. The tool is disabled until a trusted
+# provider/model route is configured in this row.
+
+- insert:
+    - id: dsh-mentor
+      name: '@yiln-dsh/dsh-plugin-mentor'
+      inject:
+        - tools
+        - agents
+        - agentLoop
+        - commands
+        - connection
+        - sessions
+        - sessionPersistence
+        - sessionController
+        - settings
+        - systemPrompt
+      config:
+        enabled: false
+        provider: ''
+        model: ''
+        reasoningEffort: ''
+        maxInputBytes: 98304
+        requestTimeoutMs: 300000
+        globalConcurrency: 2

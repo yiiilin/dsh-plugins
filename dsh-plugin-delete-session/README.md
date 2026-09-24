@@ -6,6 +6,16 @@ GUI.
 ## Behavior
 
 - Adds a trash icon beside the current session title.
+- Draws every control it contributes with the shipped counterpart's own
+  geometry, so the plugin is visually indistinguishable from the shell: the
+  session-header action is the header's own 28px icon button, the
+  batch-management action is the sidebar's round `.iconButton`, the row action
+  is the same `MenuItemButton` cell the shipped Pin/Rename/Fork/Archive rows
+  use, and the confirmation card is the shipped `Modal` (blurred mask, 24px
+  layer-2 card, close button, Escape to dismiss, and 18px capsule buttons whose
+  destructive action carries the error label color instead of a filled red).
+  Icons come from the shipped icon set, resolved by name with a text fallback
+  for a shell that predates them.
 - Adds a Delete session item to each ordinary session's three-dot menu — only while that row's own menu is open, so an unrelated popup (the composer's permission dropdown, for instance) never receives it — and reuses the destructive confirmation dialog. The product renders every menu through one primitives component, so the item is anchored to the menu box that actually sits against the row's action button rather than to the nearest open menu anywhere on the page.
 - Adds a batch-management control beside the New Workspace action; management mode exposes a checkbox on each visible ordinary session plus Cancel and Delete selected controls.
 - Sends selected sessions through one serialized Host operation, so active sessions are flushed and disposed safely before their persisted logs are removed.
@@ -36,7 +46,7 @@ tracked by the plugin.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-delete-session@0.4.3`.
+The published package is `@yiln-dsh/dsh-plugin-delete-session@0.4.5`.
 
 ```bash
 dsh plugin --profile web add file:/path/to/dsh-plugin-delete-session

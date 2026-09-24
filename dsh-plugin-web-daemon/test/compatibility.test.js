@@ -18,6 +18,20 @@ test("uses RC1 settings and recovery controller names", () => {
   assert.doesNotMatch(PATCH_SOURCE, /apiProxy/u);
 });
 
+test("injects Agents so the worker can persist running sessions", () => {
+  const start = PATCH_SOURCE.indexOf("    - id: web-daemon");
+  assert.notEqual(start, -1, "the Web Daemon Host row exists");
+  const nextRow = PATCH_SOURCE.indexOf("\n    - id:", start + 1);
+  const row = PATCH_SOURCE.slice(start, nextRow === -1 ? undefined : nextRow);
+  assert.match(row, /^[ \t]{8}- agents[ \t]*$/mu);
+});
+
+test("supports alpha profile SettingsForms with volatile row config", () => {
+  assert.match(HOST_SOURCE, /typeof settings\?\.register === "function"/u);
+  assert.match(HOST_SOURCE, /settings\.configure\(\{ auto: false \}, ctx\.fiber\)/u);
+  assert.match(HOST_SOURCE, /loader\/volatile-update/u);
+  assert.match(HOST_SOURCE, /\.volatile\(\)/u);
+});
 test("registers the server status panel through the official sidebar footer slot", () => {
   assert.match(CLIENT_SOURCE, /sidebar\.footer\.action/u);
   assert.match(CLIENT_SOURCE, /id: "web-daemon-server-status"/u);

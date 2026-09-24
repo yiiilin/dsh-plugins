@@ -37,7 +37,7 @@ registers only the Git page kind.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-git-graph@0.2.1`.
+The published package is `@yiln-dsh/dsh-plugin-git-graph@0.2.2`.
 
 ```bash
 dsh plugin --profile web add file:/path/to/dsh-plugin-git-graph

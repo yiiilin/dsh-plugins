@@ -25,6 +25,7 @@ window.__ModuleLoader__.load({
     const LOCALE_NS = "delete-session";
     const ZH_DICT = {
       cancel: "取消",
+      close: "关闭",
       "error.http": "删除服务返回 HTTP {status}。",
       "confirm.title": "删除会话",
       "menu.delete": "删除会话",
@@ -39,6 +40,7 @@ window.__ModuleLoader__.load({
     };
     const EN_DICT = {
       cancel: "Cancel",
+      close: "Close",
       "error.http": "The delete service answered HTTP {status}.",
       "confirm.title": "Delete session",
       "menu.delete": "Delete session",
@@ -57,45 +59,72 @@ window.__ModuleLoader__.load({
       return template.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match);
     }
 
+    /*
+     * Every control below copies a shipped counterpart instead of inventing
+     * geometry, so the plugin's buttons are indistinguishable from the shell's:
+     * the header icon action is the session header's own `.moreButton`
+     * (28px, radius 28px, secondary label, hover fill with no color change),
+     * the sidebar icon action is the sidebar's `.iconButton` (`corner-shape:
+     * round` over the theme's global superellipse, 28px, same label and hover); the confirmation card
+     * is ui-primitives' `Modal` (blurred `--dsw-alias-bg-mask-1` mask, 24px
+     * layer-2 card with the prominent elevation, title row with the close
+     * button, secondary warning line behind an error-colored glyph, and 18px
+     * capsule footer buttons whose destructive action carries the error label
+     * color rather than a filled red); the menu row is the Menu cell the
+     * shipped `MenuItemButton` rows use (34px, 8px radius, 13px/20px, danger
+     * hover fill); and the managing pair is the compact Button capsule (28px,
+     * 14px radius). The fallback values stay for a shell whose theme predates
+     * a token.
+     */
     const STYLE_TEXT = `
-.dss-action{box-sizing:border-box;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;flex:none;border:0;border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer}
-.dss-action:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#e7e5e4);color:var(--dsw-alias-state-error-primary,#b91c1c)}
-.dss-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#2563eb);outline-offset:2px}
-.dss-action:disabled{opacity:.55;cursor:default}
-.dss-overlay{position:fixed;inset:0;z-index:1400;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;background:rgba(15,23,42,.42)}
-.dss-dialog{box-sizing:border-box;width:min(420px,100%);padding:20px;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.18));border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#111827);box-shadow:0 18px 50px rgba(0,0,0,.22)}
-.dss-title{margin:0 0 8px;font-size:16px;line-height:22px;font-weight:600}
-.dss-copy{margin:0;color:var(--dsw-alias-label-secondary,#57534e);font-size:13px;line-height:20px;overflow-wrap:anywhere}
-.dss-name{color:var(--dsw-alias-label-primary,#111827);font-weight:600}
-.dss-warning{margin:12px 0 0;color:var(--dsw-alias-state-error-primary,#b91c1c);font-size:12px;line-height:18px}
-.dss-error{margin:12px 0 0;padding:8px 10px;border:1px solid rgba(239,68,68,.35);border-radius:6px;background:rgba(239,68,68,.08);color:var(--dsw-alias-state-error-primary,#b91c1c);font-size:12px;line-height:18px;overflow-wrap:anywhere}
-.dss-buttons{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
-.dss-button{min-height:32px;padding:5px 12px;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.18));border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary,#57534e);font:inherit;font-size:13px;line-height:20px;cursor:pointer}
-.dss-button:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#e7e5e4);color:var(--dsw-alias-label-primary,#111827)}
-.dss-button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#2563eb);outline-offset:2px}
-.dss-button:disabled{opacity:.55;cursor:default}
-.dss-button-danger{border-color:rgba(185,28,28,.45);background:var(--dsw-alias-state-error-primary,#b91c1c);color:#fff}
-.dss-button-danger:hover:not(:disabled){background:var(--dsw-alias-state-error-primary,#b91c1c);color:#fff}
- .dss-batch-control{box-sizing:border-box;min-width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:0 7px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;font:inherit;font-size:12px;line-height:18px;white-space:nowrap}
- .dss-batch-control:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#e7e5e4);color:var(--dsw-alias-label-primary,#111827)}
- .dss-batch-control:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#2563eb);outline-offset:2px}
- .dss-batch-control:disabled{opacity:.55;cursor:default}
- .dss-batch-control-danger{color:var(--dsw-alias-state-error-primary,#b91c1c)}
- .dss-batch-control-danger:hover:not(:disabled){color:var(--dsw-alias-state-error-primary,#b91c1c)}
- div:has(> .dss-batch-control){max-width:160px!important;overflow:visible!important}
-  .dss-batch-control-icon{width:28px;height:28px;min-width:28px;padding:0;border-radius:50%}
-  div:has(> .dss-batch-mode-marker) button:not(.dss-batch-control){display:none!important}
-  .dss-batch-mode-marker{display:none!important}
- .dss-session-checkbox-host{position:absolute;z-index:2;left:4px;top:50%;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;transform:translateY(-50%);border-radius:4px;background:var(--dsw-alias-bg-layer-1,#fff)}
- .dss-session-checkbox-host input{box-sizing:border-box;width:16px;height:16px;margin:0;accent-color:var(--dsw-alias-brand-primary,#2563eb);cursor:pointer}
- .dss-session-checkbox-host:focus-within{outline:2px solid var(--dsw-alias-brand-primary,#2563eb);outline-offset:1px}
- div[role="treeitem"]:has(> .dss-session-checkbox-host){position:relative}
-  .dss-batch-status{position:absolute;z-index:3;left:8px;right:8px;bottom:8px;box-sizing:border-box;padding:7px 9px;border:1px solid rgba(239,68,68,.35);border-radius:6px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-state-error-primary,#b91c1c);font-size:12px;line-height:18px;overflow-wrap:anywhere;box-shadow:0 4px 14px rgba(0,0,0,.12)}
- .dss-menu-delete-wrap{box-sizing:border-box;width:100%;padding:0}
- .dss-menu-delete-item{box-sizing:border-box;width:100%;min-height:40px;display:flex;align-items:center;gap:8px;padding:8px 10px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-state-error-primary,#b91c1c);cursor:pointer;font:inherit;font-size:14px;line-height:22px;text-align:left}
- .dss-menu-delete-item:hover{background:var(--dsw-alias-interactive-bg-hover,#e7e5e4)}
- .dss-menu-delete-item:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#2563eb);outline-offset:-2px}
- .dss-menu-delete-icon{width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;flex:none}
+.dss-action{box-sizing:border-box;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;flex:none;padding:6px;border:0;border-radius:28px;background:transparent;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer}
+.dss-action svg{width:16px;height:16px}
+.dss-action:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#e7e5e4)}
+.dss-action:disabled{cursor:not-allowed;opacity:.4}
+.dss-overlay{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:max(24px,var(--dsh-frame-top-clearance,24px)) 24px;box-sizing:border-box;background:var(--dsw-alias-bg-mask-1,rgba(0,0,0,.24));backdrop-filter:var(--dsw-mask-blur,blur(2px))}
+.dss-dialog{box-sizing:border-box;display:flex;flex-direction:column;gap:20px;width:min(380px,100%);max-height:100%;padding:0 0 24px;border:0;border-radius:24px;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,#111827);box-shadow:var(--dsw-elevation-prominent,0 18px 50px rgba(0,0,0,.22));overflow:hidden}
+.dss-dialogContent{display:flex;flex-direction:column;width:100%;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.dss-dialogHead{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:22px 14px 12px 24px}
+.dss-title{margin:0;font-size:16px;line-height:24px;font-weight:500}
+.dss-close{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary,#57534e);cursor:pointer}
+.dss-close svg{width:14px;height:14px}
+.dss-close:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#e7e5e4)}
+.dss-close:disabled{cursor:not-allowed;opacity:.4}
+.dss-copy{margin:0;padding:0 24px;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary,#111827);overflow-wrap:anywhere}
+.dss-warning{display:flex;align-items:flex-start;gap:10px;margin:20px 0 0;padding:0 24px;color:var(--dsw-alias-label-secondary,#57534e);font-size:14px;line-height:22px;overflow-wrap:anywhere}
+.dss-warning p{margin:0}
+.dss-warningIcon{flex:none;display:inline-flex;margin-top:2px;color:var(--dsw-alias-state-error-primary,#b91c1c)}
+.dss-warningIcon svg{width:18px;height:18px}
+.dss-error{margin:20px 0 0;padding:0 24px;color:var(--dsw-alias-state-error-primary,#b91c1c);font-size:12px;line-height:18px;overflow-wrap:anywhere}
+.dss-buttons{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:0 24px}
+.dss-button{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:36px;padding:0 14px;border:0;border-radius:18px;background:transparent;color:var(--dsw-alias-label-primary,#111827);font:inherit;font-size:14px;line-height:22px;cursor:pointer}
+.dss-button:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#e7e5e4)}
+.dss-button:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active,#e7e5e4)}
+.dss-button:disabled{cursor:not-allowed;opacity:.4}
+.dss-button-outline{border:.5px solid var(--dsw-alias-border-l3,rgba(0,0,0,.18))}
+.dss-button-danger{color:var(--dsw-alias-state-error-primary,#b91c1c)}
+.dss-batch-control{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:4px;flex:none;height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l3,rgba(0,0,0,.18));border-radius:14px;background:transparent;color:var(--dsw-alias-label-primary,#111827);font:inherit;font-size:12px;line-height:18px;white-space:nowrap;cursor:pointer}
+.dss-batch-control:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#e7e5e4)}
+.dss-batch-control:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active,#e7e5e4)}
+.dss-batch-control:disabled{cursor:not-allowed;opacity:.4}
+.dss-batch-control-danger{color:var(--dsw-alias-state-error-primary,#b91c1c)}
+.dss-batch-control-icon{corner-shape:round;width:28px;height:28px;padding:0;border:0;border-radius:50%;color:var(--dsw-alias-label-secondary,#6b7280)}
+.dss-batch-control-icon svg{width:16px;height:16px}
+div:has(> .dss-batch-control){max-width:160px!important;overflow:visible!important}
+div:has(> .dss-batch-mode-marker) button:not(.dss-batch-control){display:none!important}
+.dss-batch-mode-marker{display:none!important}
+.dss-session-checkbox-host{position:absolute;z-index:2;left:4px;top:50%;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;transform:translateY(-50%);border-radius:4px;background:var(--dsw-alias-bg-layer-1,#fff)}
+.dss-session-checkbox-host input{box-sizing:border-box;flex:none;width:16px;height:16px;margin:0;accent-color:var(--dsw-alias-brand-primary,#2563eb);cursor:pointer}
+.dss-session-checkbox-host input:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#2563eb);outline-offset:2px}
+.dss-session-checkbox-host:has(input:disabled){cursor:default;opacity:.5}
+div[role="treeitem"]:has(> .dss-session-checkbox-host){position:relative}
+.dss-batch-status{position:absolute;z-index:3;left:8px;right:8px;bottom:8px;box-sizing:border-box;padding:7px 9px;border:.5px solid var(--dsw-alias-border-l2,rgba(0,0,0,.18));border-radius:8px;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-state-error-primary,#b91c1c);font-size:12px;line-height:18px;overflow-wrap:anywhere;box-shadow:var(--dsw-elevation-prominent,0 18px 50px rgba(0,0,0,.22))}
+.dss-menu-delete-wrap{box-sizing:border-box;position:relative;width:100%;padding:0}
+.dss-menu-delete-item{box-sizing:border-box;display:flex;align-items:center;gap:6px;width:100%;min-height:34px;padding:6px 8px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-state-error-primary,#b91c1c);font:inherit;font-size:13px;line-height:20px;text-align:left;cursor:pointer}
+.dss-menu-delete-item:hover{background:var(--dsw-alias-interactive-bg-hover-danger,rgba(239,68,68,.08))}
+.dss-menu-delete-item:focus-visible{background:var(--dsw-alias-interactive-bg-hover-danger,rgba(239,68,68,.08));outline:none}
+.dss-menu-delete-icon{display:inline-flex;flex:none;width:14px;height:14px;align-items:center;justify-content:center;color:var(--dsw-alias-state-error-primary,#b91c1c)}
+.dss-menu-delete-icon svg{width:14px;height:14px}
 
 `;
 
@@ -107,6 +136,106 @@ window.__ModuleLoader__.load({
       style.textContent = STYLE_TEXT;
       document.head.append(style);
       return () => style.remove();
+    }
+
+    /*
+     * The shipped icon set names its artwork by stroke weight, never by pixel
+     * size, so resolve each glyph from the exports this shell actually carries
+     * and keep a plain replacement for a shell that predates it.
+     */
+    const ICONS = {
+      trash: primitives.IconTrashOutlineRegular ?? primitives.IconTrashOutlineMedium ?? null,
+      checklist: primitives.IconChecklistOutlineRegular ?? primitives.IconChecklistOutlineMedium ?? null,
+      close: primitives.IconCloseOutlineRegular ?? primitives.IconCloseFillRegular ?? null,
+      warning: primitives.IconWarningOutlineRegular ?? primitives.IconWarningTriangleOutlineRegular ?? null,
+    };
+
+    /**
+     * Render one shipped icon at the size its host control uses.
+     * @param {string} name - key into {@link ICONS}.
+     * @param {number} size - square pixel size of the artwork.
+     * @param {string} fallback - text shown when the shell has no such icon.
+     * @returns {object} the icon element.
+     */
+    function icon(name, size, fallback) {
+      const Component = ICONS[name];
+      return Component === null
+        ? React.createElement("span", { "aria-hidden": "true" }, fallback)
+        : React.createElement(Component, { size });
+    }
+
+    /**
+     * The destructive-confirmation card, one dialog for every entry point.
+     *
+     * The markup and geometry are the shipped Modal's: a blurred mask, a 24px
+     * layer-2 card, a title row with a close button, and capsule footer buttons
+     * whose destructive action is outline-filled with the error label color —
+     * the shipped dialogs never fill a button red. Escape and a mask click
+     * cancel, exactly as the Modal does; a busy dialog ignores both.
+     * @param {object} props - locale lookup and the dialog's own state.
+     * @param {Function} props.t - bound locale lookup.
+     * @param {string} props.titleId - id the dialog is labelled by.
+     * @param {string} props.name - session title the request names.
+     * @param {string|null} props.error - failure text, or null while none.
+     * @param {boolean} props.busy - whether the deletion is in flight.
+     * @param {() => void} props.onCancel - dismiss without deleting.
+     * @param {() => void} props.onConfirm - run the confirmed deletion.
+     * @returns {object} the overlay tree.
+     */
+    function ConfirmDialog({ t, titleId, name, error, busy, onCancel, onConfirm }) {
+      React.useEffect(() => {
+        const onKeyDown = (event) => {
+          if (event.key === "Escape") onCancel();
+        };
+        document.addEventListener("keydown", onKeyDown);
+        return () => document.removeEventListener("keydown", onKeyDown);
+      }, [onCancel]);
+      return React.createElement(
+        "div",
+        { className: "dss-overlay", role: "presentation", onClick: onCancel },
+        React.createElement(
+          "div",
+          {
+            className: "dss-dialog",
+            role: "dialog",
+            "aria-modal": "true",
+            "aria-labelledby": titleId,
+            onClick: (event) => event.stopPropagation(),
+          },
+          React.createElement(
+            "div",
+            { className: "dss-dialogContent" },
+            React.createElement(
+              "div",
+              { className: "dss-dialogHead" },
+              React.createElement("h2", { id: titleId, className: "dss-title" }, t("confirm.title")),
+              React.createElement(
+                "button",
+                { type: "button", className: "dss-close", "aria-label": t("close"), disabled: busy, onClick: onCancel },
+                icon("close", 14, "×"),
+              ),
+            ),
+            React.createElement("p", { className: "dss-copy" }, t("confirm.body", { name })),
+            React.createElement(
+              "div",
+              { className: "dss-warning" },
+              React.createElement("span", { className: "dss-warningIcon" }, icon("warning", 18, "!")),
+              React.createElement("p", null, t("confirm.warning")),
+            ),
+            error === null ? null : React.createElement("div", { className: "dss-error", role: "alert" }, error),
+          ),
+          React.createElement(
+            "div",
+            { className: "dss-buttons" },
+            React.createElement("button", { type: "button", className: "dss-button dss-button-outline", disabled: busy, onClick: onCancel }, t("cancel")),
+            React.createElement(
+              "button",
+              { type: "button", className: "dss-button dss-button-outline dss-button-danger", disabled: busy, onClick: onConfirm },
+              busy ? t("delete.busy") : t("delete.confirm"),
+            ),
+          ),
+        ),
+      );
     }
 
     /**
@@ -186,6 +315,46 @@ window.__ModuleLoader__.load({
         }
       }
       if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
+    }
+
+    /**
+     * Run one confirmed deletion and release the dialog's busy flag as soon as
+     * the deletion itself is settled.
+     *
+     * The busy flag gates the dialog's own buttons, so a path that sets it and
+     * never clears it strands the dialog on "Deleting…" — unusable and
+     * uncancellable. The sidebar refresh therefore runs *after* the release:
+     * it is a list-consistency step, not part of the deletion, and a slow or
+     * hung refresh must never keep the dialog disabled.
+     * @param {object} options - the setters, the error mapper, and the work.
+     * @param {(value: boolean) => void} options.setBusy - busy-flag setter.
+     * @param {(value: string|null) => void} options.setError - error-text setter.
+     * @param {(reason: unknown, t: Function) => string} options.messageOf - error mapper.
+     * @param {Function} options.t - bound locale lookup.
+     * @param {() => Promise<void>} options.attempt - the confirmed delete plus navigation.
+     * @param {() => Promise<void>} [options.settle] - post-delete list refresh.
+     * @returns {Promise<boolean>} whether the deletion committed.
+     */
+    async function runConfirmedDelete({ setBusy, setError, messageOf, t, attempt, settle }) {
+      setBusy(true);
+      setError(null);
+      try {
+        await attempt();
+      } catch (reason) {
+        setBusy(false);
+        setError(messageOf(reason, t));
+        return false;
+      }
+      setBusy(false);
+      if (typeof settle === "function") {
+        try {
+          await settle();
+        } catch {
+          // `refreshSessionList` owns its own reload fallback; a refresh failure
+          // is never a deletion failure and must not surface as one.
+        }
+      }
+      return true;
     }
 
     const EMPTY_SESSION_LIST = { current: undefined, ids: [], byId: {} };
@@ -470,26 +639,27 @@ window.__ModuleLoader__.load({
           if (busy) return;
           const selected = model.allIds.filter((id) => selectedIds.has(id) && selectableSet.has(id));
           if (selected.length === 0) return;
-          setBusy(true);
-          setError(null);
-          try {
-            await requestDeleteMany(selected);
-            const selectedSet = new Set(selected);
-            if (selectedSet.has(list.current)) {
-              const archived = new Set(Array.isArray(workspaceList?.archivedSessionIds) ? workspaceList.archivedSessionIds : []);
-              const nextSessionId = (Array.isArray(list.ids) ? list.ids : []).find((id) => {
-                const summary = list.byId[id];
-                return !selectedSet.has(id) && sessionIsVisible(summary, list.current, archived) && summary.blank !== true;
-              });
-              if (nextSessionId !== undefined && typeof sessions?.open === "function") sessions.open(nextSessionId);
-              else if (typeof sessions?.clear === "function") sessions.clear(); else if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
+          await runConfirmedDelete({
+            setBusy,
+            setError,
+            messageOf,
+            t,
+            attempt: async () => {
+              await requestDeleteMany(selected);
+              const selectedSet = new Set(selected);
+              if (selectedSet.has(list.current)) {
+                const archived = new Set(Array.isArray(workspaceList?.archivedSessionIds) ? workspaceList.archivedSessionIds : []);
+                const nextSessionId = (Array.isArray(list.ids) ? list.ids : []).find((id) => {
+                  const summary = list.byId[id];
+                  return !selectedSet.has(id) && sessionIsVisible(summary, list.current, archived) && summary.blank !== true;
+                });
+                if (nextSessionId !== undefined && typeof sessions?.open === "function") sessions.open(nextSessionId);
+                else if (typeof sessions?.clear === "function") sessions.clear(); else if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
 
-            }
-            await refreshSessionList(sessions);
-          } catch (reason) {
-            setBusy(false);
-            setError(messageOf(reason, t));
-          }
+              }
+            },
+            settle: () => refreshSessionList(sessions),
+          });
         };
 
         const openMenuDelete = (target) => {
@@ -508,25 +678,26 @@ window.__ModuleLoader__.load({
         const confirmMenuDelete = async () => {
           if (menuDeleteBusy || menuDeleteTarget === null) return;
           const target = menuDeleteTarget;
-          setMenuDeleteBusy(true);
-          setMenuDeleteError(null);
-          try {
-            await requestDelete(target.id);
-            if (list.current === target.id) {
-              const archived = new Set(Array.isArray(workspaceList?.archivedSessionIds) ? workspaceList.archivedSessionIds : []);
-              const nextSessionId = (Array.isArray(list.ids) ? list.ids : []).find((id) => {
-                const summary = list.byId[id];
-                return id !== target.id && sessionIsVisible(summary, list.current, archived) && summary.blank !== true;
-              });
-              if (nextSessionId !== undefined && typeof sessions?.open === "function") sessions.open(nextSessionId);
-              else if (typeof sessions?.clear === "function") sessions.clear(); else if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
+          await runConfirmedDelete({
+            setBusy: setMenuDeleteBusy,
+            setError: setMenuDeleteError,
+            messageOf,
+            t,
+            attempt: async () => {
+              await requestDelete(target.id);
+              if (list.current === target.id) {
+                const archived = new Set(Array.isArray(workspaceList?.archivedSessionIds) ? workspaceList.archivedSessionIds : []);
+                const nextSessionId = (Array.isArray(list.ids) ? list.ids : []).find((id) => {
+                  const summary = list.byId[id];
+                  return id !== target.id && sessionIsVisible(summary, list.current, archived) && summary.blank !== true;
+                });
+                if (nextSessionId !== undefined && typeof sessions?.open === "function") sessions.open(nextSessionId);
+                else if (typeof sessions?.clear === "function") sessions.clear(); else if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
 
-            }
-            await refreshSessionList(sessions);
-          } catch (reason) {
-            setMenuDeleteBusy(false);
-            setMenuDeleteError(messageOf(reason, t));
-          }
+              }
+            },
+            settle: () => refreshSessionList(sessions),
+          });
         };
 
         const modeMarker = !managing || sectionTarget === null
@@ -569,9 +740,7 @@ window.__ModuleLoader__.load({
                   title: t("manage.start"),
                   onClick: startManaging,
                 },
-                primitives.IconChecklistOutline14
-                  ? React.createElement(primitives.IconChecklistOutline14, { size: 16 })
-                  : React.createElement("span", { "aria-hidden": "true" }, "☷"),
+                icon("checklist", 16, "☷"),
               ),
           headerTarget,
           "dss-batch-controls",
@@ -597,9 +766,7 @@ window.__ModuleLoader__.load({
                   React.createElement(
                     "span",
                     { className: "dss-menu-delete-icon" },
-                    primitives.IconTrashOutline16
-                      ? React.createElement(primitives.IconTrashOutline16, { size: 16 })
-                      : React.createElement("span", { "aria-hidden": "true" }, "×"),
+                    icon("trash", 14, "×"),
                   ),
                   t("menu.delete"),
                 ),
@@ -635,34 +802,15 @@ window.__ModuleLoader__.load({
           : React.createElement("div", { className: "dss-batch-status", role: "alert" }, error);
         const menuDialog = menuDeleteTarget === null
           ? null
-          : React.createElement(
-              "div",
-              {
-                className: "dss-overlay",
-                role: "presentation",
-                onClick: cancelMenuDelete,
-              },
-              React.createElement(
-                "div",
-                {
-                  className: "dss-dialog",
-                  role: "dialog",
-                  "aria-modal": "true",
-                  "aria-labelledby": "dss-menu-delete-title",
-                  onClick: (event) => event.stopPropagation(),
-                },
-                React.createElement("h2", { id: "dss-menu-delete-title", className: "dss-title" }, t("confirm.title")),
-                React.createElement("p", { className: "dss-copy" }, t("confirm.body", { name: menuDeleteTarget.title })),
-                React.createElement("p", { className: "dss-warning" }, t("confirm.warning")),
-                menuDeleteError === null ? null : React.createElement("div", { className: "dss-error", role: "alert" }, menuDeleteError),
-                React.createElement(
-                  "div",
-                  { className: "dss-buttons" },
-                  React.createElement("button", { type: "button", className: "dss-button", disabled: menuDeleteBusy, onClick: cancelMenuDelete }, t("cancel")),
-                  React.createElement("button", { type: "button", className: "dss-button dss-button-danger", disabled: menuDeleteBusy, onClick: () => void confirmMenuDelete() }, menuDeleteBusy ? t("delete.busy") : t("delete.confirm")),
-                ),
-              ),
-            );
+          : React.createElement(ConfirmDialog, {
+              t,
+              titleId: "dss-menu-delete-title",
+              name: menuDeleteTarget.title,
+              error: menuDeleteError,
+              busy: menuDeleteBusy,
+              onCancel: cancelMenuDelete,
+              onConfirm: () => void confirmMenuDelete(),
+            });
 
         const footerControls = !props.wide
           ? managing
@@ -675,9 +823,7 @@ window.__ModuleLoader__.load({
             : React.createElement(
                 "button",
                 { type: "button", className: "dss-action", "aria-label": t("manage.start"), title: t("manage.start"), onClick: startManaging },
-                primitives.IconChecklistOutline14
-                  ? React.createElement(primitives.IconChecklistOutline14, { size: 16 })
-                  : React.createElement("span", { "aria-hidden": "true" }, "☷"),
+                icon("checklist", 16, "☷"),
               )
           : null;
         return React.createElement(
@@ -723,59 +869,34 @@ window.__ModuleLoader__.load({
 
       const confirmDelete = async () => {
         if (busy) return;
-        setBusy(true);
-        setError(null);
-        try {
-          await requestDelete(props.sessionId);
-          // The slot's own props carry no `sessions` seat, so the service is the
-          // one closed over at registration — the same one the batch action uses.
-          if (nextSessionId !== undefined && typeof sessions?.open === "function") sessions.open(nextSessionId);
-          else if (typeof sessions?.clear === "function") sessions.clear(); else if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
-
-          await refreshSessionList(sessions);
-        } catch (reason) {
-          setError(messageOf(reason, t));
-          setBusy(false);
-        }
+        await runConfirmedDelete({
+          setBusy,
+          setError,
+          messageOf,
+          t,
+          attempt: async () => {
+            await requestDelete(props.sessionId);
+            // The slot's own props carry no `sessions` seat, so the service is the
+            // one closed over at registration — the same one the batch action uses.
+            if (nextSessionId !== undefined && typeof sessions?.open === "function") sessions.open(nextSessionId);
+            else if (typeof sessions?.clear === "function") sessions.clear(); else if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
+          },
+          settle: () => refreshSessionList(sessions),
+        });
       };
 
-      const trashIcon = primitives.IconTrashOutline16
-        ? React.createElement(primitives.IconTrashOutline16, { size: 16 })
-        : React.createElement("span", { "aria-hidden": "true" }, "×");
+      const trashIcon = icon("trash", 16, "×");
 
       const dialog = confirming
-        ? React.createElement(
-            "div",
-            {
-              className: "dss-overlay",
-              role: "presentation",
-              onClick: cancel,
-            },
-            React.createElement(
-              "div",
-              {
-                className: "dss-dialog",
-                role: "dialog",
-                "aria-modal": "true",
-                "aria-labelledby": "dss-delete-title",
-                onClick: (event) => event.stopPropagation(),
-              },
-              React.createElement("h2", { id: "dss-delete-title", className: "dss-title" }, t("confirm.title")),
-              React.createElement(
-                "p",
-                { className: "dss-copy" },
-                t("confirm.body", { name: title }),
-              ),
-              React.createElement("p", { className: "dss-warning" }, t("confirm.warning")),
-              error === null ? null : React.createElement("div", { className: "dss-error", role: "alert" }, error),
-              React.createElement(
-                "div",
-                { className: "dss-buttons" },
-                React.createElement("button", { type: "button", className: "dss-button", disabled: busy, onClick: cancel }, t("cancel")),
-                React.createElement("button", { type: "button", className: "dss-button dss-button-danger", disabled: busy, onClick: () => void confirmDelete() }, busy ? t("delete.busy") : t("delete.confirm")),
-              ),
-            ),
-          )
+        ? React.createElement(ConfirmDialog, {
+            t,
+            titleId: "dss-delete-title",
+            name: title,
+            error,
+            busy,
+            onCancel: cancel,
+            onConfirm: () => void confirmDelete(),
+          })
         : null;
 
       return React.createElement(
@@ -834,6 +955,7 @@ window.__ModuleLoader__.load({
       menuContentTarget,
       openMenuForRow,
       refreshSessionList,
+      runConfirmedDelete,
     };
     return module.exports;
   },

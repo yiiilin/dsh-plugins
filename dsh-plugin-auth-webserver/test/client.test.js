@@ -24,12 +24,25 @@ test("keeps the zh/en dictionary key sets identical", () => {
 
 test("declares the settings plugin Slot dependencies", () => {
   assert.match(PACKAGE_SOURCE, /@deepseek-ai\/dsh-client-ui-settings-plugins/u);
-  assert.match(CLIENT_SOURCE, /registerSettingsCard\("settings\.plugin\.item"\)/u);
-  assert.match(CLIENT_SOURCE, /registerSettingsCard\("plugins\.item"\)/u);
+  // The official `settings.plugins.tab` page is the only settings surface: the
+  // collapsible item cards would unfold a row instead of opening the page.
+  assert.doesNotMatch(CLIENT_SOURCE, /registerSettingsCard\("settings\.plugin\.item"\)/u);
+  assert.doesNotMatch(CLIENT_SOURCE, /registerSettingsCard\("plugins\.item"\)/u);
+  assert.match(CLIENT_SOURCE, /const profileForms = ctx\.get\("configForms"\)/u);
+  assert.match(CLIENT_SOURCE, /if \(profileForms !== undefined\) registerSettingsCard\("settings\.plugins\.tab"\)/u);
   assert.match(CLIENT_SOURCE, /const changed = meta !== null/u);
   assert.match(CLIENT_SOURCE, /key: "auth-webserver"/u);
   assert.match(CLIENT_SOURCE, /id: "auth-webserver"/u);
 });
+
+test("describes credentials without binding storage to settings.yaml", () => {
+  const hints = [...CLIENT_SOURCE.matchAll(/"hint\.credentials": "([^"]+)"/gu)].map((match) => match[1]);
+  assert.equal(hints.length, 2);
+  assert.ok(hints.every((hint) => !hint.includes("settings.yaml")));
+  assert.ok(hints.some((hint) => hint.includes("由 DSH 设置管理")));
+  assert.ok(hints.some((hint) => hint.includes("Managed by DSH settings")));
+});
+
 
 test("declares the online-client and revoke contracts in the client bundle", () => {
   assert.match(CLIENT_SOURCE, /const ONLINE_CLIENTS_PATH = "\/_dsh\/auth-webserver\/clients";/u);
@@ -51,7 +64,7 @@ test("owns the settings editor overlay inside the Settings layer", () => {
     "/_dsh/auth-webserver/settings-editor/document",
     "settings.action",
     "settingsEditor.open",
-    "daw-settingsEditorOverlay",
+    "daw-settingsEditorInline",
     "api(SETTINGS_EDITOR_DOCUMENT_PATH",
     "X-DSH-CSRF",
   ]) {

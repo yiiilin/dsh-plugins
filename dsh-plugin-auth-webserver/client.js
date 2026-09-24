@@ -93,8 +93,8 @@ window.__ModuleLoader__.load({
 .daw-passkeyMeta dt{color:var(--dsw-alias-label-tertiary);white-space:nowrap}
 .daw-passkeyMeta dd{min-width:0;margin:0;overflow-wrap:anywhere;color:var(--dsw-alias-label-secondary)}
 .daw-passkeyAction{align-self:center;min-width:52px;padding-inline:9px}
-.daw-settingsEditorOverlay{position:fixed;inset:0;z-index:1400;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;background:rgba(15,23,42,.42);pointer-events:auto}
-.daw-settingsEditorDialog{box-sizing:border-box;width:min(920px,100%);height:min(80vh,720px);display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.18));border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#111827);box-shadow:0 18px 50px rgba(0,0,0,.22)}
+.daw-settingsEditorInline{display:flex;flex-direction:column;margin:0 16px 8px;padding:0}
+.daw-settingsEditorDialog{box-sizing:border-box;width:min(920px,100%);height:min(420px,55vh);display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.18));border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#111827);box-shadow:0 18px 50px rgba(0,0,0,.22)}
 .daw-settingsEditorHead{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 12px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12))}
 .daw-settingsEditorTitle{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:600}
 .daw-settingsEditorMeta{flex:none;color:var(--dsw-alias-label-tertiary,#78716c);font-size:12px}
@@ -110,7 +110,7 @@ window.__ModuleLoader__.load({
 .daw-settingsEditorStatus[data-kind="dirty"]{color:var(--dsw-alias-state-warning-primary,#d97706)}
 .daw-settingsEditorStatus[data-kind="error"]{color:var(--dsw-alias-state-error-primary,#b91c1c)}
 .daw-settingsEditorSave{margin-left:auto}
-@media (max-width:560px){.daw-client{grid-template-columns:minmax(0,1fr);gap:8px}.daw-clientAction{justify-self:end}.daw-clientsHeader{align-items:flex-start}.daw-clientList{border-radius:6px}.daw-passkey{grid-template-columns:minmax(0,1fr);gap:8px}.daw-passkeyAction{justify-self:end}.daw-passkeyAdd{grid-template-columns:minmax(0,1fr)}.daw-settingsEditorOverlay{padding:0}.daw-settingsEditorDialog{width:100vw;height:100vh;max-height:none;border:0;border-radius:0}}
+@media (max-width:560px){.daw-client{grid-template-columns:minmax(0,1fr);gap:8px}.daw-clientAction{justify-self:end}.daw-clientsHeader{align-items:flex-start}.daw-clientList{border-radius:6px}.daw-passkey{grid-template-columns:minmax(0,1fr);gap:8px}.daw-passkeyAction{justify-self:end}.daw-passkeyAdd{grid-template-columns:minmax(0,1fr)}.daw-settingsEditorInline{margin:0 8px 8px}.daw-settingsEditorDialog{width:100vw;height:100vh;max-height:none;border:0;border-radius:0}}
 `;
 
 			document.head.append(style);
@@ -142,7 +142,7 @@ window.__ModuleLoader__.load({
 			"unit.minute.other": "{n} 分钟",
 			"unit.second.one": "{n} 秒",
 			"unit.second.other": "{n} 秒",
-			"hint.credentials": "认证保护局域网网关的登录凭据。保存在设置文档（settings.yaml）中，密码绝不会以明文形式离开该文档。",
+			"hint.credentials": "认证保护局域网网关的登录凭据。由 DSH 设置管理；密码仅显示是否已设置，不会以明文返回。",
 			"warn.env": "环境中已设置 DSH_AUTH_USER/DSH_AUTH_PASS（或 AUTH_USER/AUTH_PASS）——它们优先于此处设置生效。",
 			"warn.config": "cordis.patch.yml 中的 webserver-auth 行带有用户名/密码——它们作为基础层生效，直到您在此处保存覆盖配置为止。",
 			username: "用户名",
@@ -261,7 +261,7 @@ window.__ModuleLoader__.load({
 			"unit.minute.other": "{n} minutes",
 			"unit.second.one": "{n} second",
 			"unit.second.other": "{n} seconds",
-			"hint.credentials": "Credentials for the auth-gated LAN gateway. Stored in the settings document (settings.yaml); the password never leaves it unredacted.",
+			"hint.credentials": "Credentials for the auth-gated LAN gateway. Managed by DSH settings; passwords are shown only as configured or empty and are never returned in clear text.",
 			"warn.env": "DSH_AUTH_USER/DSH_AUTH_PASS (or AUTH_USER/AUTH_PASS) are set in the environment — they take precedence over these settings.",
 			"warn.config": "The webserver-auth row in cordis.patch.yml carries username/password — those act as the base layer and are effective until you save an override here.",
 			username: "Username",
@@ -658,7 +658,7 @@ window.__ModuleLoader__.load({
 
 				return React.createElement(
 					"div",
-					{ className: "daw-settingsEditorOverlay", role: "presentation", onClick: close },
+					{ className: "daw-settingsEditorInline" },
 					React.createElement(
 						"div",
 						{
@@ -1523,8 +1523,12 @@ window.__ModuleLoader__.load({
 				priority: -1,
 				order: 0,
 			}, SettingsEditorAction)), "auth-webserver: settings editor action");
+			const profileForms = ctx.get("configForms");
+			// Only the official `settings.plugins.tab` page is registered: the
+			// collapsible `settings.plugin.item` / `plugins.item` cards are gone, so a
+			// click opens the page instead of unfolding a row.
 			const registerSettingsCard = (name) => slots.inject(name, () => slots.register(
-				name === "plugins.item"
+				name === "settings.plugins.tab"
 					? {
 						name,
 						id: "auth-webserver",
@@ -1539,8 +1543,7 @@ window.__ModuleLoader__.load({
 					},
 				AuthWebserverCard,
 			));
-			registerSettingsCard("settings.plugin.item");
-			registerSettingsCard("plugins.item");
+			if (profileForms !== undefined) registerSettingsCard("settings.plugins.tab");
 		}
 
 		exports.apply = apply;

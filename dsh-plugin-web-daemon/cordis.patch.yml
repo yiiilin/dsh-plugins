@@ -13,9 +13,10 @@
         - goals
         - agentPresets
         - subagents
+        - agents
       config:
         enabled: false
         profile: web
-        port: 3081
+        port: 3080
         systemdUnit: dsh-web.service
         systemdScope: system

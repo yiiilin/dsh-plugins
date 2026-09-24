@@ -1,6 +1,6 @@
 {
   "name": "@yiln-dsh/dsh-plugin-web-daemon",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "publishConfig": {
     "access": "public"
   },
@@ -38,12 +38,17 @@
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
-    "@deepseek-ai/dsh-agent-presets": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3",
-    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3",
-    "@deepseek-ai/dsh-client-ui-settings-plugins": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3",
-    "@deepseek-ai/dsh-llm": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3",
-    "@deepseek-ai/dsh-settings": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3",
+    "@deepseek-ai/dsh-agent-preset-registry": ">=0.1.7-alpha.2 <0.1.7-alpha.3 || >=0.1.7-rc.1 <0.1.7-rc.2",
+    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3 || >=0.1.7-alpha.2 <0.1.7-alpha.3 || >=0.1.7-rc.1 <0.1.7-rc.2",
+    "@deepseek-ai/dsh-client-ui-settings-plugins": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3 || >=0.1.7-alpha.2 <0.1.7-alpha.3 || >=0.1.7-rc.1 <0.1.7-rc.2",
+    "@deepseek-ai/dsh-llm": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3 || >=0.1.7-alpha.2 <0.1.7-alpha.3 || >=0.1.7-rc.1 <0.1.7-rc.2",
+    "@deepseek-ai/dsh-settings": ">=0.1.5-rc.1 <0.1.6 || >=0.1.6-alpha.2 <0.1.6-alpha.3 || >=0.1.7-alpha.2 <0.1.7-alpha.3 || >=0.1.7-rc.1 <0.1.7-rc.2",
     "@deepseek-ai/schemastery": ">=3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-agent-preset-registry": {
+      "optional": true
+    }
   },
   "engines": {
     "node": ">=22"

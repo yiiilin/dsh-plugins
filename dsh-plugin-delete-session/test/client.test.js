@@ -130,3 +130,91 @@ test("falls back to a reload when the shell cannot refresh", async () => {
   await exports.__test.refreshSessionList({ refresh: async () => { throw new Error("no host"); } });
   assert.equal(reloaded, 2, "a failed refresh still leaves the list consistent");
 });
+
+/** Flush every pending microtask so an assertion sees settled ordering. */
+const drain = () => new Promise((resolve) => setImmediate(resolve));
+
+/** The busy/error setters and message mapper every confirmed deletion needs. */
+function deleteHarness(order = []) {
+  const errors = [];
+  return {
+    errors,
+    options: {
+      setBusy: (value) => order.push(value ? "busy" : "idle"),
+      setError: (value) => errors.push(value),
+      messageOf: (reason, t) => `${t("error.prefix")}:${reason.message}`,
+      t: (key) => key,
+    },
+  };
+}
+
+test("releases the busy flag once a deletion commits", async () => {
+  const { exports } = loadClient();
+  const order = [];
+  const { errors, options } = deleteHarness(order);
+
+  const committed = await exports.__test.runConfirmedDelete({
+    ...options,
+    attempt: async () => { order.push("deleted"); },
+  });
+
+  assert.equal(committed, true);
+  assert.deepEqual(order, ["busy", "deleted", "idle"], "a committed deletion must free the dialog");
+  assert.deepEqual(errors, [null], "no error text survives a committed deletion");
+});
+
+test("releases the busy flag and reports the failure when a deletion is refused", async () => {
+  const { exports } = loadClient();
+  const order = [];
+  const { errors, options } = deleteHarness(order);
+
+  const committed = await exports.__test.runConfirmedDelete({
+    ...options,
+    attempt: async () => { throw new Error("no host"); },
+  });
+
+  assert.equal(committed, false);
+  assert.deepEqual(order, ["busy", "idle"], "a refused deletion must stay retryable");
+  assert.deepEqual(errors, [null, "error.prefix:no host"]);
+});
+
+test("releases the busy flag without waiting for the sidebar refresh", async () => {
+  const { exports } = loadClient();
+  const order = [];
+  const { options } = deleteHarness(order);
+  let releaseRefresh;
+  const refreshGate = new Promise((resolve) => { releaseRefresh = resolve; });
+
+  const pending = exports.__test.runConfirmedDelete({
+    ...options,
+    attempt: async () => { order.push("deleted"); },
+    settle: async () => { order.push("refresh-start"); await refreshGate; order.push("refresh-end"); },
+  });
+  await drain();
+
+  assert.deepEqual(
+    order,
+    ["busy", "deleted", "idle", "refresh-start"],
+    "the dialog is released before the refresh resolves — a slow refresh stranded it on Deleting…",
+  );
+
+  releaseRefresh();
+  assert.equal(await pending, true);
+  assert.deepEqual(order, ["busy", "deleted", "idle", "refresh-start", "refresh-end"]);
+});
+
+test("releases the busy flag even when the sidebar refresh rejects", async () => {
+  const { exports } = loadClient();
+  const order = [];
+  const { errors, options } = deleteHarness(order);
+
+  const committed = await exports.__test.runConfirmedDelete({
+    ...options,
+    attempt: async () => { order.push("deleted"); },
+    settle: async () => { throw new Error("refresh exploded"); },
+  });
+
+  assert.equal(committed, true, "the deletion committed; the refresh failure is not the dialog's problem");
+  assert.deepEqual(order, ["busy", "deleted", "idle"]);
+  assert.deepEqual(errors, [null], "a sidebar refresh failure is never a deletion error");
+});

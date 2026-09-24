@@ -105,6 +105,29 @@ test("bootstraps one current core cookie for concurrent requests", async (t) => 
   assert.equal(requests.length, 2);
 });
 
+test("accepts alpha.2's relative clean-root redirect", async (t) => {
+  const server = createServer((_req, res) => {
+    res.writeHead(303, {
+      location: "./",
+      "set-cookie": ["dsh-auth-container=v1.body.signature; Max-Age=60; Path=/; HttpOnly"],
+    });
+    res.end();
+  });
+  const port = await listen(server);
+  t.after(() => close(server));
+
+  const bridge = createCoreSessionBridge({
+    authenticatedUrl(baseUrl) {
+      return `${baseUrl}/?token=current-process-token`;
+    },
+  }, createLoopbackTarget("127.0.0.1", port), { timeoutMs: 1000 });
+  t.after(() => bridge.dispose());
+
+  const session = await bridge.ensure();
+  assert.equal(session.name, "dsh-auth-container");
+  assert.equal(session.value, "v1.body.signature");
+  assert.ok(session.expiresAt > Date.now());
+});
 test("rejects a malformed core exchange and clears the pending request", async (t) => {
   const server = createServer((_req, res) => {
     res.writeHead(200);

@@ -401,3 +401,154 @@ test("a lifetime change keeps other sessions and their deadlines intact", async 
     else process.env.AUTH_PASS = savedPass;
   }
 });
+
+test("profile volatile edits update lifetimes live and revoke sessions on credential changes", async () => {
+  const home = mkdtempSync(join(tmpdir(), "dsh-auth-profile-lifecycle-"));
+  const savedHome = process.env.DSH_HOME;
+  const savedAuthUser = process.env.DSH_AUTH_USER;
+  const savedAuthPass = process.env.DSH_AUTH_PASS;
+  const savedUser = process.env.AUTH_USER;
+  const savedPass = process.env.AUTH_PASS;
+  delete process.env.DSH_AUTH_USER;
+  delete process.env.DSH_AUTH_PASS;
+  delete process.env.AUTH_USER;
+  delete process.env.AUTH_PASS;
+  process.env.DSH_HOME = home;
+
+  const cell = (initial) => {
+    let value = initial;
+    return { get: () => value, set: (next) => { value = next; } };
+  };
+  const config = {
+    port: 0,
+    targetHost: "127.0.0.1",
+    targetPort: 3080,
+    addresses: ["127.0.0.2"],
+    allowedOrigins: [],
+    username: cell("admin"),
+    password: cell("gateway-pass"),
+    realm: cell("Test"),
+    twoFactorEnabled: cell(false),
+    twoFactorSecret: cell(""),
+    authEpoch: cell(0),
+    sessionIdleTimeoutSeconds: cell(3600),
+    sessionMaxAgeSeconds: cell(2 * DAY_SECONDS),
+  };
+  const entryId = "alpha-auth-row";
+  const user = {};
+  const effects = [];
+  const listeners = new Map();
+  let revision = 0;
+  const profileSettings = {
+    writable: true,
+    configure() { return () => {}; },
+    describe() {
+      return [{ ns: entryId, revision, user: { ...user }, secrets: [] }];
+    },
+    async update(ns, patch, expectedRevision) {
+      assert.equal(ns, entryId);
+      assert.equal(expectedRevision, revision);
+      Object.assign(user, patch);
+      for (const [key, value] of Object.entries(patch)) config[key]?.set(value);
+      revision += 1;
+      for (const listener of listeners.get("loader/volatile-update") ?? []) listener();
+    },
+  };
+  const ctx = {
+    fiber: { entry: { options: { id: entryId } } },
+    connection: {
+      authenticatedUrl(baseUrl) {
+        return `${baseUrl}/?token=core-process-token`;
+      },
+    },
+    logger: { warn() {}, info() {} },
+    get(name) {
+      return name === "settings" ? profileSettings : undefined;
+    },
+    on(name, callback) {
+      const group = listeners.get(name) ?? new Set();
+      group.add(callback);
+      listeners.set(name, group);
+      return () => group.delete(callback);
+    },
+    effect(factory) {
+      const disposer = factory();
+      if (typeof disposer === "function") effects.push(disposer);
+      return disposer;
+    },
+  };
+  const core = createServer((req, res) => {
+    if (req.url?.startsWith("/?token=core-process-token") === true) {
+      res.writeHead(303, {
+        location: "/",
+        "set-cookie": ["dsh-auth-current=v1.body.signature; Max-Age=60; Path=/; HttpOnly"],
+      });
+      res.end();
+      return;
+    }
+    if (req.headers.cookie !== "dsh-auth-current=v1.body.signature") {
+      res.writeHead(401);
+      res.end("core unauthorized");
+      return;
+    }
+    res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+    res.end(req.url ?? "");
+  });
+  const corePort = await listen(core);
+  const gatewayProbe = createServer();
+  const gatewayPort = await listen(gatewayProbe, "127.0.0.2");
+  await close(gatewayProbe);
+  config.port = gatewayPort;
+  config.allowedOrigins = [`http://127.0.0.2:${gatewayPort}`];
+
+  try {
+    await apply(ctx, config);
+    const origin = `http://127.0.0.2:${gatewayPort}`;
+    const submitted = JSON.stringify({ username: "admin", password: "gateway-pass" });
+    const login = await httpRequest({
+      host: "127.0.0.2",
+      port: gatewayPort,
+      path: "/api/auth.login",
+      method: "POST",
+      headers: {
+        origin,
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(submitted)),
+      },
+      body: submitted,
+    });
+    assert.equal(login.statusCode, 200, login.body);
+    const cookie = cookieValue(login, "dsh_auth_token");
+    const state = () => httpRequest({
+      host: "127.0.0.2",
+      port: gatewayPort,
+      path: "/_dsh/auth-webserver/state",
+      headers: { origin, cookie },
+    });
+
+    await profileSettings.update(entryId, { sessionIdleTimeoutSeconds: 600 }, revision);
+    const afterLifetimeChange = await state();
+    assert.equal(afterLifetimeChange.statusCode, 200, afterLifetimeChange.body);
+    const liveState = JSON.parse(afterLifetimeChange.body).state;
+    assert.equal(liveState.idleSeconds, 600);
+    assert.equal(liveState.sessions.length, 1, "a lifetime edit keeps existing sessions");
+
+    await profileSettings.update(entryId, { password: "replacement-pass" }, revision);
+    const afterCredentialChange = await state();
+    assert.equal(afterCredentialChange.statusCode, 401, "a credential edit revokes the old profile session");
+  } finally {
+    for (const dispose of effects.reverse()) await dispose();
+    await close(core);
+    rmSync(home, { recursive: true, force: true });
+    if (savedHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = savedHome;
+    if (savedAuthUser === undefined) delete process.env.DSH_AUTH_USER;
+    else process.env.DSH_AUTH_USER = savedAuthUser;
+    if (savedAuthPass === undefined) delete process.env.DSH_AUTH_PASS;
+    else process.env.DSH_AUTH_PASS = savedAuthPass;
+    if (savedUser === undefined) delete process.env.AUTH_USER;
+    else process.env.AUTH_USER = savedUser;
+    if (savedPass === undefined) delete process.env.AUTH_PASS;
+    else process.env.AUTH_PASS = savedPass;
+  }
+});

@@ -180,19 +180,48 @@ function registerHeadlessOpenGuard(ctx, webServer) {
   ctx.logger?.info?.("web-daemon: headless host detected — native file-open RPCs are refused with a readable message (file explorer handles preview/download)");
 }
 
+function volatile(schema) {
+  return typeof schema.volatile === "function" ? schema.volatile() : schema;
+}
+
+function currentConfig(value) {
+  if (Array.isArray(value)) return value.map(currentConfig);
+  if (value !== null && typeof value === "object") {
+    if (typeof value.get === "function") return currentConfig(value.get());
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, currentConfig(child)]));
+  }
+  return value;
+}
+
 export const Config = z.object({
   /** Boot-autostart and keep the unit enabled. */
-  enabled: z.boolean().default(false),
+  enabled: volatile(z.boolean().default(false)),
   /** DSH profile the worker runs. */
-  profile: z.string().default("web"),
-  /** Port the worker listens on (always loopback; LAN access is auth-webserver's job). */
-  port: z.natural().max(65535).default(3081),
+  profile: volatile(z.string().default("web")),
+  /**
+   * Port the worker listens on (always loopback; LAN access is auth-webserver's
+   * job). It must match the port the interactive GUI serves: the worker and an
+   * ad-hoc `dsh web` in the same DSH home otherwise bind two ports and split
+   * one session registry across two instances.
+   */
+  port: volatile(z.natural().max(65535).default(3080)),
+  /**
+   * The unit's whole `ExecStart=` line, written by the operator. Empty means the
+   * plugin generates `dsh web --profile <profile> --no-open --port <port>` from
+   * the fields above; anything written here is used verbatim instead, so it owns
+   * its own quoting, must stay on a single line (a newline would inject another
+   * unit directive), and its first word must be an executable systemd can find.
+   */
+  startCommand: volatile(z
+    .string()
+    .pattern(/^[^\0\r\n]*$/u)
+    .default("")),
   /** Name of the generated systemd unit. */
-  systemdUnit: z.string().default("dsh-web.service"),
+  systemdUnit: volatile(z.string().default("dsh-web.service")),
   /** system units live in /etc/systemd/system (needs root); user units use --user. */
-  systemdScope: z
+  systemdScope: volatile(z
     .union([z.const("system"), z.const("user")])
-    .default("system"),
+    .default("system")),
 });
 
 function dshHome() {
@@ -378,9 +407,10 @@ function turnNeedsContinuation(events) {
 function createInterruptedResumeMessage() {
   return createUserMessage({
     content: [{ type: "text", text: INTERRUPTED_RESUME_TEXT }],
+    // Format v4 admits only producer-owned message sources: the plugin's own
+    // id, never the retired generic `plugin` wrapper.
     source: {
-      kind: "plugin",
-      plugin: RESUME_PLUGIN_SOURCE,
+      kind: RESUME_PLUGIN_SOURCE,
       form: "notice",
       summary: "Continuing an interrupted turn after daemon restart",
     },
@@ -1456,16 +1486,55 @@ function createServerMetrics() {
   };
 }
 
+/** The operator-written `ExecStart=` line, or undefined when none is configured. */
+function startCommandOf(cfg) {
+  const raw = typeof cfg?.startCommand === "string" ? cfg.startCommand.trim() : "";
+  return raw === "" ? undefined : raw;
+}
+
+/** Refuse a written command that cannot be a single `ExecStart=` line. */
+function assertStartCommandOneLine(command) {
+  if (command !== undefined && /[\0\r\n]/u.test(command)) {
+    throw new Error("startCommand must be one line: a newline would inject another systemd unit directive");
+  }
+}
+
+/**
+ * Render the `ExecStart=` command: the operator's own line when one is written,
+ * otherwise the `dsh web --profile <profile> --no-open --port <port>` the plugin
+ * derives from the configuration.
+ *
+ * A written command is not quoted or rewritten — systemd parses the line itself,
+ * so the operator's own quoting is what systemd sees.
+ */
 function workerCommandFor(cfg) {
+  const custom = startCommandOf(cfg);
+  if (custom !== undefined) {
+    assertStartCommandOneLine(custom);
+    return custom;
+  }
   const entry = process.argv[1] || "dsh";
   const args = [
     "--profile",
     String(cfg.profile || "web"),
     "--no-open",
     "--port",
-    String(cfg.port ?? 3081),
+    String(cfg.port ?? 3080),
   ];
   return [entry, ...args].map(systemdQuote).join(" ");
+}
+
+/**
+ * The effective command for a status read. A hand-written value that cannot be
+ * rendered must not take the whole state route down with it: the GUI has to stay
+ * up to show the field and let the operator repair it.
+ */
+function snapshotCommandFor(cfg) {
+  try {
+    return workerCommandFor(cfg);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1541,10 +1610,10 @@ function execStartOf(source) {
   return line === undefined ? undefined : line.slice("ExecStart=".length);
 }
 
-function createWebDaemonManager(ctx, settings, config) {
+function createWebDaemonManager(ctx, settings, config, readConfig = () => config) {
   const isWorker = process.env[WORKER_FLAG] === "1";
   const state = {
-    config: clone(config),
+    config: clone(currentConfig(config)),
     revision: 0,
   };
 
@@ -1583,7 +1652,7 @@ function createWebDaemonManager(ctx, settings, config) {
         activeState: status?.active ?? null,
         unitFileState: status?.unitFileState ?? null,
       },
-      command: workerCommandFor(cfg),
+      command: snapshotCommandFor(cfg),
     };
   };
 
@@ -1675,14 +1744,21 @@ function createWebDaemonManager(ctx, settings, config) {
     }
   };
 
-  if (settings !== undefined) {
+  if (typeof settings?.register === "function") {
     const scope = settings.register(NS, Config, {
-      base: clone(config),
+      base: clone(state.config),
       applies: "live",
     });
     state.config = clone(scope.get());
     rememberRevision();
     ctx.effect(() => scope.watch((next) => applyConfig(clone(next), state.revision)));
+  } else if (typeof settings?.configure === "function") {
+    ctx.effect(() => settings.configure({ auto: false }, ctx.fiber), "web-daemon: profile config form");
+    ctx.effect(() => ctx.on("loader/volatile-update", () => {
+      const descriptor = settings.describe({ redactSecrets: true }).find((entry) => entry.ns === NS);
+      const next = currentConfig(readConfig());
+      applyConfig(next, descriptor?.revision ?? state.revision);
+    }), "web-daemon: profile config updates");
   }
 
   if (!isWorker && state.config.enabled) {
@@ -1719,7 +1795,9 @@ async function apply(ctx, config = {}) {
   registerHeadlessOpenGuard(ctx, webServer);
 
   const settings = ctx.get("settings");
-  const manager = createWebDaemonManager(ctx, settings, config);
+  const sourceConfig = config;
+  const initialConfig = currentConfig(sourceConfig);
+  const manager = createWebDaemonManager(ctx, settings, initialConfig, () => currentConfig(sourceConfig));
   // Re-derive the unit on every boot. Its ExecStart embeds the absolute
   // interpreter path this process is running under, which on an nvm install
   // carries the node version — so a node upgrade leaves a stale path that
@@ -1821,6 +1899,18 @@ async function apply(ctx, config = {}) {
           return;
         }
         const merged = { ...manager.getSnapshot().config, ...plainClone(body.config) };
+        try {
+          // Refuse a command that cannot be one ExecStart= line here, where the
+          // operator can still see why, rather than while rendering a unit whose
+          // error only reaches the journal.
+          assertStartCommandOneLine(startCommandOf(merged));
+        } catch (error) {
+          sendJson(res, 400, {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return;
+        }
         try {
           await settings.update(NS, plainClone(merged), body.revision ?? snapshot.revision);
           manager.applyConfig(merged, body.revision ?? snapshot.revision);

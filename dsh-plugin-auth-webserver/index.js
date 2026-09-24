@@ -19,6 +19,7 @@
  */
 
 import { createServer, request } from "node:http";
+import { AsyncResource } from "node:async_hooks";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, lstatSync, chmodSync, writeFileSync } from "node:fs";
 import { isIP } from "node:net";
@@ -261,6 +262,42 @@ function sendJson(res, status, value, extra = {}) {
   res.end(body);
 }
 
+function volatile(schema) {
+  return typeof schema.volatile === "function" ? schema.volatile() : schema;
+}
+
+export function liveConfig(source, defaults) {
+  return new Proxy(defaults, {
+    get(target, key) {
+      const value = source?.[key];
+      if (value === undefined) return target[key];
+      return value !== null && typeof value === "object" && typeof value.get === "function"
+        ? value.get()
+        : value;
+    },
+  });
+}
+
+export function profileEntryId(ctx, fallback) {
+  const id = ctx?.fiber?.entry?.options?.id;
+  return typeof id === "string" && id !== "" ? id : fallback;
+}
+
+/**
+ * Settings writes must not inherit the host's HMR transaction context.
+ *
+ * DSH mounts a profile row by running this plugin's `apply()` inside
+ * `hmr.runExclusive()`. This plugin owns its own HTTP listener, and a server
+ * created inside that scope serves every later request from the same
+ * `AsyncLocalStorage` context — so a `settings.update()` issued by a route
+ * handler is judged a nested transaction and rejected with
+ * "HMR transactions cannot be nested", leaving 2FA and every other saved field
+ * unwritable. This resource is created at module scope, outside any transaction,
+ * so running the write through it presents a clean context. Hosts without HMR
+ * are unaffected: the context is only ever absent there.
+ */
+const settingsWriteContext = new AsyncResource("dsh-auth-webserver-settings-write");
+
 export const Config = z.object({
   /** Port the gateway listens on for each non-loopback address. */
   port: z.natural().max(65535).default(3080),
@@ -270,15 +307,16 @@ export const Config = z.object({
   targetPort: z.natural().max(65535).default(3080),
   /** Explicit bind addresses; when empty, all non-loopback NIC addresses are used. */
   addresses: z.array(z.string()).default([]),
-  username: z.string().default("admin"),
-  password: z.string().role("secret").default(""),
-  realm: z.string().default("DeepSeek Harness Authentication"),
+  username: volatile(z.string().default("admin")),
+  password: volatile(z.string().role("secret").default("")),
+  realm: volatile(z.string().default("DeepSeek Harness Authentication")),
   /** Enable time-based one-time passwords for the LAN gateway. */
-  twoFactorEnabled: z.boolean().default(false),
+  twoFactorEnabled: volatile(z.boolean().default(false)),
   /** Require TOTP and thereby disable Basic Auth, regardless of settings. */
   requireTwoFactor: z.boolean().default(false),
   /** Base32 TOTP secret. Keep this in a secret environment variable or settings secret. */
-  twoFactorSecret: z.string().role("secret").default(""),
+  twoFactorSecret: volatile(z.string().role("secret").default("")),
+  authEpoch: volatile(z.natural().default(0)),
   /** Automatic mobile drawer presentation for narrow browser viewports. */
   mobileMode: z.union([z.const("auto"), z.const("off")]).default("auto"),
   /** Maximum viewport width that receives the mobile drawer shell. */
@@ -321,13 +359,13 @@ export const Config = z.object({
    * extend. Zero imposes no ceiling, so the idle window alone ends a session.
    * The settings document (and the GUI card) override this row value.
    */
-  sessionMaxAgeSeconds: z.natural().max(MAX_SESSION_LIFETIME_SECONDS).default(DEFAULT_SESSION_MAX_AGE_SECONDS),
+  sessionMaxAgeSeconds: volatile(z.natural().max(MAX_SESSION_LIFETIME_SECONDS).default(DEFAULT_SESSION_MAX_AGE_SECONDS)),
   /**
    * Idle lifetime of a browser session: any authenticated request moves the
    * deadline this far out. Zero disables the idle check. The settings document
    * (and the GUI card) override this row value.
    */
-  sessionIdleTimeoutSeconds: z.natural().max(MAX_SESSION_LIFETIME_SECONDS).default(DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS),
+  sessionIdleTimeoutSeconds: volatile(z.natural().max(MAX_SESSION_LIFETIME_SECONDS).default(DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS)),
   /** Failed authentication attempts allowed per client/user window. */
   loginMaxAttempts: z.natural().min(1).max(1000).default(DEFAULT_LOGIN_MAX_ATTEMPTS),
   /** Duration of the failed-authentication window. */
@@ -380,21 +418,29 @@ function stateFile() {
  * settings-level override made by the user is never clobbered. The legacy file
  * is left in place as a backup; later releases may drop it.
  */
-function migrateLegacyState(ctx, settings, scope) {
+function userLayerHasField(descriptor, field) {
+  return (descriptor?.user !== undefined && Object.prototype.hasOwnProperty.call(descriptor.user, field)) ||
+    (descriptor?.secrets ?? []).some((entry) => entry.path?.[0] === field && entry.set);
+}
+
+function userLayerHasCredential(descriptor) {
+  return userLayerHasField(descriptor, "username") || userLayerHasField(descriptor, "password");
+}
+
+function migrateLegacyState(ctx, settings, entryId) {
   try {
     if (!existsSync(stateFile())) return;
     if (!lstatSync(stateFile()).isFile()) {
       throw new Error("legacy state is not a regular file");
     }
     chmodSync(stateFile(), 0o600);
+    // This Host-local descriptor identifies the actual user layer; redacted
+    // secret flags describe effective defaults and cannot identify its source.
     const descriptor = settings
-      .describe({ redactSecrets: true })
-      .find((entry) => entry.ns === NS);
+      .describe()
+      .find((entry) => entry.ns === entryId);
     if (descriptor === undefined) return;
-    const userHasCredential = (descriptor.user !== undefined &&
-      Object.keys(descriptor.user).length > 0) ||
-      (descriptor.secrets ?? []).some((entry) => entry.path?.[0] === "password" && entry.set);
-    if (userHasCredential) return;
+    if (userLayerHasCredential(descriptor)) return;
     const state = JSON.parse(readFileSync(stateFile(), "utf8"));
     if (state === null || typeof state !== "object") return;
     const next = {};
@@ -402,7 +448,10 @@ function migrateLegacyState(ctx, settings, scope) {
     if (typeof state.password === "string") next.password = state.password;
     if (typeof state.realm === "string") next.realm = state.realm;
     if (Object.keys(next).length === 0) return;
-    void settings.update(NS, next, descriptor.revision).catch((error) => {
+    // `migrateLegacyState` runs from `apply()`, which the host wraps in an HMR
+    // transaction; the write must leave that context for the same reason the
+    // route-driven writes do. See `settingsWriteContext`.
+    void settingsWriteContext.runInAsyncScope(() => settings.update(entryId, next, descriptor.revision)).catch((error) => {
       ctx.logger?.warn?.("auth-webserver: legacy state migration failed: %s", error);
     });
   } catch (error) {
@@ -509,40 +558,41 @@ function sendUnauthorized(req, res, realm, rawPath, twoFactorEnabled = false, se
 }
 
 export async function apply(ctx, config) {
-  config = {
-    port: config?.port ?? 3080,
-    targetHost: config?.targetHost ?? "127.0.0.1",
-    targetPort: config?.targetPort ?? 3080,
-    addresses: config?.addresses ?? [],
-    username: config?.username ?? "admin",
-    password: config?.password ?? "",
-    realm: config?.realm ?? "DeepSeek Harness Authentication",
-    twoFactorEnabled: config?.twoFactorEnabled ?? false,
-    requireTwoFactor: config?.requireTwoFactor ?? false,
-    twoFactorSecret: config?.twoFactorSecret ?? "",
-    mobileMode: config?.mobileMode ?? "auto",
-    mobileBreakpoint: config?.mobileBreakpoint ?? 760,
-    allowedHosts: config?.allowedHosts ?? [],
-    allowedOrigins: config?.allowedOrigins ?? [],
-    trustedProxyAddresses: config?.trustedProxyAddresses ?? [],
-    requireHttps: config?.requireHttps ?? false,
-    allowRemoteSettings: config?.allowRemoteSettings ?? false,
-    allowInsecureRemoteSettings: config?.allowInsecureRemoteSettings ?? false,
-    allowInsecureSettingsEditor: config?.allowInsecureSettingsEditor ?? false,
-    passkeyRpName: config?.passkeyRpName ?? DEFAULT_PASSKEY_RP_NAME,
-    passkeyRpId: config?.passkeyRpId ?? "",
-    passkeyOrigin: config?.passkeyOrigin ?? "",
-    passkeyAllowInsecure: config?.passkeyAllowInsecure ?? false,
-    sessionMaxAgeSeconds: config?.sessionMaxAgeSeconds ?? DEFAULT_SESSION_MAX_AGE_SECONDS,
-    sessionIdleTimeoutSeconds: config?.sessionIdleTimeoutSeconds ?? DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS,
-    loginMaxAttempts: config?.loginMaxAttempts ?? DEFAULT_LOGIN_MAX_ATTEMPTS,
-    loginWindowSeconds: config?.loginWindowSeconds ?? DEFAULT_LOGIN_WINDOW_SECONDS,
-    maxLoginAttemptEntries: config?.maxLoginAttemptEntries ?? DEFAULT_MAX_LOGIN_ATTEMPT_ENTRIES,
-    upstreamTimeoutMs: config?.upstreamTimeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS,
-    requestTimeoutMs: config?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-    headersTimeoutMs: config?.headersTimeoutMs ?? DEFAULT_HEADERS_TIMEOUT_MS,
-    keepAliveTimeoutMs: config?.keepAliveTimeoutMs ?? DEFAULT_KEEP_ALIVE_TIMEOUT_MS,
-  };
+  config = liveConfig(config, {
+    port: 3080,
+    targetHost: "127.0.0.1",
+    targetPort: 3080,
+    addresses: [],
+    username: "admin",
+    password: "",
+    realm: "DeepSeek Harness Authentication",
+    twoFactorEnabled: false,
+    requireTwoFactor: false,
+    twoFactorSecret: "",
+    authEpoch: 0,
+    mobileMode: "auto",
+    mobileBreakpoint: 760,
+    allowedHosts: [],
+    allowedOrigins: [],
+    trustedProxyAddresses: [],
+    requireHttps: false,
+    allowRemoteSettings: false,
+    allowInsecureRemoteSettings: false,
+    allowInsecureSettingsEditor: false,
+    passkeyRpName: DEFAULT_PASSKEY_RP_NAME,
+    passkeyRpId: "",
+    passkeyOrigin: "",
+    passkeyAllowInsecure: false,
+    sessionMaxAgeSeconds: DEFAULT_SESSION_MAX_AGE_SECONDS,
+    sessionIdleTimeoutSeconds: DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS,
+    loginMaxAttempts: DEFAULT_LOGIN_MAX_ATTEMPTS,
+    loginWindowSeconds: DEFAULT_LOGIN_WINDOW_SECONDS,
+    maxLoginAttemptEntries: DEFAULT_MAX_LOGIN_ATTEMPT_ENTRIES,
+    upstreamTimeoutMs: DEFAULT_UPSTREAM_TIMEOUT_MS,
+    requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+    headersTimeoutMs: DEFAULT_HEADERS_TIMEOUT_MS,
+    keepAliveTimeoutMs: DEFAULT_KEEP_ALIVE_TIMEOUT_MS,
+  });
   const secret = loadOrCreateSecret();
   const activeSockets = new Map();
   const sessionStore = new SessionStore({
@@ -629,13 +679,14 @@ export async function apply(ctx, config) {
     }));
   }
 
-  // Settings namespace: the row config acts as the composed base layer and
-  // the settings document (settings.yaml) overrides it; env vars outrank both
-  // at read time. The GUI card reads/writes this namespace through the shared
-  // settings service, so no plugin-specific state file is needed anymore.
   const settings = ctx.get("settings");
+  const profileSettings = settings !== undefined
+    && typeof settings.register !== "function"
+    && typeof settings.update === "function"
+    && typeof settings.describe === "function";
+  const settingsEntryId = profileSettings ? profileEntryId(ctx, "webserver-auth") : NS;
   let settingsScope;
-  if (settings !== undefined) {
+  if (settings !== undefined && typeof settings.register === "function") {
     settingsScope = settings.register(NS, SettingsSchema, {
       base: {
         ...(config.username !== undefined ? { username: config.username } : {}),
@@ -648,7 +699,7 @@ export async function apply(ctx, config) {
       },
       applies: "live",
     });
-    migrateLegacyState(ctx, settings, settingsScope);
+    migrateLegacyState(ctx, settings, NS);
     ctx.effect(() => settingsScope.watch((next, previous) => {
       const nextEpoch = Number.isSafeInteger(next.authEpoch) ? next.authEpoch : 0;
       const epochWasWrittenLocally = locallyWrittenAuthEpochs.delete(nextEpoch);
@@ -661,7 +712,10 @@ export async function apply(ctx, config) {
         revokeSessions();
       }
     }), "auth-webserver: revoke sessions on settings changes");
+  } else if (profileSettings) {
+    ctx.effect(() => settings.configure?.({ auto: false }, ctx.fiber), "auth-webserver: profile config form");
   }
+
 
   /**
    * The lifetimes in force: the settings document wins over the row config that
@@ -688,6 +742,31 @@ export async function apply(ctx, config) {
     ctx.effect(() => settingsScope.watch(() => {
       applySessionLifetime();
     }), "auth-webserver: apply session lifetimes");
+  } else if (profileSettings) {
+    const snapshotConfig = () => ({
+      username: config.username,
+      password: config.password,
+      twoFactorEnabled: config.twoFactorEnabled,
+      twoFactorSecret: config.twoFactorSecret,
+      authEpoch: config.authEpoch,
+      sessionIdleTimeoutSeconds: config.sessionIdleTimeoutSeconds,
+      sessionMaxAgeSeconds: config.sessionMaxAgeSeconds,
+    });
+    let previous = snapshotConfig();
+    ctx.effect(() => ctx.on("loader/volatile-update", () => {
+      const next = snapshotConfig();
+      const nextEpoch = Number.isSafeInteger(next.authEpoch) ? next.authEpoch : 0;
+      const epochWasWrittenLocally = locallyWrittenAuthEpochs.delete(nextEpoch);
+      const credentialsChanged = next.username !== previous.username
+        || next.password !== previous.password
+        || next.twoFactorEnabled !== previous.twoFactorEnabled
+        || next.twoFactorSecret !== previous.twoFactorSecret;
+      authEpochFloor = Math.max(authEpochFloor, nextEpoch);
+      if (!epochWasWrittenLocally && (credentialsChanged || nextEpoch !== previous.authEpoch)) revokeSessions();
+      if (next.sessionIdleTimeoutSeconds !== previous.sessionIdleTimeoutSeconds
+        || next.sessionMaxAgeSeconds !== previous.sessionMaxAgeSeconds) applySessionLifetime();
+      previous = next;
+    }), "auth-webserver: observe profile config changes");
   }
 
   const envUser = process.env.DSH_AUTH_USER || process.env.AUTH_USER;
@@ -807,7 +886,7 @@ export async function apply(ctx, config) {
       realm: config.realm,
       twoFactorEnabled: config.twoFactorEnabled,
       twoFactorSecret: config.twoFactorSecret,
-      authEpoch: 0,
+      authEpoch: config.authEpoch,
     };
     const twoFactorSecret = envTwoFactorSecret || value.twoFactorSecret || "";
     const configuredTwoFactorEnabled = envTwoFactorEnabled ?? (Boolean(value.twoFactorEnabled) || Boolean(envTwoFactorSecret));
@@ -816,14 +895,20 @@ export async function apply(ctx, config) {
       || configuredTwoFactorEnabled;
     return { ...value, twoFactorEnabled, twoFactorSecret };
   };
+  // The Host uses these descriptors only for flags and revisions; do not return them over the gateway.
   const description = () => settings
-    ?.describe({ redactSecrets: true })
-    .find((entry) => entry.ns === NS);
-  const userLayerHasField = (descriptor, field) =>
-    (descriptor?.user !== undefined && Object.prototype.hasOwnProperty.call(descriptor.user, field)) ||
-    (descriptor?.secrets ?? []).some((entry) => entry.path?.[0] === field && entry.set);
-  const userLayerHasCredential = (descriptor) =>
-    userLayerHasField(descriptor, "username") || userLayerHasField(descriptor, "password");
+    ?.describe()
+    .find((entry) => entry.ns === settingsEntryId);
+  const updateSettings = (patch) => {
+    const expectedRevision = profileSettings ? description()?.revision : undefined;
+    // The revision read stays in the caller's context; only the write is moved
+    // out of any inherited HMR transaction. See `settingsWriteContext`.
+    return settingsWriteContext.runInAsyncScope(() => settings.update(
+      settingsEntryId,
+      patch,
+      expectedRevision,
+    ));
+  };
   const snapshot = (currentId) => {
     const value = resolved();
     const descriptor = description();
@@ -854,14 +939,21 @@ export async function apply(ctx, config) {
       authEpochFloor,
     );
     const nextEpoch = currentEpoch + 1;
+    const previousFloor = authEpochFloor;
     authEpochFloor = nextEpoch;
     locallyWrittenAuthEpochs.add(nextEpoch);
     try {
-      await settings.update(NS, {
+      await updateSettings({
         ...next,
         authEpoch: nextEpoch,
       });
     } catch (error) {
+      // Session tokens are signed over the auth epoch, so an epoch that outlives a
+      // rejected write makes every issued token unverifiable and bounces the next
+      // page load to the login form. Only a committed write may advance it: a
+      // revision conflict, a read-only document, or RC.1's "HMR transactions
+      // cannot be nested" must leave the live sessions exactly as they were.
+      authEpochFloor = previousFloor;
       locallyWrittenAuthEpochs.delete(nextEpoch);
       throw error;
     }
@@ -1027,7 +1119,7 @@ export async function apply(ctx, config) {
     try {
       // A lifetime is policy, not an identity change: it applies live and does
       // not revoke the sessions it governs. Credentials keep the old path.
-      if (Object.keys(policy).length > 0) await runAuthMutation(() => settings.update(NS, policy));
+      if (Object.keys(policy).length > 0) await runAuthMutation(() => updateSettings(policy));
       if (Object.keys(next).length > 0) await updateSettingsAndRevoke(next);
     } catch (error) {
       sendJson(res, 400, {
@@ -2384,6 +2476,13 @@ export async function apply(ctx, config) {
     await closeAll();
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`auth-webserver: failed to bind gateway on ${config.port}: ${detail}`);
+  }
+
+  if (profileSettings) {
+    ctx.effect(() => {
+      const timer = setImmediate(() => migrateLegacyState(ctx, settings, settingsEntryId));
+      return () => clearImmediate(timer);
+    }, "auth-webserver: profile legacy state migration");
   }
 
   for (const { address } of servers) {

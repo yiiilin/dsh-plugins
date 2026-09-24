@@ -8,27 +8,23 @@ own directory.
 | Plugin | Purpose |
 | --- | --- |
 | [`@yiln-dsh/dsh-plugin-auth-webserver`](./dsh-plugin-auth-webserver) | Auth-gated reverse proxy with Host/Origin policy, HTTPS/TOTP, sliding sessions, WebSockets, authenticated remote Settings/Models support, and a resume watchdog that rebuilds the realtime connection after a phone lock. |
-| [`@yiln-dsh/dsh-plugin-file-message`](./dsh-plugin-file-message) | Let the model send workspace-backed files and images into the conversation. |
 | [`@yiln-dsh/dsh-plugin-git-graph`](./dsh-plugin-git-graph) | Contribute a Git Graph page tab to the DSH Web right Sidebar: lane graph, commit and working-tree diffs, and uncommitted changes. |
-| [`@yiln-dsh/dsh-plugin-loopx-view`](./dsh-plugin-loopx-view) | Add a session-scoped LoopX tab beside DSH's Conversation and Trajectory views, with Goal status and execution graph projection. |
-| [`@yiln-dsh/dsh-plugin-llm-adapter`](./dsh-plugin-llm-adapter) | Fork the DSH pi-ai adapter with per-model reasoning/tier controls, optional tool-argument filler cleanup, reliable image request serialization, and a configurable total model-stream deadline. |
+| [`@yiln-dsh/dsh-plugin-mentor`](./dsh-plugin-mentor) | Add an on-demand, isolated Mentor Agent tool, durable thread recovery, Web status/reset commands, a session-scoped history tab, and one global settings page under Settings > Plugins. |
 | [`@yiln-dsh/dsh-plugin-delete-session`](./dsh-plugin-delete-session) | Add confirmed permanent-delete actions for the current session, session-row menus, and selected session batches. |
 | [`@yiln-dsh/dsh-plugin-web-daemon`](./dsh-plugin-web-daemon) | Manages `dsh web` as a real systemd unit, auto-resumes the sessions **and running subagents** that were interrupted by a restart, shows server CPU/memory/network/filesystem status in the sidebar footer above the Settings action, and edits its configuration from the GUI Settings section. |
-| [`@yiln-dsh/dsh-plugin-terminal-tab`](./dsh-plugin-terminal-tab) | Adds per-session persistent terminal tabs and a **新建终端** action to the Web GUI. |
-| [`@yiln-dsh/dsh-plugin-web-browser`](./dsh-plugin-web-browser) | Server-side browser view next to the terminal: Chromium runs on the DSH host (playwright-core + CDP screencast), frames stream to the GUI, input is injected back, and a Chrome-style blank tab opens automatically. |
 | [`@yiln-dsh/dsh-plugin-session-list-cache`](./dsh-plugin-session-list-cache) | Collapse the repeated full-store session enumerations the Web GUI fires concurrently, by caching and coalescing `sessionQuery.listSessions()`. |
-| [`@yiln-dsh/dsh-plugin-voice-input`](./dsh-plugin-voice-input) | Two-pass local voice input in the composer: a realtime model recognizes while you speak, a non-realtime model corrects the transcript after you stop. |
 
 ## Install
 
-Every plugin is published to the public npm registry under the `@yiln-dsh`
-scope, and is installed per profile:
+Published plugins are available from the public npm registry under the `@yiln-dsh`
+scope. Workspace entries may not have been published yet; plugins are installed
+per profile:
 
 ```bash
 dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@latest
 ```
 
-Substitute any package name from the table above. `dsh plugin` forwards its
+Substitute a published package name from the table above. `dsh plugin` forwards its
 argument straight to pnpm, so the same command accepts two development specs:
 
 - **Source directory.** Point at a working tree with a `file:` spec, so pnpm
@@ -67,21 +63,16 @@ dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@latest
 
 ## Versioning
 
-The published bundle plugins in the `yiln-dsh` organization currently use:
+Published bundle plugin versions are listed below. Workspace-only packages are marked `unpublished`:
 
 | Package | Version |
 | --- | --- |
-| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.10.2` |
-| `@yiln-dsh/dsh-plugin-delete-session` | `0.4.3` |
-| `@yiln-dsh/dsh-plugin-file-message` | `0.3.4` |
-| `@yiln-dsh/dsh-plugin-git-graph` | `0.2.1` |
-| `@yiln-dsh/dsh-plugin-loopx-view` | `0.1.1` |
-| `@yiln-dsh/dsh-plugin-llm-adapter` | `0.6.1` |
-| `@yiln-dsh/dsh-plugin-web-daemon` | `0.8.1` |
-| `@yiln-dsh/dsh-plugin-terminal-tab` | `0.1.12` |
-| `@yiln-dsh/dsh-plugin-web-browser` | `0.1.6` |
+| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.10.3` |
+| `@yiln-dsh/dsh-plugin-delete-session` | `0.4.5` |
+| `@yiln-dsh/dsh-plugin-git-graph` | `0.2.2` |
+| `@yiln-dsh/dsh-plugin-mentor` | `0.2.0` (unpublished) |
+| `@yiln-dsh/dsh-plugin-web-daemon` | `0.8.2` |
 | `@yiln-dsh/dsh-plugin-session-list-cache` | `0.1.1` |
-| `@yiln-dsh/dsh-plugin-voice-input` | `0.1.4` |
 
 Each plugin's version is the `version` field in its own `package.json`.
 Semantic versioning is recommended: patch for fixes, minor for additive
