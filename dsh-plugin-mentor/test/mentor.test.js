@@ -757,10 +757,22 @@ test('uses the global ModelCatalog default when Mentor profile route fields are 
 
 test('registers the tool and direct host commands without creating a Mentor on idle sessions', async () => {
   const harness = createHarness()
-  assert.equal(harness.tool().name, 'mentor')
+  const tool = harness.tool()
+  assert.equal(tool.name, 'mentor')
+  const descriptions = [
+    tool.description,
+    tool.parameters.message.description,
+    tool.parameters.evidence.description,
+    tool.parameters.evidence.items.properties.id.description,
+    tool.parameters.evidence.items.properties.kind.description,
+    tool.parameters.evidence.items.properties.source.description,
+    tool.parameters.evidence.items.properties.content.description,
+  ]
+  assert.ok(descriptions.every((description) => typeof description === 'string' && /^[\x00-\x7F]+$/u.test(description)))
   assert.equal(harness.globalToolRegistrations(), 0)
   assert.equal(harness.rootToolRegistrations(), 1)
   assert.equal(harness.commands.has('mentor'), true)
+  assert.equal(harness.commands.get('mentor').description, 'View or reset the Mentor thread for the current primary Session.')
   const status = await harness.commands.get('mentor').handler({ agent: harness.parentAgent, rawInput: 'status' })
   assert.equal(status.kind, 'success')
   assert.equal(harness.requests.length, 0)
@@ -788,8 +800,6 @@ test('creates an isolated zero-tool Mentor, persists the result, and continues i
   assert.deepEqual(harness.requests[0].messages.filter((message) => message.role === 'user').map((message) => message.source.kind), ['dsh-plugin-mentor'])
   const second = await harness.invoke({
     message: 'I checked that path; compare the alternative.',
-    thread_id: first.thread_id,
-    reply_to: first.consultation_id,
   }, 'call-2')
   assert.equal(second.thread_id, first.thread_id)
   assert.equal(second.context_revision, 2)
@@ -828,21 +838,21 @@ test('recovers a committed reply from durable events when assistant-stream frame
   assert.equal(result.context_revision, 1)
 })
 
-test('isolates thread IDs by parent session and reset advances the epoch without model calls', async () => {
+test('isolates implicit threads by parent session and reset advances the epoch without model calls', async () => {
   const harness = createHarness()
   const first = await harness.invoke({ message: 'Private thread.' }, 'call-1')
   const otherSession = makeSessionForTest('other-session')
   const otherAgent = { id: otherSession.id, session: otherSession, ctx: harness.parentAgent.ctx }
   harness.rootAgents.push(otherAgent)
-  const foreign = await harness.invoke({ message: 'Try foreign thread.', thread_id: first.thread_id }, 'foreign-call', otherAgent)
-  assert.equal(foreign.kind, 'blocked')
-  assert.equal(foreign.code, 'THREAD_NOT_AVAILABLE')
+  const foreign = await harness.invoke({ message: 'Other session gets its own thread.' }, 'foreign-call', otherAgent)
+  assert.equal(foreign.kind, 'reply')
+  assert.notEqual(foreign.thread_id, first.thread_id)
 
   const reset = await harness.commands.get('mentor').handler({ agent: harness.parentAgent, rawInput: 'reset', signal: new AbortController().signal })
   assert.equal(reset.kind, 'success')
   const after = await harness.invoke({ message: 'Start a clean consultation.' }, 'call-2')
   assert.notEqual(after.thread_id, first.thread_id)
-  assert.equal(harness.requests.length, 2)
+  assert.equal(harness.requests.length, 3)
 })
 
 test('reset holds the parent transition lock while journal reads are pending', async () => {

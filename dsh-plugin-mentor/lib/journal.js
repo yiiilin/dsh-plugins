@@ -121,13 +121,6 @@ export function journalIdFor(parentSessionId) {
   return `mentor-journal-${digest(parentSessionId).slice(0, 40)}`
 }
 
-export function threadIdFor(parentSessionId, configFingerprint, epoch) {
-  if (typeof parentSessionId !== 'string' || parentSessionId === '') throw new TypeError('parent session id is required')
-  if (typeof configFingerprint !== 'string' || configFingerprint === '') throw new TypeError('config fingerprint is required')
-  if (!Number.isSafeInteger(epoch) || epoch < 0) throw new TypeError('thread epoch must be a non-negative integer')
-  return `mt_${digest(`${parentSessionId}\0${configFingerprint}\0${epoch}`).slice(0, 32)}`
-}
-
 export function consultationIdFor(threadId, hostCallId) {
   if (typeof threadId !== 'string' || typeof hostCallId !== 'string' || hostCallId === '') {
     throw new TypeError('thread id and host call id are required')

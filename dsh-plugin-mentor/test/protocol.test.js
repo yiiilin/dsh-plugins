@@ -36,6 +36,8 @@ test('JSON-encodes evidence so embedded fences cannot escape the data boundary',
 
 test('rejects prompt-routing fields, duplicate evidence ids, and blank content', () => {
   assert.throws(() => normalizeInput({ message: 'question', provider: 'other' }), /unknown field/u)
+  assert.throws(() => normalizeInput({ message: 'question', thread_id: 'mt_abcdefghijklmnop' }), /unknown field/u)
+  assert.throws(() => normalizeInput({ message: 'question', reply_to: 'mc_abcdefghijklmnop' }), /unknown field/u)
   assert.throws(() => normalizeInput({ message: 'question', evidence: [
     { id: 'E1', kind: 'log', source: 'run 1', content: 'a' },
     { id: 'E1', kind: 'log', source: 'run 2', content: 'b' },
@@ -66,8 +68,8 @@ test('enforces character and UTF-8 request limits before dispatch', () => {
 })
 
 test('fingerprints normalized values rather than property insertion order', () => {
-  const left = normalizeInput({ message: 'question', thread_id: 'mt_abcdefghijklmnop' })
-  const right = normalizeInput({ thread_id: 'mt_abcdefghijklmnop', message: 'question' })
+  const left = normalizeInput({ message: 'question', evidence: [] })
+  const right = normalizeInput({ evidence: [], message: 'question' })
   assert.equal(inputFingerprint(left), inputFingerprint(right))
   assert.notEqual(inputFingerprint(left), inputFingerprint(normalizeInput({ message: 'different' })))
 })

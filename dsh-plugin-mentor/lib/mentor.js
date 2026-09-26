@@ -32,10 +32,10 @@ const DEFAULTS = Object.freeze({
   requestTimeoutMs: 300000,
   globalConcurrency: 2,
 })
-const TOOL_DESCRIPTION = `向一个有独立会话、没有任何工具的高级导师咨询。
-当你存在具体的不确定性、多个方案难以取舍、排错停滞，或需要独立挑战关键假设时使用；不要把每个普通步骤都送审。
-导师只能看到你提交的消息/证据以及本导师线程的历史，不能自行读取文件、搜索、运行测试或观察你的其他操作。
-message 必填；如果结果未知且未收到回复，原样重试相同的完整参数（message、evidence、thread_id、reply_to）以恢复已完成结果；不同输入会在独立线程开始。导师要求更多信息时，先自行查证，再发起下一次调用。导师建议不是事实证明或权限批准；你负责验证和执行。`
+const TOOL_DESCRIPTION = `Consult a tool-less Mentor agent in an isolated Session.
+Use Mentor when you have a concrete uncertainty, are choosing between meaningful alternatives, are stuck debugging, or need an independent challenge to an important assumption. Do not send routine steps.
+The Mentor can see only the message, evidence, and Mentor-thread history explicitly provided to it. It cannot inspect files, search, run code, or observe your other activity.
+The message is required; evidence is optional and must be supplied explicitly. Each primary Session has one implicit Mentor thread, which is reset with /mentor reset or after a configuration change. If a call's outcome is unknown and no reply was received, retry with the exact same message and evidence to recover a completed result. Mentor advice is not verified fact or authorization; you remain responsible for verification and action.`
 
 function positiveInteger(value, fallback, name, max = Number.MAX_SAFE_INTEGER) {
   const selected = value === undefined ? fallback : Number(value)
@@ -342,7 +342,7 @@ async function openLegacyHandle(persistence, id, mode, header, signal) {
   }
 }
 
-async function readJournalEvents(ctx, parentSessionId, config, adapters) {
+async function readJournalEvents(ctx, parentSessionId, adapters) {
   const persistence = ctx.sessionPersistence
   const id = journalIdFor(parentSessionId)
   const header = makeJournalHeader(id, adapters.sessionFormatVersion ?? 0)
@@ -408,8 +408,8 @@ async function withJournalLock(id, callback) {
   }
 }
 
-async function readJournal(ctx, parentSessionId, config, adapters, { create = false } = {}) {
-  let journal = await readJournalEvents(ctx, parentSessionId, config, adapters)
+async function readJournal(ctx, parentSessionId, adapters, { create = false } = {}) {
+  let journal = await readJournalEvents(ctx, parentSessionId, adapters)
   if (!journal.exists && create) {
     if (typeof ctx.sessionPersistence.open === 'function') {
       let handle
@@ -426,19 +426,19 @@ async function readJournal(ctx, parentSessionId, config, adapters, { create = fa
         journal.exists = true
       } catch (error) {
         if (!/already exists|duplicate/iu.test(error?.message ?? '')) throw error
-        journal = await readJournalEvents(ctx, parentSessionId, config, adapters)
+        journal = await readJournalEvents(ctx, parentSessionId, adapters)
       }
     }
   }
   return journal
 }
 
-async function appendJournal(ctx, parentSessionId, config, adapters, kind, data, signal) {
+async function appendJournal(ctx, parentSessionId, adapters, kind, data, signal) {
   const id = journalIdFor(parentSessionId)
   return withJournalLock(id, async () => {
     const entryId = randomUUID()
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      let journal = await readJournal(ctx, parentSessionId, config, adapters, { create: true })
+      let journal = await readJournal(ctx, parentSessionId, adapters, { create: true })
       const alreadyWritten = journal.events.find((event) => event.type === 'mentor/journal'
         && event.data?.entryId === entryId)
       if (alreadyWritten !== undefined) return alreadyWritten
@@ -447,7 +447,7 @@ async function appendJournal(ctx, parentSessionId, config, adapters, kind, data,
         await appendJournalBatch(ctx, journal, [event], signal)
         return event
       } catch (error) {
-        journal = await readJournalEvents(ctx, parentSessionId, config, adapters)
+        journal = await readJournalEvents(ctx, parentSessionId, adapters)
         if (journal.events.some((stored) => stored.type === 'mentor/journal' && stored.data?.entryId === entryId)) {
           return journal.events.find((stored) => stored.type === 'mentor/journal' && stored.data?.entryId === entryId)
         }
@@ -465,7 +465,7 @@ async function flushSession(ctx, session) {
 
 async function markAbortedBeforeProvider(ctx, config, adapters, operation, reason) {
   if (!operation.accepted || operation.abortJournaled) return
-  await appendJournal(ctx, operation.parentSessionId, config, adapters, 'consultation-aborted', {
+  await appendJournal(ctx, operation.parentSessionId, adapters, 'consultation-aborted', {
     hostCallId: operation.callId,
     inputMessageId: operation.messageId,
     reason: typeof reason === 'string' ? reason.slice(0, 300) : 'request rejected before provider dispatch',
@@ -596,12 +596,12 @@ async function reconcileDeliveries(ctx, config, adapters, runtime, parentSession
       continue
     }
 
-    await appendJournal(ctx, parentSessionId, config, adapters,
+    await appendJournal(ctx, parentSessionId, adapters,
       outcome === 'delivered' ? 'consultation-delivered' : 'consultation-undelivered', {
         hostCallId: call.hostCallId,
         ...(outcome === 'undelivered' ? { reason: 'parent-result-error-or-content-changed' } : {}),
       })
-    state = projectJournal((await readJournal(ctx, parentSessionId, config, adapters)).events)
+    state = projectJournal((await readJournal(ctx, parentSessionId, adapters)).events)
   }
   return { state, blocked: undefined }
 }
@@ -758,14 +758,6 @@ function findPendingReplay(journalState, inputHash, currentFingerprint) {
   return undefined
 }
 
-function latestSettledCall(journalState, threadId) {
-  const calls = currentCallsForThread(journalState, threadId)
-  for (let index = calls.length - 1; index >= 0; index -= 1) {
-    if (calls[index].status === 'settled' && calls[index].generationSent !== false) return calls[index]
-  }
-  return undefined
-}
-
 function hasUnresolvedCall(journalState, threadId, exceptCallId) {
   return currentCallsForThread(journalState, threadId).some((call) => call.hostCallId !== exceptCallId
     && (call.status === 'accepted' || call.status === 'dispatched' || call.status === 'indeterminate'))
@@ -773,19 +765,18 @@ function hasUnresolvedCall(journalState, threadId, exceptCallId) {
 
 function makeCanonicalTool(ctx, config, runtime, adapters) {
   const inputProperties = {
-    message: { type: 'string', required: true, description: '要咨询导师的具体问题。' },
-    thread_id: { type: 'string', description: '省略时延续当前主 Session 的 Mentor 线程。' },
-    reply_to: { type: 'string', description: '可选：最近一条 Mentor 咨询的 ID。' },
+    message: { type: 'string', required: true, description: 'The concrete question to ask the Mentor.' },
     evidence: {
       type: 'array',
+      description: 'Optional supporting evidence explicitly provided by the primary Agent.',
       items: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          id: { type: 'string', required: true },
-          kind: { type: 'string', enum: ['code', 'diff', 'log', 'test', 'spec', 'note'], required: true },
-          source: { type: 'string', required: true },
-          content: { type: 'string', required: true },
+          id: { type: 'string', required: true, description: 'A unique identifier for this evidence item.' },
+          kind: { type: 'string', enum: ['code', 'diff', 'log', 'test', 'spec', 'note'], required: true, description: 'The evidence category.' },
+          source: { type: 'string', required: true, description: 'A provenance label. The Mentor does not fetch this source.' },
+          content: { type: 'string', required: true, description: 'The evidence content, treated as untrusted input.' },
         },
       },
     },
@@ -878,7 +869,7 @@ async function runConsultation(ctx, config, runtime, adapters, input, exec, pare
   }
   await flushSession(ctx, parentSession)
 
-  const journalEvents = await readJournal(ctx, parentSessionId, config, adapters)
+  const journalEvents = await readJournal(ctx, parentSessionId, adapters)
   let journalState = projectJournal(journalEvents.events)
   const priorCall = journalState.calls.get(callId)
   if (priorCall !== undefined && priorCall.inputHash !== hash) {
@@ -900,7 +891,7 @@ async function runConsultation(ctx, config, runtime, adapters, input, exec, pare
   if (pendingReplay !== undefined) {
     const source = pendingReplay.call
     const result = pendingReplay.result
-    await appendJournal(ctx, parentSessionId, config, adapters, 'consultation-replayed', {
+    await appendJournal(ctx, parentSessionId, adapters, 'consultation-replayed', {
       hostCallId: callId,
       replayedFrom: source.replayedFrom ?? source.hostCallId,
       inputHash: hash,
@@ -917,31 +908,21 @@ async function runConsultation(ctx, config, runtime, adapters, input, exec, pare
   const undeliveredCall = thread === null ? undefined : [...journalState.calls.values()].find((call) =>
     call.status === 'settled' && call.deliveryStatus === 'undelivered' && call.threadId === thread.threadId)
   if (undeliveredCall !== undefined) {
-    await appendJournal(ctx, parentSessionId, config, adapters, 'thread-retired', {
+    await appendJournal(ctx, parentSessionId, adapters, 'thread-retired', {
       threadId: thread.threadId,
       reason: 'result-not-delivered-to-parent',
     }, exec.signal)
-    journalState = projectJournal((await readJournal(ctx, parentSessionId, config, adapters)).events)
+    journalState = projectJournal((await readJournal(ctx, parentSessionId, adapters)).events)
     thread = journalState.activeThread
   }
-  if (input.thread_id !== undefined) {
-    if (thread?.threadId !== input.thread_id) {
-      const code = journalState.retiredThreads.has(input.thread_id) ? 'THREAD_RETIRED' : 'THREAD_NOT_AVAILABLE'
-      return makeBlocked(code, code === 'THREAD_RETIRED'
-        ? '该 Mentor 线程已封存；未发起新的模型请求。'
-        : '该 Mentor 线程不属于当前主 Session；未发起新的模型请求。', input.thread_id)
-    }
-    if (thread.configFingerprint !== currentFingerprint) {
-      return makeBlocked('THREAD_RETIRED', 'Mentor 路由已变化；旧线程不会在新配置下继续。请省略 thread_id 开启新线程。', input.thread_id, null, true)
-    }
-  } else if (thread !== null && thread.configFingerprint !== currentFingerprint) {
-    await appendJournal(ctx, parentSessionId, config, adapters, 'thread-retired', { threadId: thread.threadId, reason: 'configuration-changed' }, exec.signal)
+  if (thread !== null && thread.configFingerprint !== currentFingerprint) {
+    await appendJournal(ctx, parentSessionId, adapters, 'thread-retired', { threadId: thread.threadId, reason: 'configuration-changed' }, exec.signal)
     const previousHandle = runtime.handles.get(thread.threadId)
     runtime.handles.delete(thread.threadId)
     runtime.threads.delete(thread.threadId)
     runtime.mentorAgents.delete(thread.threadId)
     if (previousHandle !== undefined) await previousHandle.dispose()
-    journalState = projectJournal((await readJournal(ctx, parentSessionId, config, adapters)).events)
+    journalState = projectJournal((await readJournal(ctx, parentSessionId, adapters)).events)
     thread = null
   }
 
@@ -953,19 +934,13 @@ async function runConsultation(ctx, config, runtime, adapters, input, exec, pare
       epoch,
     }
     if (!/^mt_[A-Za-z0-9_-]{16,80}$/u.test(thread.threadId)) throw new Error('Mentor id adapter returned an invalid thread id')
-    await appendJournal(ctx, parentSessionId, config, adapters, 'thread-bound', thread, exec.signal)
-    journalState = projectJournal((await readJournal(ctx, parentSessionId, config, adapters)).events)
+    await appendJournal(ctx, parentSessionId, adapters, 'thread-bound', thread, exec.signal)
+    journalState = projectJournal((await readJournal(ctx, parentSessionId, adapters)).events)
     thread = journalState.activeThread
   }
 
   const consultationId = priorCall?.consultationId ?? consultationIdFor(thread.threadId, callId)
   const inputMessageId = priorCall?.inputMessageId ?? inputMessageIdFor(thread.threadId, callId)
-  if (input.reply_to !== undefined) {
-    const latest = latestSettledCall(journalState, thread.threadId)
-    if (latest?.consultationId !== input.reply_to) {
-      return makeBlocked('STALE_REPLY', 'reply_to 不是当前 Mentor 线程最近一条已完成咨询；未发起新的模型请求。', thread.threadId, null, true)
-    }
-  }
   if (hasUnresolvedCall(journalState, thread.threadId, callId)) {
     return makeBlocked('THREAD_BUSY', '该线程上一条咨询结果不确定；未重发请求。请运行 /mentor reset 后再开新线程。', thread.threadId)
   }
@@ -994,7 +969,7 @@ async function runConsultation(ctx, config, runtime, adapters, input, exec, pare
         message: recovered.message,
         usage: recovered.usage,
       })
-      await appendJournal(ctx, parentSessionId, config, adapters, 'consultation-settled', {
+      await appendJournal(ctx, parentSessionId, adapters, 'consultation-settled', {
         hostCallId: callId,
         revision,
         usage: recovered.usage,
@@ -1005,7 +980,7 @@ async function runConsultation(ctx, config, runtime, adapters, input, exec, pare
     }
     if (priorCall !== undefined || hasInputAlready) {
       if (priorCall?.status !== 'indeterminate') {
-        await appendJournal(ctx, parentSessionId, config, adapters, 'consultation-indeterminate', {
+        await appendJournal(ctx, parentSessionId, adapters, 'consultation-indeterminate', {
           hostCallId: callId,
           reason: 'dispatched-without-durable-complete-reply',
         })
@@ -1079,13 +1054,12 @@ async function runConsultation(ctx, config, runtime, adapters, input, exec, pare
   }, config.requestTimeoutMs)
   runtime.activeOperations.add(operation)
   runtime.activeByAgentId.set(String(agent.id), operation)
-  runtime.activeByParent.set(parentSessionId, operation)
   threadState.activeCall = operation
   threadState.pendingByMessageId.set(inputMessageId, operation)
 
   try {
     if (priorCall === undefined || priorCall.status === 'aborted') {
-      await appendJournal(ctx, parentSessionId, config, adapters, 'consultation-accepted', {
+      await appendJournal(ctx, parentSessionId, adapters, 'consultation-accepted', {
         hostCallId: callId,
         inputHash: hash,
         threadId: thread.threadId,
@@ -1123,7 +1097,7 @@ async function runConsultation(ctx, config, runtime, adapters, input, exec, pare
       message: committed.message,
       usage: committed.usage,
     })
-    await appendJournal(ctx, parentSessionId, config, adapters, 'consultation-settled', {
+    await appendJournal(ctx, parentSessionId, adapters, 'consultation-settled', {
       hostCallId: callId,
       revision,
       usage: committed.usage,
@@ -1142,7 +1116,7 @@ async function runConsultation(ctx, config, runtime, adapters, input, exec, pare
     if (operation.dispatched && !operation.settled) {
       try {
         await flushSession(ctx, agent.session)
-        await appendJournal(ctx, parentSessionId, config, adapters, 'consultation-indeterminate', {
+        await appendJournal(ctx, parentSessionId, adapters, 'consultation-indeterminate', {
           hostCallId: callId,
           reason: error instanceof Error ? error.message.slice(0, 300) : 'unknown failure after dispatch',
           usage: operation.usage ?? normalizeUsage(undefined),
@@ -1156,7 +1130,7 @@ async function runConsultation(ctx, config, runtime, adapters, input, exec, pare
         if (inputLogged) await flushSession(ctx, agent.session)
         await markAbortedBeforeProvider(ctx, config, adapters, operation, error)
         if (inputLogged) {
-          await appendJournal(ctx, parentSessionId, config, adapters, 'thread-retired', {
+          await appendJournal(ctx, parentSessionId, adapters, 'thread-retired', {
             threadId: thread.threadId,
             reason: 'consultation-failed-before-provider',
           })
@@ -1176,7 +1150,6 @@ async function runConsultation(ctx, config, runtime, adapters, input, exec, pare
     }
     threadState.activeCall = null
     runtime.activeByAgentId.delete(String(agent.id))
-    runtime.activeByParent.delete(parentSessionId)
     runtime.activeOperations.delete(operation)
     await releaseMentorHandle(ctx, runtime, thread.threadId, handle)
   }
@@ -1393,7 +1366,6 @@ function createToolMetadata() {
     activeCount: 0,
     activeOperations: new Set(),
     activeByAgentId: new Map(),
-    activeByParent: new Map(),
     parentBusy: new Set(),
     inFlight: new Map(),
     threads: new Map(),
@@ -1504,7 +1476,7 @@ async function readMentorHistory(ctx, config, adapters, runtime, request) {
   }
   const parentSession = parentAgent.session
   await flushSession(ctx, parentSession)
-  const journal = await readJournal(ctx, request.sessionId, config, adapters)
+  const journal = await readJournal(ctx, request.sessionId, adapters)
   const observed = await reconcileDeliveries(
     ctx,
     config,
@@ -1598,7 +1570,7 @@ function installCommands(ctx, config, runtime, adapters) {
   if (commands === undefined || typeof commands.register !== 'function') return
   ctx.effect(() => commands.register({
     name: 'mentor',
-    description: '查看或重置当前主会话的 Mentor 线程。',
+    description: 'View or reset the Mentor thread for the current primary Session.',
     recordInput: true,
     handler: async ({ agent, rawInput }) => {
       const session = agent?.session
@@ -1609,7 +1581,7 @@ function installCommands(ctx, config, runtime, adapters) {
         const parentId = String(session.id)
         const busy = runtime.parentBusy.has(parentId)
         if (!busy) await flushSession(ctx, session)
-        const journal = await readJournal(ctx, parentId, config, adapters)
+        const journal = await readJournal(ctx, parentId, adapters)
         const initial = projectJournal(journal.events)
         const observed = busy
           ? { state: initial }
@@ -1640,17 +1612,14 @@ function installCommands(ctx, config, runtime, adapters) {
       }
       if (action === 'reset') {
         const parentId = String(session.id)
-        if (runtime.activeByParent.has(parentId) || runtime.parentBusy.has(parentId)) {
+        if (runtime.parentBusy.has(parentId)) {
           return { kind: 'error', text: 'Mentor 正在咨询；请等当前调用收敛后再重置。' }
         }
         runtime.parentBusy.add(parentId)
         try {
-          if (runtime.activeByParent.has(parentId)) {
-            return { kind: 'error', text: 'Mentor 正在咨询；请等当前调用收敛后再重置。' }
-          }
-          const journal = await readJournal(ctx, parentId, config, adapters, { create: true })
+          const journal = await readJournal(ctx, parentId, adapters, { create: true })
           const state = projectJournal(journal.events)
-          await appendJournal(ctx, parentId, config, adapters, 'thread-reset', {
+          await appendJournal(ctx, parentId, adapters, 'thread-reset', {
             threadId: state.activeThread?.threadId ?? null,
             epoch: state.epoch + 1,
           })
@@ -1764,7 +1733,7 @@ export function installMentor(ctx, rawConfig, adapters) {
     return (async function* mentorStream() {
       if (operation.controller.signal.aborted) throw operation.controller.signal.reason
       await flushSession(ctx, threadState.agent.session)
-      await appendJournal(ctx, operation.parentSessionId, config, adapters, 'consultation-dispatched', {
+      await appendJournal(ctx, operation.parentSessionId, adapters, 'consultation-dispatched', {
         hostCallId: operation.callId,
         contextMeasureMode: 'serialized-json-utf8-upper-bound',
         ...(Number.isFinite(contextUpperBoundBytes) ? { contextUpperBoundBytes } : {}),

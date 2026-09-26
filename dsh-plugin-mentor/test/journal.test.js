@@ -7,7 +7,6 @@ import {
   journalIdFor,
   makeJournalEvent,
   projectJournal,
-  threadIdFor,
 } from '../lib/journal.js'
 
 test('writes forward-compatible journal envelopes as ignorable durable records', () => {
@@ -48,11 +47,7 @@ test('derives stable non-secret session, thread, consultation, and message ident
   assert.notEqual(journalIdFor('parent-a'), journalIdFor('parent-b'))
   assert.match(journalIdFor('parent-a'), /^[A-Za-z0-9_-]+$/u)
 
-  const thread = threadIdFor('parent-a', 'config-a', 0)
-  assert.equal(thread, threadIdFor('parent-a', 'config-a', 0))
-  assert.notEqual(thread, threadIdFor('parent-a', 'config-a', 1))
-  assert.notEqual(thread, threadIdFor('parent-a', 'config-b', 0))
-  assert.match(thread, /^mt_[A-Za-z0-9_-]{16,80}$/u)
+  const thread = 'mt_abcdefghijklmnop'
   assert.match(consultationIdFor(thread, 'call-1'), /^mc_[A-Za-z0-9_-]{16,80}$/u)
   assert.match(inputMessageIdFor(thread, 'call-1'), /^[A-Za-z0-9_-]{16,80}$/u)
 })

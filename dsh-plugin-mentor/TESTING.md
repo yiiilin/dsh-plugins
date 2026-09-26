@@ -12,7 +12,7 @@ Journeys are derived from the supplied `DSH_Mentor_as_Tool_设计包_v0.1` archi
 - UI RED/GREEN: `node --test --test-name-pattern='serves the current Session Mentor transcript' test/mentor.test.js` first failed because no Host view RPC was registered; after the fix it passed 1/1 and verifies the selected root Session's question, evidence, reply, delivery state, and rejection of an unavailable Session.
 - Global settings RED/GREEN: `node --test --test-name-pattern='reads and writes one global settings row' test/mentor.test.js` drives the plugin's own settings row through the Host settings service; it verifies catalog rejection, removed-limit rejection, revision conflicts, read-only refusal, and that a thread reset leaves the global values untouched.
 - Measurement RED/GREEN: `node --test --test-name-pattern='records generation, input, context, and reply measurements without capping them' test/mentor.test.js` proves three consultations in a row all reach the provider and that `newInputBytes`, `contextUpperBoundBytes`, and `replyUtf8Bytes` are journaled while nothing is capped.
-- After implementation and subsequent regression additions, `npm test` passed 40 tests with 0 failures. The test suite uses Node's built-in `node:test` runner.
+- After implementation and subsequent regression additions, `npm test` passed 42 tests with 0 failures. The test suite uses Node's built-in `node:test` runner.
 
 ## Guarantees Exercised
 

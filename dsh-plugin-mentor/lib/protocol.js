@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-const INPUT_FIELDS = new Set(['message', 'thread_id', 'reply_to', 'evidence'])
+const INPUT_FIELDS = new Set(['message', 'evidence'])
 const EVIDENCE_FIELDS = new Set(['id', 'kind', 'source', 'content'])
 const EVIDENCE_KINDS = new Set(['code', 'diff', 'log', 'test', 'spec', 'note'])
 const BLOCKED_CODES = new Set([
@@ -53,19 +53,6 @@ export function normalizeInput(args, { maxInputBytes = MAX_INPUT_BYTES } = {}) {
     message: requireBoundedString(args.message, 'message', MAX_MESSAGE_CHARS, { trim: true }),
     evidence: [],
   }
-  if (args.thread_id !== undefined) {
-    if (typeof args.thread_id !== 'string' || !/^mt_[A-Za-z0-9_-]{16,80}$/u.test(args.thread_id)) {
-      throw new TypeError('thread_id must be a Mentor thread id')
-    }
-    input.thread_id = args.thread_id
-  }
-  if (args.reply_to !== undefined) {
-    if (typeof args.reply_to !== 'string' || !/^mc_[A-Za-z0-9_-]{16,80}$/u.test(args.reply_to)) {
-      throw new TypeError('reply_to must be a Mentor consultation id')
-    }
-    input.reply_to = args.reply_to
-  }
-
   if (args.evidence !== undefined) {
     if (!Array.isArray(args.evidence)) throw new TypeError('evidence must be an array')
     if (args.evidence.length > MAX_EVIDENCE_ITEMS) throw new RangeError(`at most ${MAX_EVIDENCE_ITEMS} evidence items are allowed`)
@@ -99,8 +86,6 @@ export function normalizeInput(args, { maxInputBytes = MAX_INPUT_BYTES } = {}) {
 export function inputFingerprint(input) {
   const canonical = {
     message: input.message,
-    thread_id: input.thread_id ?? null,
-    reply_to: input.reply_to ?? null,
     evidence: input.evidence.map(({ id, kind, source, content }) => ({ id, kind, source, content })),
   }
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex')

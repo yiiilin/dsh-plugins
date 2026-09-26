@@ -14,7 +14,7 @@ window.__ModuleLoader__.load({
     const LOCALE_NS = 'mentor.history'
     const PACKAGE_ID = '@yiln-dsh/dsh-plugin-mentor'
 
-    const ZH = {
+    const ZH_DICT = {
       tab: 'Mentor',
       title: 'Mentor 记录',
       refresh: '刷新',
@@ -56,7 +56,7 @@ window.__ModuleLoader__.load({
       saving: '保存中…',
       saved: '已保存',
     }
-    const EN = {
+    const EN_DICT = {
       tab: 'Mentor',
       title: 'Mentor history',
       refresh: 'Refresh',
@@ -97,11 +97,6 @@ window.__ModuleLoader__.load({
       save: 'Save',
       saving: 'Saving…',
       saved: 'Saved',
-    }
-
-    function applyParams(template, params) {
-      if (!params) return template
-      return template.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match)
     }
 
     function record(value) {
@@ -484,13 +479,12 @@ window.__ModuleLoader__.load({
     }
 
     function apply(ctx) {
-      const locale = ctx.get('locale')
-      const slots = ctx.get('slots')
-      const connection = ctx.get('connection')
-      if (slots === undefined || connection === undefined) return
-      const locales = { zh: ZH, en: EN }
-      if (locale !== undefined) ctx.effect(() => locale.register(LOCALE_NS, locales), 'mentor locale')
-      const t = locale !== undefined ? locale.bind(LOCALE_NS) : (key, params) => applyParams(ZH[key] || EN[key] || key, params)
+      const locale = ctx.locale
+      const slots = ctx.slots
+      const connection = ctx.connection
+      if (locale === undefined || slots === undefined || connection === undefined) return
+      ctx.effect(() => ctx.locale.register(LOCALE_NS, { zh: ZH_DICT, en: EN_DICT }), 'mentor locale')
+      const t = ctx.locale.bind(LOCALE_NS)
       const rpc = createRpc(connection.rpc, Reflect.has(connection, 'generation'))
 
       // The per-Session tab shows history only; every setting is global.

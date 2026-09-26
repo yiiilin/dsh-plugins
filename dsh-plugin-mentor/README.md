@@ -47,7 +47,7 @@ Mentor 只有**一份全局设置**（本插件自己的配置行）。模型路
 
 仍然生效的只有两个运行保护：`globalConcurrency`（同时进行的咨询数）和 `requestTimeoutMs`（单次超时）。工具参数本身仍有 schema 级字符/字节边界（`maxInputBytes`）。
 
-首次咨询只需 `message`。可选的 `evidence` 接收 `id`、`kind`、`source`、`content`；来源只是主 Agent 提供的标签，不会触发文件或 URL 读取。`thread_id` 省略时沿用当前主 Session 的导师线程，`reply_to` 只接受该线程最近一条已完成咨询的 ID。提交的 message/evidence 会发送给可信配置中的 provider；不要提交凭据或不应外发的数据。
+首次咨询只需 `message`。可选的 `evidence` 接收 `id`、`kind`、`source`、`content`；来源只是主 Agent 提供的标签，不会触发文件或 URL 读取。每个主 Session 自动使用一个 Mentor 线程，`/mentor reset` 或配置变化时才封存并新建线程。提交的 message/evidence 会发送给可信配置中的 provider；不要提交凭据或不应外发的数据。
 
 ## 界面
 
@@ -78,7 +78,15 @@ Mentor 使用新 Agent Session，不复制父 transcript，也不传入 workspac
 
 ## 安装与测试
 
-当前版本尚未发布到 npm；从工作区安装：
+已发布版本：`@yiln-dsh/dsh-plugin-mentor@0.2.1`。工具只接受 `message` 与可选的 `evidence`；线程由主 Session 自动管理，升级已有本地安装不改变历史 journal 和结果格式。
+
+从 npm 安装：
+
+```bash
+dsh plugin --profile web add @yiln-dsh/dsh-plugin-mentor@0.2.1
+```
+
+工作区开发也可使用本地路径：
 
 ```bash
 dsh plugin --profile web add file:/path/to/dsh-plugin-mentor
