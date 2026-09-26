@@ -29,11 +29,11 @@ A DSH `dsh.bundle` that keeps the stock webserver untouched and adds an
   which also edits the idle window and ceiling those records obey;
 - the gateway supplies a complete PWA manifest, 180/192/512px PNG icons,
   iOS home-screen metadata, and a pass-through service worker;
-- a resume watchdog rebuilds the realtime connection when the page returns
-  after a real absence: a phone that locks its screen kills the shared stream
-  socket silently and the stock client never notices, so without this the GUI
-  stays frozen until a manual reload; when the gateway session expired while
-  the page slept, the page reloads itself into the login page;
+- a resume watchdog rebuilds the realtime connection when a mobile page returns
+  from the background, including short app switches; focus and Page Lifecycle
+  resume events cover browsers that omit `visibilitychange`, while desktop pages
+  keep the longer absence threshold; when the gateway session expired while the
+  page slept, the page reloads itself into the login page;
 - optional WebAuthn Passkeys can replace password entry for enrolled devices,
   while password/TOTP recovery remains available;
 - an auth-owned in-app configuration editor replaces the server-native **Open
@@ -52,7 +52,7 @@ authentication.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.10.3`.
+The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.10.4`.
 
 The plugin is plain JavaScript source; there is no build step.
 
@@ -74,7 +74,7 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.10.1.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.10.4.tgz
 ```
 
 The tarball already contains the runnable source. A user can also unpack it,
@@ -96,7 +96,7 @@ dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@latest
 Pin a version if you want reproducible installs:
 
 ```bash
-dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.10.1
+dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.10.4
 ```
 
 ### Direct GitHub
@@ -121,7 +121,7 @@ The plugin version is defined by the `version` field in `package.json`:
 ```json
 {
   "name": "@yiln-dsh/dsh-plugin-auth-webserver",
-  "version": "0.10.2"
+  "version": "0.10.4"
 }
 ```
 
@@ -133,8 +133,8 @@ Semantic versioning is recommended:
 
 The selected version is used for:
 
-- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.10.1`
-- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.10.1.tgz`
+- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.10.4`
+- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.10.4.tgz`
 - the metadata inside the tarball/npm package
 
 A `file:` source install uses the version that is currently in the source tree;
@@ -233,16 +233,15 @@ override stops that wrap, tightens the toolbar spacing to 8px, and lets the
 trailing cluster absorb the squeeze; the official model trigger already
 ellipsizes its own label, so no control is dropped.
 
-Locked phones also come back alive. A suspended mobile browser kills the
-realtime stream socket without telling the page — no close event ever arrives —
-so the stock client sits on a dead connection and stops updating until a manual
-reload. The client bundle therefore watches the page lifecycle: returning to
-the page after an absence of a minute or more (or restoring it from the
-back/forward cache) rebuilds the connection through the controller's own
-recovery, which reopens the event stream and resyncs the whole GUI. The same
-return probes `/_dsh/auth-webserver/state`, and when the gateway session
-expired during the sleep the page reloads itself into the login page instead
-of hanging on a connection that can never come back.
+Locked phones now recover without a manual reload. When the mobile shell
+returns from the background, the client rebuilds the shared connection even
+after a short app switch; the shell's marker honors the configured breakpoint
+and `dsh_mode` override. Focus and Page Lifecycle resume events cover browsers
+that omit `visibilitychange`. This interrupts a stalled history opening or
+journal follow so the Gateway can reopen it and catch up. Desktop pages keep
+the one-minute threshold to avoid reconnecting on routine tab switches. The
+same return probes `/_dsh/auth-webserver/state`, and when the gateway session
+expired during sleep the page reloads into the login page.
 
 Or start it explicitly:
 

@@ -32,6 +32,7 @@ function deadCarrierSource(counter) {
 function bootCore() {
   const time = createTime();
   const win = new FakeWindow(time);
+  win.document.documentElement.setAttribute("data-dsh-auth-mobile", "");
   const connectionModule = loadBundle(CONNECTION_MODULE, win);
   const harness = createContext();
   connectionModule.apply(harness.ctx);
@@ -70,7 +71,7 @@ test("BUG-RESUME-1: unlocking the phone rebuilds the generation a dead carrier f
   harness.disposeAll();
 });
 
-test("a quick app switch keeps the live generation", async () => {
+test("BUG-RESUME-3: a short app switch recovers a journal after its carrier dies", async () => {
   const { time, win, handle, harness } = bootCore();
   const counter = { runs: 0 };
   handle.registerGenerationSource(deadCarrierSource(counter));
@@ -78,14 +79,36 @@ test("a quick app switch keeps the live generation", async () => {
   await waitFor(() => handle.generation.getSnapshot() !== undefined);
   const authHarness = bootWatchdog(win, handle);
 
-  win.hide();
-  time.advance(5 * 1000);
-  win.show();
-  await settle();
-  assert.equal(counter.runs, 1, "a five-second switch must not churn the transport");
-  authHarness.disposeAll();
-  loop.stop();
-  harness.disposeAll();
+  try {
+    win.hide();
+    time.advance(5 * 1000);
+    win.show();
+    await waitFor(() => counter.runs === 2, { timeoutMs: 100 });
+  } finally {
+    authHarness.disposeAll();
+    loop.stop();
+    harness.disposeAll();
+  }
+});
+
+test("BUG-RESUME-4: focus recovers when visibilitychange was not delivered", async () => {
+  const { time, win, handle, harness } = bootCore();
+  const counter = { runs: 0 };
+  handle.registerGenerationSource(deadCarrierSource(counter));
+  const loop = handle.start({});
+  await waitFor(() => handle.generation.getSnapshot() !== undefined);
+  const authHarness = bootWatchdog(win, handle);
+
+  try {
+    win.dispatchEvent(new Event("blur"));
+    time.advance(5 * 1000);
+    win.dispatchEvent(new Event("focus"));
+    await waitFor(() => counter.runs === 2, { timeoutMs: 100 });
+  } finally {
+    authHarness.disposeAll();
+    loop.stop();
+    harness.disposeAll();
+  }
 });
 
 test("BUG-RESUME-1b: a retry loop suspended while offline is unparked by the resume", async () => {

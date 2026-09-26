@@ -51,6 +51,17 @@ test("a quick app switch leaves the connection alone", async () => {
   harness.disposeAll();
 });
 
+test("a narrow viewport forced to desktop keeps a short switch on the live connection", async () => {
+  const { time, win, reconnects, harness } = boot();
+  win.matchMedia = () => ({ matches: true });
+  win.hide();
+  time.advance(5 * 1000);
+  win.show();
+  await settle();
+  assert.equal(reconnects.length, 0, "desktop mode must not inherit the mobile resume policy");
+  harness.disposeAll();
+});
+
 test("a back-forward-cache restore rebuilds even after a short absence", async () => {
   const { time, win, reconnects, harness } = boot();
   win.hide();
@@ -58,6 +69,14 @@ test("a back-forward-cache restore rebuilds even after a short absence", async (
   pageshow(win, true);
   await settle();
   assert.equal(reconnects.length, 1, "a bfcache restore leaves the old carrier dead");
+  harness.disposeAll();
+});
+
+test("Page Lifecycle resume rebuilds after a frozen page returns", async () => {
+  const { win, reconnects, harness } = boot();
+  win.document.dispatchEvent(new Event("resume"));
+  await settle();
+  assert.equal(reconnects.length, 1, "resume is an explicit return from browser suspension");
   harness.disposeAll();
 });
 
@@ -124,6 +143,7 @@ test("disposing the plugin detaches the resume listeners", async () => {
   win.hide();
   time.advance(10 * 60 * 1000);
   win.show();
+  win.document.dispatchEvent(new Event("resume"));
   await settle();
   assert.equal(reconnects.length, 0);
 });

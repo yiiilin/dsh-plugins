@@ -31,7 +31,13 @@ export class FakeDocument extends EventTarget {
     this.hidden = false;
     this.cookie = "";
     this.lang = "zh-CN";
-    this.documentElement = { lang: "zh-CN", setAttribute() {}, removeAttribute() {} };
+    const attributes = new Set();
+    this.documentElement = {
+      lang: "zh-CN",
+      setAttribute(name) { attributes.add(name); },
+      removeAttribute(name) { attributes.delete(name); },
+      hasAttribute(name) { return attributes.has(name); },
+    };
     this.head = {
       appended: [],
       append: (node) => {

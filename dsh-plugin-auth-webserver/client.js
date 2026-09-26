@@ -1432,35 +1432,36 @@ window.__ModuleLoader__.load({
 		};
 		}
 
-		/** Absence after which returning to the page rebuilds the realtime connection. */
+		/** Absence after which returning to a desktop page rebuilds the realtime connection. */
 		const RESUME_REBUILD_AFTER_MS = 6e4;
 		/** Two lifecycle events may announce one and the same return (e.g. a bfcache restore). */
 		const RESUME_REBUILD_DEDUP_MS = 2e3;
 		/** Gateway endpoint answering 200 while the browser session is alive and 401 once it expired. */
 		const AUTH_STATE_PATH = "/_dsh/auth-webserver/state";
 
+		/** Use the mobile shell's own marker, including its configured breakpoint and page override. */
+		function isMobilePage(win) {
+			return win.document?.documentElement?.hasAttribute?.("data-dsh-auth-mobile") === true;
+		}
+
 		/**
 		 * Resume watchdog for phone sleep and other page suspensions.
 		 *
-		 * A suspended mobile browser kills the realtime carrier silently: the
-		 * shared Remote stream WebSocket stays "open" but delivers nothing and
-		 * never emits close, so the connection controller never learns the
-		 * generation died and the GUI freezes until a manual reload. Returning to
-		 * the page after a real absence therefore rebuilds through the
-		 * controller's own recovery — `connection.reconnect()` replaces the
-		 * carrier and reopens the generation, which the UI resyncs from — while a
-		 * back-forward-cache restore keeps the old dead socket and always
-		 * rebuilds. The gateway session may also have expired while the page
-		 * slept: a 401 on the auth state probe then reloads into the login page.
+		 * A suspended mobile browser can leave the shared Remote stream socket
+		 * unusable without a timely lifecycle close reaching the page. Rebuild on
+		 * every observed return to the mobile shell; desktop pages keep the longer
+		 * absence threshold. Focus and Page Lifecycle resume cover browsers that
+		 * omit visibilitychange. The gateway session may also expire while asleep:
+		 * a 401 on the auth state probe then reloads into the login page.
 		 */
 		function installResumeWatchdog(win, connection) {
 			const doc = win === undefined || win === null ? undefined : win.document;
 			if (doc === undefined || typeof connection?.reconnect !== "function") return () => {};
-			let awaySince = Date.now();
+			let awaySince = null;
 			let rebuiltAt = 0;
 			let disposed = false;
 			const markAway = () => {
-				awaySince = Date.now();
+				if (awaySince === null) awaySince = Date.now();
 			};
 			const probeSession = () => {
 				try {
@@ -1473,11 +1474,13 @@ window.__ModuleLoader__.load({
 				}
 			};
 			const rebuild = (always) => {
+				if (disposed) return;
 				const now = Date.now();
-				const gap = now - awaySince;
-				awaySince = now;
-				if (disposed || now - rebuiltAt < RESUME_REBUILD_DEDUP_MS) return;
-				if (!always && gap < RESUME_REBUILD_AFTER_MS) return;
+				const gap = awaySince === null ? 0 : now - awaySince;
+				const wasAway = awaySince !== null;
+				awaySince = null;
+				if (now - rebuiltAt < RESUME_REBUILD_DEDUP_MS) return;
+				if (!always && (!wasAway || (!isMobilePage(win) && gap < RESUME_REBUILD_AFTER_MS))) return;
 				rebuiltAt = now;
 				connection.reconnect();
 				probeSession();
@@ -1489,14 +1492,22 @@ window.__ModuleLoader__.load({
 			const onPageShow = (event) => {
 				rebuild(Boolean(event?.persisted));
 			};
+			const onFocus = () => rebuild(false);
+			const onResume = () => rebuild(true);
 			doc.addEventListener("visibilitychange", onVisibility);
+			doc.addEventListener("resume", onResume);
 			win.addEventListener("pagehide", markAway);
 			win.addEventListener("pageshow", onPageShow);
+			win.addEventListener("blur", markAway);
+			win.addEventListener("focus", onFocus);
 			return () => {
 				disposed = true;
 				doc.removeEventListener("visibilitychange", onVisibility);
+				doc.removeEventListener("resume", onResume);
 				win.removeEventListener("pagehide", markAway);
 				win.removeEventListener("pageshow", onPageShow);
+				win.removeEventListener("blur", markAway);
+				win.removeEventListener("focus", onFocus);
 			};
 		}
 

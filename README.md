@@ -67,7 +67,7 @@ Published bundle plugin versions are listed below. Workspace-only packages are m
 
 | Package | Version |
 | --- | --- |
-| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.10.3` |
+| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.10.4` |
 | `@yiln-dsh/dsh-plugin-delete-session` | `0.4.5` |
 | `@yiln-dsh/dsh-plugin-git-graph` | `0.2.2` |
 | `@yiln-dsh/dsh-plugin-mentor` | `0.2.1` |
