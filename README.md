@@ -4,7 +4,8 @@ One DSH Web plugin package containing seven internal feature modules. This
 workspace is the project root; dependencies, versioning, build, tests and
 publication are managed here, not in individual feature directories.
 
-Current version: `0.1.0` (unpublished). Verified target: DSH `0.2.0-rc.2`.
+Current version: `0.1.0` (published to npm as public). Verified target:
+DSH `0.2.0-rc.2`.
 
 ## Features
 
@@ -25,7 +26,13 @@ keep their original names and locations.
 
 ## Install
 
-Install the current workspace build:
+Install the published package:
+
+```bash
+dsh plugin --profile web add @yiln-dsh/dsh-plugins@0.1.0
+```
+
+Or install the current workspace build:
 
 ```bash
 npm install
@@ -33,16 +40,25 @@ npm run build
 dsh plugin --profile web add file:/path/to/dsh-plugin
 ```
 
-The published-package command becomes available only after this version is
-published:
-
-```bash
-dsh plugin --profile web add @yiln-dsh/dsh-plugins@0.1.0
-```
-
 Refresh the local `file:` installation after source changes. Restart the daemon
 for Host changes and refresh the browser for Client changes; a running process
 must not be assumed to pick up copied files automatically.
+
+A `file:` directory dependency is resolved from the lockfile, so pnpm may report
+`Already up to date` and project nothing even when the package gained files.
+Remove the projected package before re-adding it, or the new module will be
+missing from the composed profile:
+
+```bash
+rm -rf "$DSH_HOME/profiles/web/node_modules/@yiln-dsh/dsh-plugins"
+dsh plugin --profile web add file:/path/to/dsh-plugin
+```
+
+Confirm the composed tree carries the row before restarting:
+
+```bash
+dsh --profile web --dump-config | grep -c session-mode
+```
 
 ## Migration From Six Packages
 

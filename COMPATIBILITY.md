@@ -6,11 +6,12 @@ plugin injects and the Cordis services/Slots used by its Host and Client halves.
 
 ## Unified Package
 
-The workspace root now defines `@yiln-dsh/dsh-plugins@0.1.0` (unpublished),
-with seven internal Host modules and one composed Client entry. Its current peer
+The workspace root defines `@yiln-dsh/dsh-plugins@0.1.0` (published to npm as
+public, under the `latest` tag), with seven internal Host modules and one
+composed Client entry. Its current peer
 window is `>=0.2.0-rc.2 <0.2.0-rc.3`; the older standalone package windows below
 are historical, not a certification of the new suite. The root contract,
-configuration migration and existing feature tests pass (235 tests). A packed
+configuration migration and existing feature tests pass (266 tests). A packed
 installation in a fresh DSH `0.2.0-rc.2` container passed all seven editor browser
 regressions, single-package inventory, Mentor settings persistence, all three
 settings tabs, metrics/PWA/Git asset checks and real Git reads. A separate legacy
