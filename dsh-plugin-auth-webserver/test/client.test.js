@@ -58,18 +58,22 @@ test("preserves CSRF, current-session reload, and non-current refresh behavior",
   assert.match(CLIENT_SOURCE, /if \(await refreshClients\(\)\) setNotice\(t\("notice\.clientRevoked"\)\)/u);
 });
 
-test("owns the settings editor overlay inside the Settings layer", () => {
+test("uses the product modal for the configuration editor", () => {
   for (const token of [
     "dsh-auth-open-settings-editor",
     "/_dsh/auth-webserver/settings-editor/document",
     "settings.action",
     "settingsEditor.open",
-    "daw-settingsEditorInline",
+    "daw-settingsEditorDialog",
+    "data-modal-autofocus",
     "api(SETTINGS_EDITOR_DOCUMENT_PATH",
     "X-DSH-CSRF",
   ]) {
     assert.ok(CLIENT_SOURCE.includes(token), `auth client must include ${token}`);
   }
+  assert.match(CLIENT_SOURCE, /require\("@deepseek-ai\/dsh-client-ui-primitives"\)/u);
+  assert.match(PACKAGE_SOURCE, /@deepseek-ai\/dsh-client-ui-primitives/u);
+  assert.equal(CLIENT_SOURCE.includes("daw-settingsEditorInline"), false);
   assert.match(CLIENT_SOURCE, /id: "open-document"/u);
   assert.match(CLIENT_SOURCE, /priority: -1/u);
   assert.equal(CLIENT_SOURCE.includes('slots.inject("shell.overlay"'), false);

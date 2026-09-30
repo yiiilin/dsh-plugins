@@ -46,7 +46,7 @@ tracked by the plugin.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-delete-session@0.4.5`.
+The workspace release candidate is `@yiln-dsh/dsh-plugin-delete-session@0.4.6` (not yet published; the last published version is `0.4.5`). The DSH peer window includes `0.1.7-rc.2` and `0.2.0-rc.2`.
 
 ```bash
 dsh plugin --profile web add file:/path/to/dsh-plugin-delete-session

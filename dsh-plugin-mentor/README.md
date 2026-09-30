@@ -74,13 +74,13 @@ Mentor 使用新 Agent Session，不复制父 transcript，也不传入 workspac
 - Native 工具结果以简洁文本展示导师回复和线程标识；顶层 `tool/result` 的 presentation metadata 保存规范结果，nested PTC 不提供该 metadata，恢复时从 journal 与已持久化的 Mentor turn 重建。真实 `ptc` nested dispatch 尚未联调。
 - Mentor 子 Session 带 `origin: subagent` 和 `parentSession` 以保留 Agent runtime parent 关系，但不创建 SubagentRuntime Activation/descriptor；Web daemon 若在它运行时重启，可能把它报告为不可续传。插件只在下一次显式 `mentor` 调用时直接恢复日志，不会自动补发模型请求。
 - 全局设置写入 profile patch 需要 `dsh-settings` 与 `dsh-config-editor` 两个 Host 服务；缺少任一时设置页显示只读，可直接编辑 YAML。
-- 兼容性 peer window 覆盖 DSH `0.1.5-rc.2` 起的 `0.1.5` 线，以及 `0.1.7-rc.1`；RC.1 已通过隔离 Web profile E2E。未声明对历史 alpha 或其他 DSH 版本的兼容。
+- 兼容性 peer window 覆盖 DSH `0.1.5-rc.2` 起的 `0.1.5` 线，以及 `0.1.7-rc.1` / `0.1.7-rc.2` / `0.2.0-rc.2`；0.2.0 RC.2 已在隔离 Web profile 中验证页面与设置，未调用真实模型。未声明对历史 alpha 或其他 DSH 版本的兼容。
 
 ## 安装与测试
 
-已发布版本：`@yiln-dsh/dsh-plugin-mentor@0.2.1`。工具只接受 `message` 与可选的 `evidence`；线程由主 Session 自动管理，升级已有本地安装不改变历史 journal 和结果格式。
+工作区待发布版本：`@yiln-dsh/dsh-plugin-mentor@0.2.2`；当前 npm 已发布版本仍为 `0.2.1`。工具只接受 `message` 与可选的 `evidence`；线程由主 Session 自动管理，升级已有本地安装不改变历史 journal 和结果格式。
 
-从 npm 安装：
+从 npm 安装当前已发布版本（工作区 `0.2.2` 发布后再更新版本号）：
 
 ```bash
 dsh plugin --profile web add @yiln-dsh/dsh-plugin-mentor@0.2.1

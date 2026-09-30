@@ -1,0 +1,35 @@
+- id: llm-deepseek
+  disabled: true
+- id: webserver-auth
+  config:
+    port: !!js ctx.webStartup.port
+    targetHost: 127.0.0.1
+    targetPort: !!js ctx.webStartup.port
+    allowInsecureSettingsEditor: true
+    allowRemoteSettings: true
+    allowInsecureRemoteSettings: true
+- id: llm-pi-ai
+  config:
+    providers:
+      fixture-one:
+        api: openai-responses
+        baseURL: http://127.0.0.1:49999/v1
+        apiKeyEnv: DSH_EDITOR_TEST_API_KEY
+        models:
+          - id: fixture-model
+            name: Fixture model
+            contextWindow: 32000
+            maxTokens: 4096
+      fixture-two:
+        api: openai-completions
+        baseURL: http://127.0.0.1:49999/v1
+        apiKeyEnv: DSH_EDITOR_TEST_API_KEY
+        models:
+          - id: fixture-model
+            name: Fixture model
+            contextWindow: 32000
+            maxTokens: 4096
+- id: agent-default-model
+  config:
+    provider: fixture-one
+    model: fixture-model

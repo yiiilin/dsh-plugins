@@ -155,6 +155,11 @@ html[data-dsh-auth-mobile] [class~='VOzbGW_overlay'] {
   box-sizing: border-box !important;
 }
 
+/* The configuration editor's portal must sit above the full-screen Settings layer. */
+html[data-dsh-auth-mobile] body > :has(> .daw-settingsEditorDialog) {
+  z-index: 1101;
+}
+
 html[data-dsh-auth-mobile] [role='dialog'][class~='VOzbGW_panel'] {
   display: flex !important;
   flex-direction: column !important;

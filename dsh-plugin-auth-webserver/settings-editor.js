@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
+import { basename } from "node:path";
 import { withFileLock, writeFileAtomic } from "@deepseek-ai/dsh-atomic-write";
 import yaml from "js-yaml";
 
@@ -7,17 +8,31 @@ export const SETTINGS_EDITOR_DOCUMENT_PATH = "/_dsh/auth-webserver/settings-edit
 const REVISION_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
 export const MAX_SETTINGS_DOCUMENT_BYTES = 1024 * 1024;
 
+// The Loader evaluates !!js later; validation must treat it as inert text.
+const PROFILE_PATCH_SCHEMA = yaml.DEFAULT_SCHEMA.extend(new yaml.Type("tag:yaml.org,2002:js", {
+  kind: "scalar",
+  construct: (value) => value,
+}));
+
 /** Reject malformed documents before replacing the live settings file. */
-export function validateSettingsDocument(content) {
+export function validateSettingsDocument(content, format = "mapping") {
   if (typeof content !== "string") throw new TypeError("settings document content must be text");
   let value;
   try {
-    value = yaml.load(content, { json: false, maxAliasCount: 100 });
+    value = yaml.load(content, {
+      json: false,
+      maxAliasCount: 100,
+      schema: format === "patch" ? PROFILE_PATCH_SCHEMA : yaml.DEFAULT_SCHEMA,
+    });
   } catch {
     throw new TypeError("settings document is not valid YAML");
   }
-  if (value === undefined || value === null) return {};
-  if (typeof value !== "object" || Array.isArray(value)) {
+  if (value === undefined || value === null) return format === "patch" ? [] : {};
+  if (format === "patch") {
+    if (!Array.isArray(value) || !value.every((entry) => entry !== null && typeof entry === "object" && !Array.isArray(entry))) {
+      throw new TypeError("settings document must be a YAML list of patch objects");
+    }
+  } else if (typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("settings document must be a YAML mapping");
   }
   return value;
@@ -61,7 +76,7 @@ export function settingsDocumentRevision(content) {
 export async function readSettingsDocument(settings) {
   const path = await settingsDocumentPath(settings);
   const content = await readSettingsDocumentFile(path);
-  return { content, revision: settingsDocumentRevision(content) };
+  return { content, revision: settingsDocumentRevision(content), filename: basename(path) };
 }
 
 /**
@@ -73,7 +88,7 @@ export async function readSettingsDocument(settings) {
 export async function replaceSettingsDocument(settings, content, expectedRevision) {
   if (typeof content !== "string") throw new TypeError("settings document content must be text");
   assertSettingsDocumentText(content);
-  validateSettingsDocument(content);
+  validateSettingsDocument(content, typeof settings?.configure === "function" ? "patch" : "mapping");
   if (typeof expectedRevision !== "string" || !REVISION_PATTERN.test(expectedRevision)) {
     throw new TypeError("settings document revision is invalid");
   }

@@ -19,6 +19,7 @@ window.__ModuleLoader__.load({
 		var exports = module.exports;
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 		let React = require("react");
+		const { Modal, IconCloseOutlineRegular, IconRefreshOutlineRegular } = require("@deepseek-ai/dsh-client-ui-primitives");
 
 		const inject = ["connection", "slots"];
 
@@ -93,15 +94,14 @@ window.__ModuleLoader__.load({
 .daw-passkeyMeta dt{color:var(--dsw-alias-label-tertiary);white-space:nowrap}
 .daw-passkeyMeta dd{min-width:0;margin:0;overflow-wrap:anywhere;color:var(--dsw-alias-label-secondary)}
 .daw-passkeyAction{align-self:center;min-width:52px;padding-inline:9px}
-.daw-settingsEditorInline{display:flex;flex-direction:column;margin:0 16px 8px;padding:0}
-.daw-settingsEditorDialog{box-sizing:border-box;width:min(920px,100%);height:min(420px,55vh);display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.18));border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#111827);box-shadow:0 18px 50px rgba(0,0,0,.22)}
+.daw-settingsEditorDialog.daw-settingsEditorDialog{box-sizing:border-box;width:min(920px,100%);height:min(640px,100%);max-height:100%;min-height:0;display:flex;flex-direction:column;gap:0;padding:0;overflow:hidden;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.18));border-radius:8px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#111827);box-shadow:0 18px 50px rgba(0,0,0,.22)}
 .daw-settingsEditorHead{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 12px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12))}
 .daw-settingsEditorTitle{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:600}
-.daw-settingsEditorMeta{flex:none;color:var(--dsw-alias-label-tertiary,#78716c);font-size:12px}
+.daw-settingsEditorMeta{flex:none;color:var(--dsw-alias-label-secondary,#57534e);font-size:12px}
 .daw-settingsEditorIcon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary,#57534e);cursor:pointer}
 .daw-settingsEditorIcon:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#e7e5e4);color:var(--dsw-alias-label-primary,#111827)}
 .daw-settingsEditorIcon:disabled{opacity:.55;cursor:default}
-.daw-settingsEditorWarning{margin:0;padding:7px 14px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.1));background:color-mix(in srgb,var(--dsw-alias-state-warning-primary,#d97706) 12%,var(--dsw-alias-bg-layer-1,#fff));color:var(--dsw-alias-state-warning-primary,#b45309);font-size:12px;line-height:18px}
+.daw-settingsEditorWarning{margin:0;padding:7px 14px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.1));background:color-mix(in srgb,var(--dsw-alias-state-warning-primary,#d97706) 12%,var(--dsw-alias-bg-layer-1,#fff));color:var(--dsw-alias-label-primary,#111827);font-size:12px;line-height:18px}
 .daw-settingsEditorBody{display:flex;flex:1 1 auto;min-height:0;padding:0;overflow:hidden}
 .daw-settingsEditorInput{width:100%;height:100%;resize:none;box-sizing:border-box;padding:14px;border:0;outline:0;background:transparent;color:inherit;font:12px/18px ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2}
 .daw-settingsEditorFallback{padding:14px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--dsw-alias-state-error-primary,#b91c1c);font:13px/1.5 sans-serif}
@@ -110,7 +110,7 @@ window.__ModuleLoader__.load({
 .daw-settingsEditorStatus[data-kind="dirty"]{color:var(--dsw-alias-state-warning-primary,#d97706)}
 .daw-settingsEditorStatus[data-kind="error"]{color:var(--dsw-alias-state-error-primary,#b91c1c)}
 .daw-settingsEditorSave{margin-left:auto}
-@media (max-width:560px){.daw-client{grid-template-columns:minmax(0,1fr);gap:8px}.daw-clientAction{justify-self:end}.daw-clientsHeader{align-items:flex-start}.daw-clientList{border-radius:6px}.daw-passkey{grid-template-columns:minmax(0,1fr);gap:8px}.daw-passkeyAction{justify-self:end}.daw-passkeyAdd{grid-template-columns:minmax(0,1fr)}.daw-settingsEditorInline{margin:0 8px 8px}.daw-settingsEditorDialog{width:100vw;height:100vh;max-height:none;border:0;border-radius:0}}
+@media (max-width:560px){.daw-client{grid-template-columns:minmax(0,1fr);gap:8px}.daw-clientAction{justify-self:end}.daw-clientsHeader{align-items:flex-start}.daw-clientList{border-radius:6px}.daw-passkey{grid-template-columns:minmax(0,1fr);gap:8px}.daw-passkeyAction{justify-self:end}.daw-passkeyAdd{grid-template-columns:minmax(0,1fr)}}
 `;
 
 			document.head.append(style);
@@ -234,6 +234,7 @@ window.__ModuleLoader__.load({
 			"settingsEditor.discardConfirm": "有未保存的配置更改，确定放弃并关闭吗？",
 			"settingsEditor.loadFailed": "无法加载配置文件",
 			"settingsEditor.saveFailed": "无法保存配置文件",
+			"settingsEditor.timedOut": "请求超时，结果未确认。请重新加载配置后再试。",
 			"settingsEditor.insecure": "当前连接未加密，配置内容会以明文传输。",
 		};
 		const EN_DICT = {
@@ -353,6 +354,7 @@ window.__ModuleLoader__.load({
 			"settingsEditor.discardConfirm": "You have unsaved configuration changes. Discard them and close?",
 			"settingsEditor.loadFailed": "Could not load configuration file",
 			"settingsEditor.saveFailed": "Could not save configuration file",
+			"settingsEditor.timedOut": "Request timed out; the outcome is unconfirmed. Reload the configuration before trying again.",
 			"settingsEditor.insecure": "This connection is unencrypted; configuration content travels as plain text.",
 		};
 
@@ -389,7 +391,7 @@ window.__ModuleLoader__.load({
 			return t("passkeys.error");
 		}
 
-		async function api(path, payload) {
+		async function api(path, payload, signal) {
 			const headers = { "content-type": "application/json" };
 			const csrf = document.cookie.split(";").map((part) => part.trim()).find((part) =>
 				part.startsWith("__Host-dsh_auth_csrf=") || part.startsWith("dsh_auth_csrf="));
@@ -401,7 +403,7 @@ window.__ModuleLoader__.load({
 					// Let the server reject a malformed CSRF cookie.
 				}
 			}
-			const options = { headers };
+			const options = { headers, signal };
 			if (payload !== undefined) {
 				options.method = "POST";
 				options.body = JSON.stringify(payload);
@@ -550,10 +552,25 @@ window.__ModuleLoader__.load({
 		}
 
 		function createSettingsEditorOverlay(t) {
+			async function requestDocument(payload) {
+				const controller = new AbortController();
+				const timer = setTimeout(() => controller.abort(), 30000);
+				try {
+					return await api(SETTINGS_EDITOR_DOCUMENT_PATH, payload, controller.signal);
+				} catch (cause) {
+					if (!controller.signal.aborted) throw cause;
+					const error = new Error(t("settingsEditor.timedOut"));
+					error.name = "SettingsEditorTimeoutError";
+					throw error;
+				} finally {
+					clearTimeout(timer);
+				}
+			}
 			return function SettingsEditorOverlay() {
 				const [open, setOpen] = React.useState(false);
 				const [generation, setGeneration] = React.useState(0);
 				const [content, setContent] = React.useState(null);
+				const [filename, setFilename] = React.useState(t("settingsEditor.filename"));
 				const [revision, setRevision] = React.useState(null);
 				const [loading, setLoading] = React.useState(false);
 				const [saving, setSaving] = React.useState(false);
@@ -561,6 +578,11 @@ window.__ModuleLoader__.load({
 				const [saved, setSaved] = React.useState(false);
 				const [error, setError] = React.useState(null);
 				const dirtyRef = React.useRef(false);
+				const inputRef = React.useRef(null);
+
+				React.useEffect(() => {
+					if (open && !loading) inputRef.current?.focus();
+				}, [open, loading]);
 
 				React.useEffect(() => {
 					const openEditor = (event) => {
@@ -584,7 +606,7 @@ window.__ModuleLoader__.load({
 					setLoading(true);
 					setSaved(false);
 					setError(null);
-					api(SETTINGS_EDITOR_DOCUMENT_PATH)
+					requestDocument()
 						.then((data) => {
 							if (cancelled) return;
 							if (typeof data.content !== "string" || typeof data.revision !== "string") {
@@ -593,6 +615,7 @@ window.__ModuleLoader__.load({
 							dirtyRef.current = false;
 							setDirty(false);
 							setContent(data.content);
+							setFilename(typeof data.filename === "string" ? data.filename : t("settingsEditor.filename"));
 							setRevision(data.revision);
 						})
 						.catch((cause) => {
@@ -617,8 +640,6 @@ window.__ModuleLoader__.load({
 				const reload = () => {
 					if (loading || saving) return;
 					if (dirtyRef.current && !window.confirm(t("settingsEditor.discardConfirm"))) return;
-					dirtyRef.current = false;
-					setDirty(false);
 					setSaved(false);
 					setGeneration((value) => value + 1);
 				};
@@ -627,7 +648,7 @@ window.__ModuleLoader__.load({
 					setSaving(true);
 					setSaved(false);
 					setError(null);
-					api(SETTINGS_EDITOR_DOCUMENT_PATH, { content, revision })
+					requestDocument({ content, revision })
 						.then((data) => {
 							if (typeof data.revision !== "string") throw new Error(t("settingsEditor.saveFailed"));
 							dirtyRef.current = false;
@@ -635,13 +656,11 @@ window.__ModuleLoader__.load({
 							setRevision(data.revision);
 							setSaved(true);
 						})
-						.catch((cause) => setError(cause instanceof Error ? cause.message : t("settingsEditor.saveFailed")))
+						.catch((cause) => {
+							if (cause?.name === "SettingsEditorTimeoutError") setRevision(null);
+							setError(cause instanceof Error ? cause.message : t("settingsEditor.saveFailed"));
+						})
 						.finally(() => setSaving(false));
-				};
-				const onKeyDown = (event) => {
-					if (event.key !== "Escape") return;
-					event.stopPropagation();
-					close();
 				};
 				if (!open) return null;
 
@@ -657,24 +676,30 @@ window.__ModuleLoader__.load({
 								: saved ? { text: t("settingsEditor.saved"), kind: "" } : null;
 
 				return React.createElement(
-					"div",
-					{ className: "daw-settingsEditorInline" },
-					React.createElement(
-						"div",
-						{
-							className: "daw-settingsEditorDialog",
-							role: "dialog",
-							"aria-modal": "true",
-							"aria-label": t("settingsEditor.title"),
-							tabIndex: -1,
-							onKeyDown,
-							onClick: (event) => event.stopPropagation(),
+					Modal,
+					{
+						open,
+						onClose: close,
+						title: t("settingsEditor.title"),
+						headless: true,
+						className: "daw-settingsEditorDialog",
+						onKeyDownCapture: (event) => {
+							if (event.key !== "Escape" || event.defaultPrevented || event.nativeEvent?.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+							const foreground = [...document.querySelectorAll('[role="dialog"][aria-modal="true"], [role="menu"]')].at(-1);
+							if (!event.currentTarget.contains(foreground) || foreground.getAttribute("role") === "menu") return;
+							event.preventDefault();
+							event.stopPropagation();
+							if (!event.repeat) close();
 						},
+					},
+					React.createElement(
+						React.Fragment,
+						null,
 						React.createElement(
 							"div",
 							{ className: "daw-settingsEditorHead" },
 							React.createElement("div", { className: "daw-settingsEditorTitle" }, t("settingsEditor.title")),
-							React.createElement("div", { className: "daw-settingsEditorMeta" }, t("settingsEditor.filename")),
+							React.createElement("div", { className: "daw-settingsEditorMeta" }, filename),
 							React.createElement("button", {
 								type: "button",
 								className: "daw-settingsEditorIcon",
@@ -682,7 +707,7 @@ window.__ModuleLoader__.load({
 								onClick: reload,
 								"aria-label": t("settingsEditor.reload"),
 								title: t("settingsEditor.reload"),
-							}, "↻"),
+							}, React.createElement(IconRefreshOutlineRegular, { size: 14 })),
 							React.createElement("button", {
 								type: "button",
 								className: "daw-settingsEditorIcon",
@@ -690,7 +715,7 @@ window.__ModuleLoader__.load({
 								onClick: close,
 								"aria-label": t("settingsEditor.close"),
 								title: t("settingsEditor.close"),
-							}, "×"),
+							}, React.createElement(IconCloseOutlineRegular, { size: 14 })),
 						),
 						insecure ? React.createElement("p", { className: "daw-settingsEditorWarning", role: "alert" }, t("settingsEditor.insecure")) : null,
 						React.createElement(
@@ -701,7 +726,9 @@ window.__ModuleLoader__.load({
 								: React.createElement("textarea", {
 									className: "daw-settingsEditorInput",
 									value: content,
-									autoFocus: true,
+									ref: inputRef,
+									"data-modal-autofocus": true,
+									"aria-label": t("settingsEditor.title"),
 									spellCheck: false,
 									disabled: loading || saving,
 									onChange: (event) => {

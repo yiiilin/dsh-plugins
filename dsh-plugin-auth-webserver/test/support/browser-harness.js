@@ -128,6 +128,9 @@ export class FakeWindow extends EventTarget {
 }
 
 const REQUIRES = {
+  "@deepseek-ai/dsh-client-ui-primitives": new Proxy({}, {
+    get: () => () => null,
+  }),
   react: new Proxy({}, {
     get: (_target, name) => (name === "Fragment" ? "fragment" : () => null),
   }),

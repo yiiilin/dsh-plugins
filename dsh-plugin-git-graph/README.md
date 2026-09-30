@@ -37,7 +37,7 @@ registers only the Git page kind.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-git-graph@0.2.2`.
+The workspace release candidate is `@yiln-dsh/dsh-plugin-git-graph@0.2.3` (not yet published; the last published version is `0.2.2`). The DSH peer window includes `0.1.7-rc.2` and `0.2.0-rc.2`.
 
 ```bash
 dsh plugin --profile web add file:/path/to/dsh-plugin-git-graph

@@ -798,7 +798,7 @@ export async function apply(ctx, config) {
     ? explicitAllowedHosts.map((value, index) => parseAllowedHost(value, index))
     : derivedAllowedHosts.length > 0
       ? derivedAllowedHosts
-      : pickAddresses(config));
+      : pickAddresses(config).map((address, index) => parseAllowedHost(address, index)));
   const trustedProxyValues = envTrustedProxyAddresses ?? config.trustedProxyAddresses;
   for (const address of trustedProxyValues) {
     if (isIP(normalizeRemoteAddress(address)) === 0) {
@@ -1592,7 +1592,7 @@ export async function apply(ctx, config) {
       const status = error instanceof RangeError || error instanceof TypeError ? 400 : 500;
       sendEditorJson(req, res, status, {
         ok: false,
-        error: status === 400 ? "Configuration document must be a valid YAML mapping" : "Configuration document could not be saved",
+        error: status === 400 ? "Configuration document must have valid YAML and document structure" : "Configuration document could not be saved",
       });
     }
   };

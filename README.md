@@ -63,15 +63,15 @@ dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@latest
 
 ## Versioning
 
-Published bundle plugin versions are listed below. Workspace-only packages are marked `unpublished`:
+Workspace package versions are listed below; the updated 0.1.7/0.2.0 compatibility candidates have not yet been published to npm:
 
 | Package | Version |
 | --- | --- |
-| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.10.4` |
-| `@yiln-dsh/dsh-plugin-delete-session` | `0.4.5` |
-| `@yiln-dsh/dsh-plugin-git-graph` | `0.2.2` |
-| `@yiln-dsh/dsh-plugin-mentor` | `0.2.1` |
-| `@yiln-dsh/dsh-plugin-web-daemon` | `0.8.2` |
+| `@yiln-dsh/dsh-plugin-auth-webserver` | `0.10.5` (unpublished) |
+| `@yiln-dsh/dsh-plugin-delete-session` | `0.4.6` (unpublished) |
+| `@yiln-dsh/dsh-plugin-git-graph` | `0.2.3` (unpublished) |
+| `@yiln-dsh/dsh-plugin-mentor` | `0.2.2` (unpublished) |
+| `@yiln-dsh/dsh-plugin-web-daemon` | `0.8.3` (unpublished) |
 | `@yiln-dsh/dsh-plugin-session-list-cache` | `0.1.1` |
 
 Each plugin's version is the `version` field in its own `package.json`.

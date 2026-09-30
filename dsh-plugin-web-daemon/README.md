@@ -64,7 +64,7 @@ A record is only discarded when its session is genuinely gone: if the persistenc
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-web-daemon@0.8.2`.
+The workspace release candidate is `@yiln-dsh/dsh-plugin-web-daemon@0.8.3` (not yet published; the last published version is `0.8.2`). The DSH peer window includes `0.1.7-rc.2` and `0.2.0-rc.2`.
 
 ### npm package
 

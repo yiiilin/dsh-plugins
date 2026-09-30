@@ -52,7 +52,7 @@ authentication.
 
 ## Install
 
-The published package is `@yiln-dsh/dsh-plugin-auth-webserver@0.10.4`.
+The workspace release candidate is `@yiln-dsh/dsh-plugin-auth-webserver@0.10.5` (not yet published; the last published version is `0.10.4`). It supports DSH `0.1.7-rc.1`, `0.1.7-rc.2`, and `0.2.0-rc.2`, and fixes default Host matching when neither `allowedHosts` nor `allowedOrigins` is configured.
 
 The plugin is plain JavaScript source; there is no build step.
 
@@ -74,7 +74,7 @@ pnpm pack
 ```
 
 ```bash
-dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.10.4.tgz
+dsh plugin --profile web add ./yiln-dsh-dsh-plugin-auth-webserver-0.10.5.tgz
 ```
 
 The tarball already contains the runnable source. A user can also unpack it,
@@ -93,10 +93,10 @@ npm publish --access public
 dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@latest
 ```
 
-Pin a version if you want reproducible installs:
+Pin a version after publishing `0.10.5` if you want reproducible installs:
 
 ```bash
-dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.10.4
+dsh plugin --profile web add @yiln-dsh/dsh-plugin-auth-webserver@0.10.5
 ```
 
 ### Direct GitHub
@@ -121,7 +121,7 @@ The plugin version is defined by the `version` field in `package.json`:
 ```json
 {
   "name": "@yiln-dsh/dsh-plugin-auth-webserver",
-  "version": "0.10.4"
+  "version": "0.10.5"
 }
 ```
 
@@ -133,8 +133,8 @@ Semantic versioning is recommended:
 
 The selected version is used for:
 
-- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.10.4`
-- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.10.4.tgz`
+- npm registry resolution, e.g. `@yiln-dsh/dsh-plugin-auth-webserver@0.10.5`
+- the generated tarball name, e.g. `yiln-dsh-dsh-plugin-auth-webserver-0.10.5.tgz`
 - the metadata inside the tarball/npm package
 
 A `file:` source install uses the version that is currently in the source tree;
@@ -303,16 +303,27 @@ current TOTP code.
 ### Edit the full settings document remotely
 
 When Settings is served through this gateway, **Open configuration file** becomes
-**Edit configuration file**. The auth-webserver client owns the in-app editor
-above the DSH Settings sheet; File Explorer is neither required nor involved.
+**Edit configuration file**. The auth-webserver client uses the product's modal
+above the DSH Settings sheet, rather than inserting the editor into its action
+row. The dialog stays within desktop and mobile viewports, traps keyboard focus,
+and returns to Settings on Escape or a backdrop click. File Explorer is neither
+required nor involved.
 
-This is a full-document action: `$DSH_HOME/settings.yaml` can contain API keys,
-the gateway password, and the TOTP secret. Opening requires the existing
-logged-in cookie session; saving requires that session plus the gateway CSRF
-value. It intentionally does not request the password or TOTP a second time.
-Reads and saves are `no-store`; saves validate that the document is a YAML
-mapping, use a content revision to reject conflicts, and coordinate with the
-settings provider through its file lock and atomic replacement.
+This is a full-document action. Modern SettingsForms edits the active profile's
+`cordis.patch.yml`; legacy providers edit `settings.yaml`. The header displays
+the actual filename. Either document can contain credentials. Opening requires
+the existing logged-in cookie session; saving requires that session plus the
+gateway CSRF value. It intentionally does not request the password or TOTP a
+second time. Reads and saves are `no-store`; saves validate the provider's YAML
+format (modern patch lists or legacy mappings), use a content revision to reject
+conflicts, and coordinate with the provider through its file lock and atomic
+replacement. Validation treats `!!js` scalar tags as inert text; the Loader owns
+their later evaluation.
+
+Failed reloads retain the draft and its unsaved-change protection. Document
+requests time out after 30 seconds. A timed-out save has an unconfirmed outcome:
+the draft remains available, but another save requires reloading the document
+first. The editor does not automatically retry a write.
 
 The editor owns no caller-selected path. Its only backend route is:
 

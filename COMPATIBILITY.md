@@ -4,20 +4,19 @@ This repository targets the DSH Web bundle, not only the `@deepseek-ai/dsh` CLI
 package. Compatibility must be checked against the exact DSH packages that each
 plugin injects and the Cordis services/Slots used by its Host and Client halves.
 
-## Version matrix
+## Version matrix (2026-09-30)
 
 | DSH line | npm channel | Evidence and status |
 | --- | --- | --- |
-| `0.1.5-rc.2` | `latest` | Installed locally; this is the current test baseline. The changed plugin suites are run against this line's available dependencies. |
-| `0.1.5-rc.3` | `next` | A fresh Node 24 Docker container installed the exact DSH release and all three plugins. The browser exercised the legacy Plugins/Settings Provider and Models UI, saved an Auth lifetime and Web Daemon unit change, and completed a local fake-Responses model turn. The generated unit was inspected; live systemd was not run. |
-| `0.1.6-alpha.2` | historical | Existing peer windows are retained where applicable, including the legacy preset package. This line was not revalidated as a complete Web profile in this pass. |
-| `0.1.7-alpha.1` | historical alpha | Unsupported. Updated plugin peer windows reject this version. |
-| `0.1.7-alpha.2` | `alpha` | A fresh Node 24 Docker container installed the exact DSH release and all three plugins. Container browser/runtime checks passed for Auth SettingsForms migration and the `./` core redirect, the actual Models UI and save path, Web Daemon unit generation, preset/Subagent settings, exact-route allow/deny, and child route/effort cold-resume. The model endpoint was a local fake; systemd and external providers were not exercised. |
+| `0.2.0-rc.2` | `latest` / `next` | All six workspace plugins loaded in a fresh Node 24 Docker profile. Browser smoke covered Auth login and settings, Web Daemon/Mentor settings, Git Graph repository reads, metrics, the guarded Delete Session endpoint, and mobile width. Production `web` was then upgraded using an independent backup/rollback transaction; the operator chose to uninstall `dsh-loopx-plugin@0.1.1-beta.5` because its DSH peers reject 0.2. The original `127.0.0.1:3080` GUI passed login, plugin inventory, Settings/Mentor catalog, and refresh checks. No live model request or in-GUI systemd action was exercised. |
+| `0.1.7-rc.2` | historical | Fresh Node 24 Docker profile with all six workspace plugins; browser login, installed plugin inventory, Auth/Web Daemon/Mentor settings, Git Graph log and commit details, status metrics, and the guarded Delete Session endpoint were exercised. Auth default Host matching was fixed after the first isolated probe returned 421. The production `web` profile then upgraded with a complete pre-cutover backup; its original `127.0.0.1:3080` GUI passed a browser refresh, plugin inventory, and settings smoke check. No live model request or in-GUI systemd control was exercised. |
+| `0.1.7-rc.1` | historical | Previous host baseline, retained in the cutover backup; existing package tests passed against this line. |
+| `0.2.0-rc.1` | historical | Not admitted by the new peer windows or tested in this pass. |
+| `0.1.7-alpha.2` | `alpha` | Previously tested in a fresh container for Auth SettingsForms, Models, Web Daemon unit generation and subagent route recovery (see earlier evidence below). |
+| `0.1.5-rc.2` / `0.1.5-rc.3` | historical | Earlier validation described below; preserved where each plugin declares the older peer window. |
+| `0.1.7-alpha.1` | historical | Unsupported. |
 
-The current npm tags resolve to `latest=0.1.5-rc.2`, `next=0.1.5-rc.3`, and
-`alpha=0.1.7-alpha.2`. Peer ranges admit `0.1.5-rc.2` and `0.1.5-rc.3`, retain
-the historical `0.1.6-alpha.2` line where declared, and admit `0.1.7-alpha.2`
-without admitting `0.1.7-alpha.1`.
+Five workspace plugin packages declare both `>=0.1.7-rc.1 <0.1.7-rc.3` and `>=0.2.0-rc.2 <0.2.0-rc.3` for their DSH peers; `session-list-cache` declares no DSH peer and loaded in both isolated profiles. These exact prerelease windows do not grant future RCs automatically. The candidate package versions have not been published to npm. The old LoopX package remains only inside the pre-cutover backup; the active profile has no LoopX dependency or bundle.
 
 ## Compatibility seams
 

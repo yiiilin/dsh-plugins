@@ -58,6 +58,37 @@ function websocketRequest({ host, port, path, headers }) {
   });
 }
 
+test("accepts the bound address as Host when no allowlist is configured", async () => {
+  const home = mkdtempSync(join(tmpdir(), "dsh-auth-webserver-host-"));
+  const savedHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = home;
+  const probe = createServer();
+  const port = await listen(probe, "127.0.0.2");
+  await close(probe);
+  const effects = [];
+  const ctx = {
+    connection: { authenticatedUrl: (baseUrl) => baseUrl },
+    logger: { warn() {}, info() {} },
+    get: () => undefined,
+    effect(factory) {
+      const dispose = factory();
+      effects.push(dispose);
+      return dispose;
+    },
+  };
+  try {
+    await apply(ctx, { port, addresses: ["127.0.0.2"] });
+    const response = await httpRequest({ host: "127.0.0.2", port, path: "/" });
+    assert.equal(response.statusCode, 200);
+    assert.match(response.body, /<html/u);
+  } finally {
+    for (const dispose of effects.reverse()) await dispose?.();
+    rmSync(home, { recursive: true, force: true });
+    if (savedHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = savedHome;
+  }
+});
+
 test("bridges gateway-authenticated traffic to core after a stale public token", async (t) => {
   const home = mkdtempSync(join(tmpdir(), "dsh-auth-webserver-integration-"));
   const savedHome = process.env.DSH_HOME;
