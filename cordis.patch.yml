@@ -1,0 +1,91 @@
+# One installed bundle; each feature retains its original Loader row identity.
+- insert:
+    - id: yiln-dsh-plugins
+      name: '@yiln-dsh/dsh-plugins'
+      config: {}
+    - id: webserver-auth
+      name: '@yiln-dsh/dsh-plugins/auth-webserver'
+      inject:
+        - webStartup
+        - webServer
+        - settings
+        - connection
+        - clientModules
+      config:
+        port: !!js ctx.webStartup.port ?? 3080
+        targetHost: '127.0.0.1'
+        targetPort: !!js ctx.webStartup.port ?? 3080
+        username: 'admin'
+        password: ''
+    - id: dsh-delete-session
+      name: '@yiln-dsh/dsh-plugins/delete-session'
+      inject:
+        - webServer
+        - sessions
+        - agents
+        - sessionPersistence
+      config: {}
+    - id: dsh-git-graph
+      name: '@yiln-dsh/dsh-plugins/git-graph'
+      inject:
+        - webServer
+        - subprocess
+        - fs
+        - sandboxPolicy
+      config: {}
+    - id: dsh-mentor
+      name: '@yiln-dsh/dsh-plugins/mentor'
+      inject:
+        - tools
+        - agents
+        - agentLoop
+        - commands
+        - connection
+        - sessions
+        - sessionPersistence
+        - sessionController
+        - settings
+        - systemPrompt
+      config:
+        enabled: false
+        provider: ''
+        model: ''
+        reasoningEffort: ''
+        maxInputBytes: 98304
+        requestTimeoutMs: 300000
+        globalConcurrency: 2
+    - id: session-mode
+      name: '@yiln-dsh/dsh-plugins/session-mode'
+      inject:
+        - tools
+        - agents
+        - commands
+        - connection
+        - systemPrompt
+        - sessionController
+        - jobs
+        - sessions
+      config:
+        defaultMode: normal
+    - id: session-list-cache
+      name: '@yiln-dsh/dsh-plugins/session-list-cache'
+      inject:
+        - sessionQuery
+      config:
+        ttlMs: 1000
+    - id: web-daemon
+      name: '@yiln-dsh/dsh-plugins/web-daemon'
+      inject:
+        - webServer
+        - settings
+        - sessionController
+        - goals
+        - agentPresets
+        - subagents
+        - agents
+      config:
+        enabled: false
+        profile: web
+        port: 3080
+        systemdUnit: dsh-web.service
+        systemdScope: system

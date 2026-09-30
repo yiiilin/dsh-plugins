@@ -4,7 +4,39 @@ This repository targets the DSH Web bundle, not only the `@deepseek-ai/dsh` CLI
 package. Compatibility must be checked against the exact DSH packages that each
 plugin injects and the Cordis services/Slots used by its Host and Client halves.
 
-## Version matrix (2026-09-30)
+## Unified Package
+
+The workspace root now defines `@yiln-dsh/dsh-plugins@0.1.0` (unpublished),
+with seven internal Host modules and one composed Client entry. Its current peer
+window is `>=0.2.0-rc.2 <0.2.0-rc.3`; the older standalone package windows below
+are historical, not a certification of the new suite. The root contract,
+configuration migration and existing feature tests pass (235 tests). A packed
+installation in a fresh DSH `0.2.0-rc.2` container passed all seven editor browser
+regressions, single-package inventory, Mentor settings persistence, all three
+settings tabs, metrics/PWA/Git asset checks and real Git reads. A separate legacy
+profile rehearsal also passed six-package removal and structured reference
+migration. Production then migrated to the root suite with full DSH_HOME backup;
+only the Web Daemon and Mentor module names changed in the user patch. Other
+configuration values, Auth secret and Passkey records were retained. The original
+3080 GUI shows the one suite plus the existing third-party packages. See
+[the unified-suite verification](docs/verifications/unified-suite.md).
+
+## Session Mode
+
+The new `session-mode` Host row targets the suite's DSH `0.2.0-rc.2` window.
+It uses public `tools.guard`, `systemPrompt.assemble` for model-callable tool
+checks, dynamic `systemPrompt.section`,
+`agent/created`, user commands, the authenticated Connection Fetch registry,
+Session Controller cold inspection/resume, and the Job registry. Restricted
+main agents require native spawn/fork delegation; PTC-only presentation is
+rejected rather than admitting arbitrary `run_code`. Independent system sections
+preserve the Harness's other instructions. Policies use atomic private sidecars,
+not unknown Session event types that this version would refuse on reopen.
+This is workflow enforcement and never widens sandbox, planning, or approval
+permissions. New-module verification is recorded separately from the preceding
+suite migration evidence.
+
+## Historical Version Matrix (2026-09-30)
 
 | DSH line | npm channel | Evidence and status |
 | --- | --- | --- |

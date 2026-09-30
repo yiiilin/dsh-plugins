@@ -1,0 +1,16 @@
+# Migration must retain this deployment comment.
+- id: webserver-auth
+  config:
+    port: !!js ctx.webStartup.port
+    targetPort: !!js ctx.webStartup.port
+    allowedHosts: ['example.invalid']
+- id: web-daemon
+  name: '@yiln-dsh/dsh-plugin-web-daemon' # keep owner comment
+  config:
+    enabled: false
+    systemdUnit: fixture-web.service
+- id: dsh-mentor
+  name: '@yiln-dsh/dsh-plugin-mentor'
+  config:
+    enabled: false
+    requestTimeoutMs: 120000

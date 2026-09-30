@@ -1,0 +1,99 @@
+{
+  "name": "@yiln-dsh/dsh-plugins",
+  "version": "0.1.0",
+  "description": "Unified DSH Web suite: authenticated gateway, session deletion, Git Graph, Mentor, session-list caching, daemon recovery and session modes.",
+  "type": "module",
+  "license": "MIT",
+  "publishConfig": { "access": "public" },
+  "engines": { "node": ">=22" },
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./auth-webserver": "./src/auth-webserver/index.js",
+    "./delete-session": "./src/delete-session/index.js",
+    "./git-graph": "./src/git-graph/index.js",
+    "./mentor": "./src/mentor/index.js",
+    "./session-list-cache": "./src/session-list-cache/index.js",
+    "./web-daemon": "./src/web-daemon/index.js",
+    "./session-mode": "./src/session-mode/index.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "external": ["react", "react-dom", "@deepseek-ai/dsh-client-ui-primitives"],
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-general",
+        "@deepseek-ai/dsh-client-ui-settings-plugins",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build-client.mjs",
+    "check": "node scripts/check.mjs",
+    "test": "npm run build && node --test test/*.test.js src/*/test/*.test.js",
+    "test:editor": "node --test src/auth-webserver/test/e2e/settings-editor.test.js",
+    "test:modes:browser": "node --test src/session-mode/test/e2e/modes.test.js",
+    "prepack": "npm run build && npm run check"
+  },
+  "files": [
+    "index.js", "client.js", "cordis.patch.yml", "README.md", "docs/modules/", "src/", "scripts/migrate-profile.mjs",
+    "!src/**/test/", "!src/**/README.md", "!src/**/TESTING.md"
+  ],
+  "dependencies": {
+    "@simplewebauthn/server": "13.3.3",
+    "js-yaml": "4.3.2",
+    "markdown-it": "^15.0.1",
+    "monaco-editor": "^0.56.0",
+    "yaml": "^2.8.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0",
+    "@deepseek-ai/schemastery": ">=3.0.0",
+    "@deepseek-ai/dsh": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-agent": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-agent-loop": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-agent-preset-registry": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-api-remotes": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-api-session-controller": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-atomic-write": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-client-connection": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-client-locale": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-client-ui-conversation": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-client-ui-layout": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-client-ui-primitives": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-client-ui-renderer": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-client-ui-settings": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-client-ui-settings-general": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-client-ui-settings-plugins": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-client-ui-sidebar-right": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-client-ui-workspace": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-commands": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-fs": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-jobs": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-llm": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-sandbox-policy": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-session": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-session-persistence": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-subagent": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-subprocess": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-system-prompt": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "@deepseek-ai/dsh-tools": ">=0.2.0-rc.2 <0.2.0-rc.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  }
+}
