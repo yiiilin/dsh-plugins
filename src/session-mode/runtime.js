@@ -1,3 +1,4 @@
+import { scopeOf, scopeParentOf } from '@deepseek-ai/dsh-scope'
 import { DEFAULT_ALLOWED_TOOLS, MODES, SESSION_ID, isWorker, modeError, promptFor, toolDenial } from './policy.js'
 import { createPolicyStore, defaultStateDir } from './store.js'
 
@@ -8,13 +9,44 @@ export async function installSessionMode(ctx, config = {}, adapters = {}) {
   const defaultMode = config.defaultMode ?? 'normal'
   if (!MODES.includes(defaultMode)) throw modeError('invalid_mode', 'Invalid default session mode')
   const activeJobs = (id) => (ctx.jobs?.list(id) ?? []).some((job) => String(job.owner) === id && ['running', 'stopping'].includes(job.status))
+  // The mode only works if the restricted main agent can actually hand work to
+  // someone else. Native spawn/fork delegation and Agent Teams both do that, so
+  // either surface satisfies the check; a composition that offers neither (for
+  // example PTC-only presentation) cannot enter the mode.
+  const DELEGATION_TOOLS = ['subagent', 'subagent_fork', 'spawn_teammate']
   const assertSupported = async (agent, mode) => {
     if (mode !== 'delegate-writes' || isWorker(agent)) return
     const assembly = await ctx.systemPrompt.assemble({ scope: agent, agent, sessionModeProbe: true })
     const names = assembly.tools.map((tool) => tool.name)
-    if (!['subagent', 'subagent_fork'].some((name) => names.includes(name) && allowed.includes(name))) {
-      throw modeError('unsupported', 'delegate-writes requires a directly callable native subagent or subagent_fork tool')
+    if (!DELEGATION_TOOLS.some((name) => names.includes(name) && allowed.includes(name))) {
+      throw modeError('unsupported', 'delegate-writes requires a directly callable native subagent, subagent_fork or spawn_teammate tool')
     }
+  }
+
+  // `delegate-writes` hides unaudited tools from the restricted main agent's
+  // wire catalog instead of only refusing them at execution time. `restrict()`
+  // masks the INHERITED surface (the global layer and every ancestor on the
+  // agent's scope chain) and deliberately exempts the agent's OWN layer, so this
+  // must never name the Agent Teams tools a preset registers through
+  // `agent.ctx`: they stay visible by exemption, and naming them would throw
+  // "unknown global tool". The allow list is therefore the audited names
+  // intersected with what the agent actually inherits, read from the parent
+  // scope. It is an allow list rather than a deny list of the complement so a
+  // tool registered later stays hidden until it is audited — fail closed.
+  const catalogs = new Map()
+  const syncCatalog = (agent, mode) => {
+    const id = String(agent.session.id)
+    catalogs.get(id)?.()
+    catalogs.delete(id)
+    const tools = agent.ctx?.tools
+    // Unscoped agents and workers keep the full catalog: workers need it for
+    // inheritance, and an unscoped context cannot be restricted at all. Both
+    // fall back to the execution guard alone.
+    if (mode !== 'delegate-writes' || isWorker(agent) || typeof tools?.restrict !== 'function') return
+    const key = scopeOf(agent.ctx)
+    if (key === undefined) return
+    const inherited = ctx.tools.schemas(scopeParentOf(key)).map((tool) => tool.name)
+    catalogs.set(id, tools.restrict({ allow: allowed.filter((name) => inherited.includes(name)) }))
   }
 
   const attach = async (agent) => {
@@ -28,6 +60,7 @@ export async function installSessionMode(ctx, config = {}, adapters = {}) {
     await assertSupported(agent, policy.mode)
     records.set(id, policy)
     attached.set(id, agent)
+    syncCatalog(agent, policy.mode)
   }
   const read = (agent) => {
     const id = String(agent.session.id), policy = records.get(id)
@@ -55,6 +88,9 @@ export async function installSessionMode(ctx, config = {}, adapters = {}) {
       checkIdle()
       const next = await store.set(id, mode, revision ?? current.revision, checkIdle)
       records.set(id, next)
+      // Apply the new catalog before acknowledging, so the very next request
+      // the model builds already reflects the mode it was told about.
+      syncCatalog(agent, next.mode)
       return { ...read(agent), busy: false }
     } catch (error) {
       if (error.code === 'conflict') {
@@ -88,6 +124,10 @@ export async function installSessionMode(ctx, config = {}, adapters = {}) {
     if (attached.get(id) !== agent) return
     attached.delete(id)
     records.delete(id)
+    // Scope teardown normally lifts the restriction; drop our handle so a
+    // reused session id never calls the previous agent's disposer.
+    catalogs.get(id)?.()
+    catalogs.delete(id)
   })
   for (const agent of ctx.agents.list()) await attach(agent)
 

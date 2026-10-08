@@ -15,6 +15,22 @@ test('delegate-writes denies unaudited main tools including shell, PTC and runti
   }
 })
 
+test('delegate-writes keeps the whole Agent Teams coordination surface for the Lead', async () => {
+  const { toolDenial, DEFAULT_ALLOWED_TOOLS } = await policy()
+  // The Team tools the tool plugin registers in a Team member scope. Creating,
+  // steering and awaiting delegated workers is the mode's own purpose, so every
+  // one of them must stay callable by a restricted main agent; only tools that
+  // touch the workspace or the runtime remain withheld.
+  const team = [
+    'spawn_teammate', 'send_message', 'list_agents', 'wait_agent', 'interrupt_agent',
+    'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update',
+  ]
+  for (const name of team) {
+    assert.equal(toolDenial({ mode: 'delegate-writes' }, main, name, DEFAULT_ALLOWED_TOOLS), undefined, name)
+    assert.ok(DEFAULT_ALLOWED_TOOLS.includes(name), `${name} must be listed for preset inheritance`)
+  }
+})
+
 test('delegate-writes workers and normal main retain tools; missing identity or policy fails closed', async () => {
   const { toolDenial, DEFAULT_ALLOWED_TOOLS } = await policy()
   assert.equal(toolDenial({ mode: 'delegate-writes' }, child, 'write', DEFAULT_ALLOWED_TOOLS), undefined)

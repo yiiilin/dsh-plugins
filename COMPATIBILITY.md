@@ -6,12 +6,12 @@ plugin injects and the Cordis services/Slots used by its Host and Client halves.
 
 ## Unified Package
 
-The workspace root defines `@yiln-dsh/dsh-plugins@0.1.0` (published to npm as
+The workspace root defines `@yiln-dsh/dsh-plugins@0.1.1` (published to npm as
 public, under the `latest` tag), with seven internal Host modules and one
 composed Client entry. Its current peer
 window is `>=0.2.0-rc.2 <0.2.0-rc.3`; the older standalone package windows below
 are historical, not a certification of the new suite. The root contract,
-configuration migration and existing feature tests pass (266 tests). A packed
+configuration migration and existing feature tests pass (271 tests). A packed
 installation in a fresh DSH `0.2.0-rc.2` container passed all seven editor browser
 regressions, single-package inventory, Mentor settings persistence, all three
 settings tabs, metrics/PWA/Git asset checks and real Git reads. A separate legacy
@@ -22,14 +22,55 @@ configuration values, Auth secret and Passkey records were retained. The origina
 3080 GUI shows the one suite plus the existing third-party packages. See
 [the unified-suite verification](docs/verifications/unified-suite.md).
 
+### 0.1.1 — Agent Teams under delegate-writes
+
+`0.1.0` offered the whole `delegate-writes` design but omitted the Agent Teams
+coordination tools from its audited allowlist, so a restricted main agent could
+not call `spawn_teammate`, `wait_agent`, or `team_task_*` even though the Team
+bundle was installed. The denial text compounded the mistake by advising the main
+agent to "delegate this operation to a subagent", which cannot work: the Team
+tool plugin installs its tools only into a resolved Team member's scope, and a
+plain continuable subagent resolves to no membership. Teammate creation is a
+Lead-only operation with no delegated route, so the tools must be callable by the
+restricted main agent itself.
+
+`0.1.1` fixes both halves:
+
+- All nine Team tools (`spawn_teammate`, `send_message`, `list_agents`,
+  `wait_agent`, `interrupt_agent`, `team_task_create/list/get/update`) are on the
+  audited allowlist. They mutate Team state only, never the workspace or runtime.
+- The mode-entry check accepts `spawn_teammate` alongside `subagent` and
+  `subagent_fork`, so a Team-only composition can enter the mode at all.
+
+It also replaces execution-only refusal with real catalog pruning. The runtime
+installs a per-agent `tools.restrict({ allow })` whose allow list is the audited
+names intersected with the surface that agent actually inherits. `restrict()`
+masks the inherited surface and deliberately exempts the agent's own layer, which
+is where the Team plugin registers; intersecting keeps those visible and avoids
+the `unknown global tool` rejection that naming them directly would raise. Being
+an allow list, a tool registered after this audit stays hidden until deliberately
+added. Workers are unaffected because a child's scope chains to the mounted
+preset generation scope rather than to the delegating agent.
+
+Behaviour change: the restricted main agent no longer sees withheld schemas at
+all. The execution guard remains behind the pruning, so a stale catalog, a
+replayed call, or a call via another presentation surface is still refused before
+its body runs. Pruning is a visibility boundary, not authorization.
+
+Evidence: [session-mode verification](docs/verifications/session-mode-0.1.1.md).
+Unit and integration coverage includes the real
+`@deepseek-ai/dsh-experimental-tool-agent-team` plugin, which is what pins the
+own-layer registration route.
+
 ## Session Mode
 
-The new `session-mode` Host row targets the suite's DSH `0.2.0-rc.2` window.
-It uses public `tools.guard`, `systemPrompt.assemble` for model-callable tool
-checks, dynamic `systemPrompt.section`,
+The `session-mode` Host row targets the suite's DSH `0.2.0-rc.2` window.
+It uses public `tools.guard`, `tools.restrict`, `systemPrompt.assemble` for
+model-callable tool checks, dynamic `systemPrompt.section`,
 `agent/created`, user commands, the authenticated Connection Fetch registry,
 Session Controller cold inspection/resume, and the Job registry. Restricted
-main agents require native spawn/fork delegation; PTC-only presentation is
+main agents require a directly callable delegation surface: native `subagent` or
+`subagent_fork`, or Agent Teams' `spawn_teammate`. PTC-only presentation is
 rejected rather than admitting arbitrary `run_code`. Independent system sections
 preserve the Harness's other instructions. Policies use atomic private sidecars,
 not unknown Session event types that this version would refuse on reopen.

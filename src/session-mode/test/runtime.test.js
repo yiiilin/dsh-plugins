@@ -127,6 +127,15 @@ test('active background jobs and PTC-only presets cannot switch into delegate-wr
   assert.equal(h.runtime.read(main).mode, 'normal')
 })
 
+test('either delegation surface satisfies the delegate-writes entry check', async () => {
+  for (const tools of [[{ name: 'subagent' }], [{ name: 'subagent_fork' }], [{ name: 'spawn_teammate' }]]) {
+    const h = await harness(), main = await h.add(`s-${tools[0].name}`)
+    h.ctx.tools.schemas = () => tools
+    await h.runtime.set(main, 'delegate-writes', 0)
+    assert.equal(h.runtime.read(main).mode, 'delegate-writes', tools[0].name)
+  }
+})
+
 test('permission and prompt cannot be used while a policy write is pending', async () => {
   const h = await harness(), main = await h.add('s')
   let release, entered

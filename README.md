@@ -4,7 +4,7 @@ One DSH Web plugin package containing seven internal feature modules. This
 workspace is the project root; dependencies, versioning, build, tests and
 publication are managed here, not in individual feature directories.
 
-Current version: `0.1.0` (published to npm as public). Verified target:
+Current version: `0.1.1` (published to npm as public). Verified target:
 DSH `0.2.0-rc.2`.
 
 ## Features
@@ -17,7 +17,7 @@ DSH `0.2.0-rc.2`.
 | Mentor | `dsh-mentor` | Isolated tool-less consultations, durable replay and global settings. |
 | Session List Cache | `session-list-cache` | Coalesces and caches concurrent session enumeration. |
 | Web Daemon | `web-daemon` | Systemd management, server metrics and interrupted-session recovery. |
-| Session Mode | `session-mode` | Per-session `normal` / `delegate-writes` permissions and separate system prompts. |
+| Session Mode | `session-mode` | Per-session `normal` / `delegate-writes` permissions: the restricted main agent gets a pruned tool catalog plus an execution guard, with separate system prompts. |
 
 A single installed bundle owns these modules. Their separate Cordis rows retain
 independent Config schemas and the existing settings namespaces. Auth sessions,
@@ -29,7 +29,7 @@ keep their original names and locations.
 Install the published package:
 
 ```bash
-dsh plugin --profile web add @yiln-dsh/dsh-plugins@0.1.0
+dsh plugin --profile web add @yiln-dsh/dsh-plugins@0.1.1
 ```
 
 Or install the current workspace build:
@@ -83,7 +83,10 @@ identical. It does not uninstall/install packages or remove persisted state.
 
 Use the switch to the right of the permission control in the composer toolbar,
 or `/agent-mode on` and `/agent-mode off`. Turning delegated writes on makes the
-main agent read-only while workers perform edits and command execution. The
+main agent read-only while workers perform edits and command execution: unaudited
+tools leave the main agent's model-facing catalog, and a monotonic guard still
+refuses them if a call arrives anyway. Agent Teams coordination tools stay
+available to the coordinating main agent. The
 switch label and both state words are localized through the Client locale
 dictionary. The two modes have independent `normalPrompt` and
 `delegateWritesPrompt` Config fields. Selections survive restart; worker

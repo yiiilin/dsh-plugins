@@ -65,11 +65,32 @@ are literal text, with no variable interpolation.
 `defaultMode` applies only to sessions without a saved policy. Existing sessions
 retain their selection. `mainAllowedTools` is the complete audited allowlist for
 restricted main agents: filesystem read/search, skill loading, user interaction,
-todo/goal control, native spawn/fork delegation, child control, job collection,
-and tool-less Mentor consultations. Tools absent from a preset are not added.
-New tools are denied until explicitly audited and listed. Do not add `bash`,
-`pwsh`, arbitrary code execution, runtime configuration, mutating MCP tools, or
-network endpoints that can change permissions to this list.
+todo/goal control, native spawn/fork delegation, Agent Teams coordination, child
+control, job collection, and tool-less Mentor consultations. Tools absent from a
+preset are not added. New tools are denied until explicitly audited and listed.
+Do not add `bash`, `pwsh`, arbitrary code execution, runtime configuration,
+mutating MCP tools, or network endpoints that can change permissions to this
+list.
+
+The Agent Teams coordination tools (`spawn_teammate`, `send_message`,
+`list_agents`, `wait_agent`, `interrupt_agent`, `team_task_create`,
+`team_task_list`, `team_task_get`, `team_task_update`) belong on that allowlist.
+Creating, steering, and waiting for delegated workers is the mode's own purpose,
+and none of these tools edits the workspace or the runtime: file writes still
+happen only inside the workers the mode requires. A provisioned teammate is a
+continuable child carrying a subagent descriptor, so `isWorker` reports it and
+the guard leaves it unrestricted, exactly like a native subagent. The mode-entry
+check accepts any one of `subagent`, `subagent_fork`, or `spawn_teammate`, so a
+composition offering only the Team surface can still enter the mode; a
+composition with none of them is rejected with `unsupported`.
+
+Team tools are installed only in the scope of a resolved Team member, and
+`TeamRoster.tryMembership` returns nothing for a session carrying a subagent
+descriptor. A plain subagent therefore has no `spawn_teammate` at all and cannot
+create a Team on the main agent's behalf, so teammate creation has no delegated
+route: it is a Lead-only operation that a restricted main agent must perform
+itself. This is why these tools are allowlisted rather than left to the generic
+"delegate this operation to a subagent" reply.
 
 ## Persistence And Boundaries
 
@@ -84,15 +105,37 @@ with session storage; exporting only a transcript does not export its policy.
 Corrupt files fail closed instead of resetting permissions. Deleting a session
 currently leaves its small policy sidecar for manual retention management.
 
-Tool schemas remain available to preserve worker inheritance; a monotonic
-execution guard rejects disallowed calls before their tool body runs. This is a
-workflow boundary, not operating-system isolation. Writable workers share the
-workspace and filesystem with the main agent. Existing sandbox and approval
-constraints remain authoritative: this plugin never grants permissions beyond
-them. It does not constrain an out-of-process worker's independent runtime.
-The supported `delegate-writes` setup includes a directly callable native
-`subagent` or `subagent_fork`; PTC-only tool presentation is not supported for
-restricted main agents.
+A restricted main agent also has its **wire catalog pruned**: in
+`delegate-writes`, unaudited tools are absent from the schemas sent to the model,
+not merely refused on call. The runtime installs a per-agent `tools.restrict({
+allow })` on the agent's own scope, with `allow` computed as the audited names
+intersected with what that agent actually inherits. Three consequences matter:
+
+- `restrict()` masks the *inherited* surface and deliberately exempts the
+  agent's **own** layer. Agent Teams registers its tools through `agent.ctx`, so
+  those stay visible by exemption and must never appear in the allow list —
+  naming a name the scope does not inherit makes `restrict()` throw
+  `unknown global tool`. The intersection is what keeps this correct.
+- Because it is an allow list, a tool registered after this deployment's audit
+  stays hidden until it is deliberately added. That is the fail-closed
+  direction.
+- A worker keeps the full catalog. Agent scope chains hang off the mounted
+  *preset generation* scope, not off the delegating agent (`composeFrom` →
+  `join` → `bindScopeParent(key, generation.key)`), so restricting one main
+  agent cannot leak into its children. Workers need the full catalog for
+  inheritance regardless.
+
+The monotonic execution guard remains in place behind the pruning, so a call
+that reaches execution — a stale catalog, a replayed call, or a tool presented
+through another surface — is still refused before its body runs. Pruning is a
+visibility boundary, not authorization. This is a workflow boundary, not
+operating-system isolation. Writable workers share the workspace and filesystem
+with the main agent. Existing sandbox and approval constraints remain
+authoritative: this plugin never grants permissions beyond them. It does not
+constrain an out-of-process worker's independent runtime. The supported
+`delegate-writes` setup includes a directly callable delegation surface: a
+native `subagent` or `subagent_fork`, or Agent Teams' `spawn_teammate`. PTC-only
+tool presentation is not supported for restricted main agents.
 
 Because the policy is committed outside the Session log, it is not pushed to
 other browsers or tabs: the switch re-reads when the page becomes visible or
