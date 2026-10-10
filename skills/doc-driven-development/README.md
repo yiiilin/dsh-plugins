@@ -42,7 +42,11 @@ node "$NEW_SKILL/scripts/doctor.mjs" "$PROJECT" --json
 - **渐进接管：**先恢复本次功能及必要上下游的实际需求/设计，再维护；无关未知不阻断本次工作。
 - **全量恢复：**完成约定整库范围，分批保存实际阅读进度、代码快照、事实/推断/未知；不是扫描过就算读过，不悄悄缩小目标。细则见 [ADOPTION.md](ADOPTION.md)。
 
-需求说明、概要设计、详细设计是当前规格的阅读骨架，不是每次修改都重新提交三份作业。沿已确认契约修 BUG，不重审原需求或重画未变流程；本次回归、异常、边界和真实路径验证仍须完成。共同设计见 [DESIGN.md](DESIGN.md)，实施见 [EXECUTION.md](EXECUTION.md)。
+需求说明、概要设计、详细设计是当前规格的阅读骨架，不是每次修改都重新提交三份作业。薄系统概览放项目 README，领域 README 合并职责、概念与模块关系；独立功能或复杂模块才建规格，见 [LAYOUT.md](LAYOUT.md)。人和 AI 共用主事实，签名/schema、测试与运行证据各归其源。
+
+首次拆分或维护文档先读 [模块与维护示例](examples/module-boundaries.md)：从三个阅读入口说明职责、公开入口、状态写入权和允许依赖，运行实际装配的正反例，并区分私有重构、业务变化、实现偏差三种维护动作。从 skill 目录执行 `node examples/module-boundaries.mjs --run`；仅隔离内存示例，不冒充正式项目 runner 验收。
+
+沿已确认契约修 BUG，不重审原需求或重画未变流程；按 [REFERENCE.md](REFERENCE.md) 的事实变化维护相关契约。正文未变不代表证据有效，本次回归、异常、边界和真实路径验证仍须完成。设计和实施分别见 [DESIGN.md](DESIGN.md)、[EXECUTION.md](EXECUTION.md)。
 
 ## 3. 运行事实保存一次
 

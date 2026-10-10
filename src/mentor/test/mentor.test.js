@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { installMentor, plainConfig } from '../lib/mentor.js'
-import { projectJournal } from '../lib/journal.js'
+import { projectJournal, makeJournalEvent } from '../lib/journal.js'
 
 test('exposes the Loader-visible plugin entry shape', async () => {
   // The Cordis Loader resolves a plugin with `exports.default ?? exports` and
@@ -29,7 +29,7 @@ test('unwraps live-editable config wrappers before the runtime reads them', () =
   })
 })
 
-function createHarness({ requestTimeoutMs = 1000, replyText = 'Use the smallest discriminating test.', settingsReadOnly = false, volatileConfig = false, persistenceStyle = 'modern', toolSchemas = false, extraSystemBlock = false, mutateRenderedResults = false, waitForAbort = false, noAdapterOnce = false, emitAssistantStream = true, sharedFetch = false, strictMessageSource = false, sessionSystemMessage = false, profileProvider = 'mentor-route', profileModel = 'mentor-model' } = {}) {
+function createHarness({ containProviderFailure = false, globalConcurrency = 2, requestTimeoutMs = 1000, replyText = 'Use the smallest discriminating test.', settingsReadOnly = false, volatileConfig = false, persistenceStyle = 'modern', toolSchemas = false, extraSystemBlock = false, mutateRenderedResults = false, waitForAbort = false, noAdapterOnce = false, emitAssistantStream = true, sharedFetch = false, strictMessageSource = false, sessionSystemMessage = false, profileProvider = 'mentor-route', profileModel = 'mentor-model' } = {}) {
   const listeners = new Map()
   const journalRows = new Map()
   const childRows = new Map()
@@ -42,6 +42,8 @@ function createHarness({ requestTimeoutMs = 1000, replyText = 'Use the smallest 
   const requests = []
   const flushes = []
   let providerCalls = 0
+  let waitProvider = waitForAbort
+  const disposers = []
   let routeFailure = noAdapterOnce
   let providerStartedResolve
   const providerStarted = new Promise((resolve) => { providerStartedResolve = resolve })
@@ -51,6 +53,8 @@ function createHarness({ requestTimeoutMs = 1000, replyText = 'Use the smallest 
   let rootToolRegistrations = 0
   let parentAgent
   let inspectPause
+  let disposePause
+  let createPause
   let currentAgent
 
   let idCounter = 0
@@ -96,6 +100,12 @@ function createHarness({ requestTimeoutMs = 1000, replyText = 'Use the smallest 
       agent,
       ownerId: parentAgent?.id,
       async dispose() {
+        if (disposePause !== undefined) {
+          const gate = disposePause
+          disposePause = undefined
+          gate.startedResolve()
+          await gate.wait
+        }
         const index = handles.indexOf(handle)
         if (index >= 0) handles.splice(index, 1)
         for (const listener of listeners.get('agent/disposed') ?? []) listener({ agent })
@@ -117,6 +127,12 @@ function createHarness({ requestTimeoutMs = 1000, replyText = 'Use the smallest 
       const session = makeSession(options.sessionId)
       const agent = makeAgent(session, options.agentOptions)
       await options.setup(agent.ctx)
+      if (createPause !== undefined) {
+        const gate = createPause
+        createPause = undefined
+        gate.startedResolve()
+        await gate.wait
+      }
       return publishAgent(agent, options.parentAgent)
     },
     async resume(options) {
@@ -234,7 +250,8 @@ function createHarness({ requestTimeoutMs = 1000, replyText = 'Use the smallest 
                 throw Object.assign(new Error('no adapter for mentor route'), { code: 'NO_ADAPTER' })
               }
               providerCalls += 1
-              if (waitForAbort) {
+              if (containProviderFailure) throw Object.assign(new Error('fake upstream API error (502)'), { code: 'SERVER' })
+              if (waitProvider) {
                 await new Promise((resolve, reject) => {
                   const onAbort = () => reject(options.signal.reason ?? new Error('request aborted'))
                   options.signal.addEventListener('abort', onAbort, { once: true })
@@ -267,6 +284,13 @@ function createHarness({ requestTimeoutMs = 1000, replyText = 'Use the smallest 
               }
             }
             session.append('turn/end', { turn, reason: { kind: 'completed' } })
+          } catch (error) {
+            if (!containProviderFailure) throw error
+            // Real AgentLoop records failures and quiesces without rejecting whenIdle().
+            session.append('turn/end', { turn, reason: { kind: 'error', error: { message: error.message, code: error.code } } })
+            for (const listener of scoped.get('agent/assistant-stream') ?? []) {
+              listener({ agent: this, frame: { type: 'end', attemptId: `attempt-${turn}`, outcome: { kind: 'failed' } } })
+            }
           } finally {
             currentAgent = undefined
             this.status = 'idle'
@@ -367,7 +391,7 @@ function createHarness({ requestTimeoutMs = 1000, replyText = 'Use the smallest 
     model: profileModel,
     reasoningEffort: '',
     requestTimeoutMs,
-    globalConcurrency: 2,
+    globalConcurrency,
   }
   const settingsUpdates = []
   const settingsPolicies = []
@@ -439,7 +463,7 @@ function createHarness({ requestTimeoutMs = 1000, replyText = 'Use the smallest 
     systemPrompt: { section(section) { ctx.globalPrompt = section; return () => {} } },
     logger: { warn() {}, info() {} },
     on,
-    effect(factory) { factory() },
+    effect(factory) { const disposer = factory(); if (typeof disposer === 'function') disposers.push(disposer) },
   }
 
   const installConfig = {
@@ -447,7 +471,7 @@ function createHarness({ requestTimeoutMs = 1000, replyText = 'Use the smallest 
     provider: profileProvider,
     model: profileModel,
     requestTimeoutMs,
-    globalConcurrency: 2,
+    globalConcurrency,
   }
   // A live-editable row reaches apply() as lazy volatile wrappers.
   const asVolatile = (value) => volatileConfig && value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -479,6 +503,22 @@ function createHarness({ requestTimeoutMs = 1000, replyText = 'Use the smallest 
     requests,
     providerCalls: () => providerCalls,
     providerStarted,
+    finishWaiting() { waitProvider = false },
+    disposePlugin() { return Promise.all(disposers.map(dispose => dispose())) },
+    pauseNextDispose() {
+      let startedResolve, release
+      const started = new Promise(resolve => { startedResolve = resolve })
+      const wait = new Promise(resolve => { release = resolve })
+      disposePause = { startedResolve, wait }
+      return { started, release }
+    },
+    pauseNextCreate() {
+      let startedResolve, release
+      const started = new Promise(resolve => { startedResolve = resolve })
+      const wait = new Promise(resolve => { release = resolve })
+      createPause = { startedResolve, wait }
+      return { started, release }
+    },
     pauseNextJournalRead() {
       let startedResolve
       let releaseWait
@@ -773,6 +813,7 @@ test('registers the tool and direct host commands without creating a Mentor on i
   assert.equal(harness.rootToolRegistrations(), 1)
   assert.equal(harness.commands.has('mentor'), true)
   assert.equal(harness.commands.get('mentor').description, 'View or reset the Mentor thread for the current primary Session.')
+  assert.deepEqual(harness.commands.get('mentor').input, { hint: 'status|reset' })
   const status = await harness.commands.get('mentor').handler({ agent: harness.parentAgent, rawInput: 'status' })
   assert.equal(status.kind, 'success')
   assert.equal(harness.requests.length, 0)
@@ -865,14 +906,14 @@ test('reset holds the parent transition lock while journal reads are pending', a
     signal: new AbortController().signal,
   })
   await gate.started
-  const raced = await harness.invoke({ message: 'Race a new call.' }, 'during-reset')
-  assert.equal(raced.kind, 'blocked')
-  assert.equal(raced.code, 'THREAD_BUSY')
+  const raced = harness.invoke({ message: 'Race a new call.' }, 'during-reset')
+  await Promise.resolve()
   assert.equal(harness.providerCalls(), 1)
   gate.release()
   const reset = await resetPromise
   assert.equal(reset.kind, 'success')
-  assert.equal(harness.providerCalls(), 1)
+  assert.equal((await raced).kind, 'reply')
+  assert.equal(harness.providerCalls(), 2)
 })
 
 test('records generation, input, context, and reply measurements without capping them', async () => {
@@ -959,10 +1000,9 @@ test('reconstructs a settled canonical reply if the parent tool result was not r
   const recovered = await harness.tool().execute(args, exec)
   assert.deepEqual(recovered, first)
   assert.equal(harness.providerCalls(), 1)
-  const next = await harness.invoke({ message: 'Do not assume the previous result was delivered.' }, 'next-before-delivery')
-  assert.equal(next.kind, 'blocked')
-  assert.equal(next.code, 'THREAD_BUSY')
-  assert.equal(harness.providerCalls(), 1)
+  const next = await harness.invoke({ message: 'Continue after the unresolved prior result.' }, 'next-before-delivery')
+  assert.equal(next.kind, 'reply')
+  assert.equal(harness.providerCalls(), 2)
 })
 
 test('recovers a settled result after RC.2 parent repair using a new host call id', async () => {
@@ -1105,3 +1145,213 @@ function makeSessionForTest(id) {
     append(type, data) { records.push({ seq: records.length, type, time: Date.now(), data }) },
   }
 }
+
+
+test('a cancelled or timed out consultation ends and a new invocation succeeds without reset', async () => {
+  const harness = createHarness({ waitForAbort: true })
+  const controller = new AbortController()
+  const first = harness.invoke({ message: 'Interrupted input.' }, 'ended-call', harness.parentAgent, controller.signal)
+  await harness.providerStarted
+  controller.abort(new Error('test interruption'))
+  await assert.rejects(first, /cancelled/u)
+  harness.finishWaiting()
+  const next = await harness.invoke({ message: 'New input after failure.' }, 'new-call')
+  assert.equal(next.kind, 'reply')
+  assert.equal(harness.providerCalls(), 2)
+  assert.equal(harness.requests.at(-1).messages.length, 2)
+  const state = projectJournal([...harness.journalRows.values()].flat())
+  assert.equal(state.calls.get('ended-call').status, 'indeterminate')
+  assert.notEqual(next.thread_id, state.calls.get('ended-call').threadId)
+  await assert.rejects(harness.invoke({ message: 'Interrupted input.' }, 'ended-call'), /INDETERMINATE/u)
+  assert.equal(harness.providerCalls(), 2)
+})
+
+test('concurrent consultations wait serially, duplicate call ids share one generation, queued cancellation writes no journal', async () => {
+  const harness = createHarness({ waitForAbort: true })
+  const firstController = new AbortController()
+  const first = harness.invoke({ message: 'Active consultation.' }, 'serial-first', harness.parentAgent, firstController.signal)
+  await harness.providerStarted
+  const args = { message: 'Queued consultation.' }
+  const second = harness.invoke(args, 'serial-second')
+  const duplicate = harness.invoke(args, 'serial-second')
+  await assert.rejects(harness.invoke({ message: 'Different duplicate.' }, 'serial-second'), /different input/u)
+  const queuedController = new AbortController()
+  const cancelled = harness.invoke({ message: 'Cancelled before dispatch.' }, 'serial-cancelled', harness.parentAgent, queuedController.signal)
+  queuedController.abort(new Error('queued abort'))
+  await assert.rejects(cancelled, /queued abort/u)
+  harness.finishWaiting()
+  firstController.abort(new Error('end active consultation'))
+  await assert.rejects(first, /cancelled/u)
+  const result = await second
+  assert.equal(result.kind, 'reply')
+  assert.deepEqual(await duplicate, result)
+  assert.equal(harness.providerCalls(), 2)
+  const state = projectJournal([...harness.journalRows.values()].flat())
+  assert.equal(state.calls.has('serial-cancelled'), false)
+})
+
+test('plugin disposal releases queued calls without another generation', async () => {
+  const harness = createHarness({ waitForAbort: true })
+  const first = harness.invoke({ message: 'Active.' }, 'dispose-first')
+  const firstRejection = assert.rejects(first, /cancelled|stopped/u)
+  await harness.providerStarted
+  const queued = harness.invoke({ message: 'Waiting.' }, 'dispose-queued')
+  const queuedRejection = assert.rejects(queued, /stopped/u)
+  await harness.disposePlugin()
+  await firstRejection
+  await queuedRejection
+  assert.equal(harness.providerCalls(), 1)
+})
+
+
+test('reset queues in submission order and an aborted reset changes no journal', async () => {
+  const harness = createHarness()
+  const first = harness.invoke({ message: 'Before reset.' }, 'barrier-first')
+  const reset = harness.commands.get('mentor').handler({ agent: harness.parentAgent, rawInput: 'reset' })
+  const second = harness.invoke({ message: 'After reset.' }, 'barrier-second')
+  const firstResult = await first
+  assert.equal((await reset).kind, 'success')
+  const secondResult = await second
+  assert.notEqual(firstResult.thread_id, secondResult.thread_id)
+  const controller = new AbortController()
+  const cancelled = harness.commands.get('mentor').handler({ agent: harness.parentAgent, rawInput: 'reset', signal: controller.signal })
+  controller.abort(new Error('reset cancelled'))
+  await assert.rejects(cancelled, /reset cancelled/u)
+  assert.equal(projectJournal([...harness.journalRows.values()].flat()).activeThread.threadId, secondResult.thread_id)
+  const gate = harness.pauseNextJournalRead()
+  const readingController = new AbortController()
+  const reading = harness.commands.get('mentor').handler({ agent: harness.parentAgent, rawInput: 'reset', signal: readingController.signal })
+  await gate.started
+  readingController.abort(new Error('reset cancelled during read'))
+  gate.release()
+  await assert.rejects(reading, /reset cancelled during read/u)
+  assert.equal(projectJournal([...harness.journalRows.values()].flat()).activeThread.threadId, secondResult.thread_id)
+})
+
+test('timeout releases the session for a fresh consultation', async () => {
+  const harness = createHarness({ waitForAbort: true, requestTimeoutMs: 10 })
+  await assert.rejects(harness.invoke({ message: 'Timeout once.' }, 'timeout-once'), /cancelled/u)
+  harness.finishWaiting()
+  assert.equal((await harness.invoke({ message: 'Continue.' }, 'after-timeout')).kind, 'reply')
+  assert.equal(harness.providerCalls(), 2)
+  assert.equal(harness.requests.at(-1).messages.length, 2)
+})
+
+test('replaying a lost settlement uses the original child even after another thread was created', async () => {
+  const harness = createHarness()
+  const originalArgs = { message: 'Original reply.' }
+  const original = await harness.invokeWithoutResult(originalArgs, 'lost-settlement')
+  const rows = [...harness.journalRows.values()][0]
+  const lost = projectJournal(rows).calls.get('lost-settlement')
+  rows.push(makeJournalEvent(rows.length, 'consultation-accepted', { ...lost, result: undefined, revision: undefined }))
+  rows.push(makeJournalEvent(rows.length, 'consultation-indeterminate', { hostCallId: 'lost-settlement', reason: 'Synthetic crash after child committed' }))
+  const fresh = await harness.invoke({ message: 'New consultation.' }, 'fresh-after-crash')
+  assert.equal(fresh.kind, 'reply')
+  assert.notEqual(fresh.thread_id, original.thread_id)
+  const replayed = await harness.invoke(originalArgs, 'lost-settlement')
+  assert.deepEqual(replayed, original)
+  assert.equal(harness.providerCalls(), 2)
+})
+
+for (const legacyStatus of ['accepted', 'dispatched', 'indeterminate']) test(`legacy ${legacyStatus} history does not hold a runtime queue`, async () => {
+  const harness = createHarness()
+  const first = await harness.invoke({ message: 'Legacy input.' }, 'legacy-state')
+  const rows = [...harness.journalRows.values()][0]
+  const original = projectJournal(rows).calls.get('legacy-state')
+  rows.push(makeJournalEvent(rows.length, 'consultation-accepted', original))
+  if (legacyStatus !== 'accepted') rows.push(makeJournalEvent(rows.length, `consultation-${legacyStatus}`, { hostCallId: 'legacy-state', reason: 'Synthetic interrupted old process' }))
+  const fresh = await harness.invoke({ message: 'Recover without reset.' }, 'legacy-followup')
+  assert.equal(fresh.kind, 'reply')
+  assert.notEqual(fresh.thread_id, first.thread_id)
+  assert.equal(harness.requests.at(-1).messages.length, 2)
+})
+
+
+test('recovering the second committed child reply preserves its context revision', async () => {
+  const harness = createHarness()
+  const first = await harness.invoke({ message: 'First turn.' }, 'revision-first')
+  const args = { message: 'Second turn.' }
+  const second = await harness.invokeWithoutResult(args, 'revision-second')
+  assert.equal(second.thread_id, first.thread_id)
+  assert.equal(second.context_revision, 2)
+  const rows = [...harness.journalRows.values()][0]
+  const lost = projectJournal(rows).calls.get('revision-second')
+  rows.push(makeJournalEvent(rows.length, 'consultation-accepted', { ...lost, result: undefined, revision: undefined }))
+  rows.push(makeJournalEvent(rows.length, 'consultation-indeterminate', { hostCallId: 'revision-second', reason: 'Synthetic settlement loss' }))
+  const replay = await harness.invoke(args, 'revision-second')
+  assert.deepEqual(replay, second)
+  assert.equal(harness.providerCalls(), 2)
+})
+
+test('a missing parent result is ended as undelivered, and late delivery cannot restore the retired thread', async () => {
+  const harness = createHarness()
+  const args = { message: 'Unseen reply.' }
+  const unseen = await harness.invokeWithoutResult(args, 'unseen-result')
+  const fresh = await harness.invoke({ message: 'Continue with new input.' }, 'after-unseen')
+  let state = projectJournal([...harness.journalRows.values()].flat())
+  assert.equal(state.calls.get('unseen-result').deliveryStatus, 'undelivered')
+  assert.equal(state.retiredThreads.has(unseen.thread_id), true)
+  await harness.invoke(args, 'unseen-result')
+  await harness.commands.get('mentor').handler({ agent: harness.parentAgent, rawInput: 'status' })
+  state = projectJournal([...harness.journalRows.values()].flat())
+  assert.equal(state.calls.get('unseen-result').deliveryStatus, 'delivered')
+  assert.equal(state.activeThread.threadId, fresh.thread_id)
+  assert.equal(harness.providerCalls(), 2)
+})
+
+
+test('a queued consultation waits until the previous child handle has been disposed', async () => {
+  const harness = createHarness()
+  const gate = harness.pauseNextDispose()
+  const first = harness.invoke({ message: 'First.' }, 'lease-first')
+  await gate.started
+  const second = harness.invoke({ message: 'Second.' }, 'lease-second')
+  await Promise.resolve()
+  assert.equal(harness.providerCalls(), 1)
+  gate.release()
+  assert.equal((await first).kind, 'reply')
+  assert.equal((await second).kind, 'reply')
+  assert.equal(harness.providerCalls(), 2)
+  assert.equal(harness.handles.length, 0)
+})
+
+test('cancellation during child creation releases the handle and starts no generation', async () => {
+  const harness = createHarness()
+  const gate = harness.pauseNextCreate()
+  const controller = new AbortController()
+  const first = harness.invoke({ message: 'Cancel before dispatch.' }, 'create-cancelled', harness.parentAgent, controller.signal)
+  await gate.started
+  controller.abort(new Error('creation cancelled'))
+  gate.release()
+  await assert.rejects(first, /creation cancelled/u)
+  assert.equal(harness.handles.length, 0)
+  assert.equal(harness.providerCalls(), 0)
+  assert.equal((await harness.invoke({ message: 'Next.' }, 'after-create-cancel')).kind, 'reply')
+})
+
+test('global capacity queues calls from another parent instead of returning THREAD_BUSY', async () => {
+  const harness = createHarness({ globalConcurrency: 1, waitForAbort: true })
+  const firstController = new AbortController()
+  const first = harness.invoke({ message: 'First parent.' }, 'global-first', harness.parentAgent, firstController.signal)
+  await harness.providerStarted
+  const otherSession = makeSessionForTest('other-queued-parent')
+  const otherAgent = { id: otherSession.id, session: otherSession, ctx: harness.parentAgent.ctx }
+  harness.rootAgents.push(otherAgent)
+  const next = harness.invoke({ message: 'Other parent.' }, 'global-second', otherAgent)
+  await Promise.resolve()
+  assert.equal(harness.providerCalls(), 1)
+  harness.finishWaiting()
+  firstController.abort(new Error('end first'))
+  await assert.rejects(first, /cancelled/u)
+  assert.equal((await next).kind, 'reply')
+  assert.equal(harness.providerCalls(), 2)
+})
+
+
+test('an idle child after a provider failure exposes the original error, not a generic incomplete message', async () => {
+  const harness = createHarness({ containProviderFailure: true })
+  await assert.rejects(harness.invoke({ message: 'First failure.' }, 'provider-failure-one'), error => error.code === 'SERVER' && error.message.includes('(502)'))
+  await assert.rejects(harness.invoke({ message: 'Next failure.' }, 'provider-failure-two'), error => error.code === 'SERVER' && error.message.includes('(502)'))
+  assert.equal(harness.providerCalls(), 2)
+  assert.equal(harness.handles.length, 0)
+})

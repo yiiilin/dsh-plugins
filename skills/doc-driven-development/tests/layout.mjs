@@ -118,6 +118,39 @@ test('new installation defaults to domain but creates no invented domains or spe
   assert.match(f.read('AGENTS.md').toString(), /LAYOUT\.md/);
   assert.equal(doctor(f.root).layout.policy, 'domain');
 });
+test('lean index provides an overview without requiring separate architecture or domain files', t => {
+  const f = fixture(t);
+  updateIndex(f.root, f.config);
+  const text = f.read('docs/README.md').toString();
+  assert.match(text, /## 系统概览/);
+  assert.match(text, /职责.*状态.*依赖/);
+  assert.ok(!fs.existsSync(path.join(f.root, 'docs/architecture.md')));
+  assert.ok(!fs.existsSync(path.join(f.root, 'docs/domains')));
+  const config = loadConfig(f.root);
+  f.put('docs/README.md', text.replace('项目目标、外部参与者、领域职责与关键约束在实际分析后填写。', '人工维护的系统范围与规则。'));
+  const before = f.read('docs/README.md');
+  updateIndex(f.root, config);
+  assert.deepEqual(f.read('docs/README.md'), before);
+  ok(checkRepo(f.root, config));
+});
+
+test('lean domain overview and a referenced module remain managed without separate architecture files', t => {
+  const f = fixture(t);
+  f.put('src/imports/tasks.mjs', 'export const submit = () => null;\n');
+  f.put('docs/domains/imports/README.md', prose('ARCH-IMPORTS', 'architecture'));
+  f.put('docs/domains/imports/modules/tasks.md', prose('MOD-TASKS', 'module').replace('Owns: —', 'Owns: src/imports/**'));
+  f.put('docs/domains/imports/features/submit.md', prose('FEAT-SUBMIT', 'feature', '[任务契约](../modules/tasks.md)\n').replace('Implementation: unknown', 'Depends on: MOD-TASKS\nImplementation: unknown'));
+  updateIndex(f.root, f.config);
+  const report = checkRepo(f.root, f.config);
+  ok(report);
+  assert.equal(report.stats.layout.domainDocuments, 2);
+  assert.match(f.read('docs/README.md').toString(), /domains\/imports\/README\.md/);
+  assert.ok(!fs.existsSync(path.join(f.root, 'docs/architecture.md')));
+  assert.ok(!fs.existsSync(path.join(f.root, 'docs/domains/imports/architecture.md')));
+  f.put('docs/domains/imports/features/submit.md', f.read('docs/domains/imports/features/submit.md').toString().replace('Owns: —', 'Owns: src/imports/**'));
+  assert.ok(checkRepo(f.root, f.config).errors.some(e => e.includes('multiple primary owners')));
+});
+
 test('initial adoption of existing managed flat docs chooses preserve instead of silently imposing domain', t => {
   const f = fixture(t, null); f.put('docs/features/old.md', prose('FEAT-OLD', 'feature')); const original = f.read('docs/features/old.md');
   const plan = planInstall(f.root, { host: 'agents' });

@@ -35,7 +35,7 @@ const DEFAULTS = Object.freeze({
 const TOOL_DESCRIPTION = `Consult a tool-less Mentor agent in an isolated Session.
 Use Mentor when you have a concrete uncertainty, are choosing between meaningful alternatives, are stuck debugging, or need an independent challenge to an important assumption. Do not send routine steps.
 The Mentor can see only the message, evidence, and Mentor-thread history explicitly provided to it. It cannot inspect files, search, run code, or observe your other activity.
-The message is required; evidence is optional and must be supplied explicitly. Each primary Session has one implicit Mentor thread, which is reset with /mentor reset or after a configuration change. If a call's outcome is unknown and no reply was received, retry with the exact same message and evidence to recover a completed result. Mentor advice is not verified fact or authorization; you remain responsible for verification and action.`
+The message is required; evidence is optional and must be supplied explicitly. Each primary Session runs consultations serially. Success, failure, cancellation and timeout end the current invocation; a new invocation can proceed without manual reset. An interrupted or undelivered thread is automatically retired before starting fresh context. Replay of the same host call only recovers an existing reply; it never silently regenerates an uncertain request. Mentor advice is not verified fact or authorization; you remain responsible for verification and action.`
 
 function positiveInteger(value, fallback, name, max = Number.MAX_SAFE_INTEGER) {
   const selected = value === undefined ? fallback : Number(value)
@@ -574,27 +574,15 @@ function deliveryOutcomeForInvocation(events, call) {
   return undefined
 }
 
-async function reconcileDeliveries(ctx, config, adapters, runtime, parentSession, state, exceptCallId, strictMissing, replayableCallId) {
+async function reconcileDeliveries(ctx, config, adapters, runtime, parentSession, state, exceptCallId) {
   const parentSessionId = String(parentSession.id)
   const events = parentSession.ownEvents()
   for (const call of state.calls.values()) {
     if (call.status !== 'settled' || call.hostCallId === exceptCallId) continue
     if ([...runtime.activeOperations].some((operation) => operation.threadId === call.threadId)) continue
-    if (call.deliveryStatus === 'undelivered') continue
-    if (call.deliveryStatus !== 'pending') continue
+    if (!['pending', 'undelivered'].includes(call.deliveryStatus)) continue
     const outcome = deliveryOutcomeForInvocation(events, call)
-    if (outcome === undefined) {
-      const currentThread = state.activeThread?.threadId === call.threadId
-        && (call.epoch === undefined || call.epoch === state.epoch)
-        && (call.configFingerprint === undefined || call.configFingerprint === configFingerprint(config))
-      if (strictMissing && currentThread && call.hostCallId !== replayableCallId) {
-        return {
-          state,
-          blocked: makeBlocked('THREAD_BUSY', '上一条 Mentor 结果尚未写入父 Session；未开始新的咨询。', call.threadId, call.consultationId, true),
-        }
-      }
-      continue
-    }
+    if (outcome === undefined || outcome === call.deliveryStatus) continue
 
     await appendJournal(ctx, parentSessionId, adapters,
       outcome === 'delivered' ? 'consultation-delivered' : 'consultation-undelivered', {
@@ -603,7 +591,7 @@ async function reconcileDeliveries(ctx, config, adapters, runtime, parentSession
       })
     state = projectJournal((await readJournal(ctx, parentSessionId, adapters)).events)
   }
-  return { state, blocked: undefined }
+  return { state }
 }
 
 function extractAssistantText(message) {
@@ -758,9 +746,51 @@ function findPendingReplay(journalState, inputHash, currentFingerprint) {
   return undefined
 }
 
-function hasUnresolvedCall(journalState, threadId, exceptCallId) {
-  return currentCallsForThread(journalState, threadId).some((call) => call.hostCallId !== exceptCallId
-    && (call.status === 'accepted' || call.status === 'dispatched' || call.status === 'indeterminate'))
+
+// Only live work holds a lease. Historical journal outcomes never hold the queue.
+function acquireConsultation(runtime, parentId, signal, modelLimit) {
+  const waitingSignal = signal === undefined ? runtime.shutdown.signal : AbortSignal.any([signal, runtime.shutdown.signal])
+  return new Promise((resolve, reject) => {
+    const entry = { parentId, modelLimit, grant: undefined }
+    const onAbort = () => {
+      const index = runtime.waiting.indexOf(entry)
+      if (index >= 0) runtime.waiting.splice(index, 1)
+      waitingSignal.removeEventListener('abort', onAbort)
+      reject(waitingSignal.reason ?? new Error('Mentor wait cancelled'))
+      drainConsultations(runtime)
+    }
+    if (waitingSignal.aborted) { onAbort(); return }
+    entry.grant = () => {
+      waitingSignal.removeEventListener('abort', onAbort)
+      runtime.parentBusy.add(parentId)
+      if (modelLimit !== undefined) runtime.activeCount += 1
+      let released = false
+      resolve(() => {
+        if (released) return
+        released = true
+        runtime.parentBusy.delete(parentId)
+        if (modelLimit !== undefined) runtime.activeCount -= 1
+        drainConsultations(runtime)
+      })
+    }
+    waitingSignal.addEventListener('abort', onAbort, { once: true })
+    runtime.waiting.push(entry)
+    drainConsultations(runtime)
+  })
+}
+
+function drainConsultations(runtime) {
+  if (runtime.disposed) return
+  const blockedParents = new Set()
+  for (const entry of [...runtime.waiting]) {
+    if (blockedParents.has(entry.parentId) || runtime.parentBusy.has(entry.parentId)
+      || (entry.modelLimit !== undefined && runtime.activeCount >= entry.modelLimit)) {
+      blockedParents.add(entry.parentId)
+      continue
+    }
+    runtime.waiting.splice(runtime.waiting.indexOf(entry), 1)
+    entry.grant()
+  }
 }
 
 function makeCanonicalTool(ctx, config, runtime, adapters) {
@@ -820,32 +850,28 @@ function makeCanonicalTool(ctx, config, runtime, adapters) {
         return existingFlight.promise
       }
 
-      if (runtime.disposed) throw new Error('Mentor plugin is stopping')
-      if (runtime.parentBusy.has(ownerSessionId)) {
-        return makeBlocked('THREAD_BUSY', '本主 Session 已有 Mentor 咨询进行中；没有发起新的模型请求。', null, null, true)
-      }
-      if (runtime.activeCount >= config.globalConcurrency) {
-        return makeBlocked('THREAD_BUSY', 'Mentor 并发额度已满；没有发起新的模型请求。', null, null, true)
-      }
-      runtime.activeCount += 1
-      runtime.parentBusy.add(ownerSessionId)
-      const operationPromise = (async () => {
-        let routeConfig
+      // Register before the first await, so retries of a queued call share its promise.
+      const operationPromise = Promise.resolve().then(async () => {
+        const release = await acquireConsultation(runtime, ownerSessionId, exec.signal, config.globalConcurrency)
         try {
-          routeConfig = mentorRoute(config, await readModelCatalog(ctx))
-        } catch {
-          return makeBlocked('MODEL_UNAVAILABLE', 'Mentor 全局模型配置不可用；未发起新的模型请求。')
+          if (runtime.disposed) throw new Error('Mentor plugin stopped')
+          if (exec.signal.aborted) throw exec.signal.reason
+          let routeConfig
+          try {
+            routeConfig = mentorRoute(config, await readModelCatalog(ctx))
+          } catch {
+            return makeBlocked('MODEL_UNAVAILABLE', 'Mentor 全局模型配置不可用；未发起新的模型请求。')
+          }
+          return await runConsultation(ctx, routeConfig, runtime, adapters, input, exec, parentAgent, parentSession, callId, hash)
+        } finally {
+          release()
         }
-        const result = await runConsultation(ctx, routeConfig, runtime, adapters, input, exec, parentAgent, parentSession, callId, hash)
-        return result
-      })()
+      })
       runtime.inFlight.set(inFlightKey, { inputHash: hash, promise: operationPromise })
       try {
         return await operationPromise
       } finally {
         runtime.inFlight.delete(inFlightKey)
-        runtime.parentBusy.delete(ownerSessionId)
-        runtime.activeCount -= 1
       }
     },
   })
@@ -881,10 +907,25 @@ async function runConsultation(ctx, config, runtime, adapters, input, exec, pare
     throw new Error('Mentor settled result is missing from both the parent tool log and Mentor session')
   }
 
+  if (priorCall !== undefined && ['accepted', 'dispatched', 'indeterminate'].includes(priorCall.status)) {
+    const preceding = currentCallsForThread(journalState, priorCall.threadId)
+    const index = preceding.findIndex(call => call.hostCallId === callId)
+    const revision = preceding.slice(0, index).filter(call => call.status === 'settled' && call.generationSent !== false).length + 1
+    const recovered = await recoverCanonicalResult(ctx, config, adapters, { ...priorCall, revision }, parentSession)
+    if (recovered !== undefined) {
+      await appendJournal(ctx, parentSessionId, adapters, 'consultation-settled', {
+        hostCallId: callId,
+        revision: recovered.context_revision,
+        usage: recovered.usage,
+        replyUtf8Bytes: Buffer.byteLength(recovered.message, 'utf8'),
+        result: recovered,
+      })
+      return recovered
+    }
+    throw new Error('MENTOR_OUTCOME_INDETERMINATE: this invocation ended without a durable complete reply; start a new tool invocation')
+  }
   const currentFingerprint = configFingerprint(config)
-  const replayCandidate = findPendingReplay(journalState, hash, currentFingerprint)
-  const deliveries = await reconcileDeliveries(ctx, config, adapters, runtime, parentSession, journalState, callId, true, replayCandidate?.call.hostCallId)
-  if (deliveries.blocked !== undefined) return deliveries.blocked
+  const deliveries = await reconcileDeliveries(ctx, config, adapters, runtime, parentSession, journalState, callId)
   journalState = deliveries.state
 
   const pendingReplay = findPendingReplay(journalState, hash, currentFingerprint)
@@ -905,15 +946,25 @@ async function runConsultation(ctx, config, runtime, adapters, input, exec, pare
   }
 
   let thread = journalState.activeThread
-  const undeliveredCall = thread === null ? undefined : [...journalState.calls.values()].find((call) =>
-    call.status === 'settled' && call.deliveryStatus === 'undelivered' && call.threadId === thread.threadId)
-  if (undeliveredCall !== undefined) {
+  const unfinished = thread === null ? [] : currentCallsForThread(journalState, thread.threadId)
+    .filter(call => call.hostCallId !== callId && (['accepted', 'dispatched', 'indeterminate'].includes(call.status)
+      || (call.status === 'settled' && call.deliveryStatus !== 'delivered')))
+  if (unfinished.length > 0) {
+    for (const call of unfinished) {
+      if (call.status === 'settled' && call.deliveryStatus === 'pending') {
+        await appendJournal(ctx, parentSessionId, adapters, 'consultation-undelivered', {
+          hostCallId: call.hostCallId,
+          reason: 'parent-result-not-observed-at-next-invocation',
+        }, exec.signal)
+      }
+    }
+    // Historical outcomes are facts, not a runtime lock. Start clean without replaying unseen advice.
     await appendJournal(ctx, parentSessionId, adapters, 'thread-retired', {
       threadId: thread.threadId,
-      reason: 'result-not-delivered-to-parent',
+      reason: 'previous-consultation-ended-without-delivered-reply',
     }, exec.signal)
     journalState = projectJournal((await readJournal(ctx, parentSessionId, adapters)).events)
-    thread = journalState.activeThread
+    thread = null
   }
   if (thread !== null && thread.configFingerprint !== currentFingerprint) {
     await appendJournal(ctx, parentSessionId, adapters, 'thread-retired', { threadId: thread.threadId, reason: 'configuration-changed' }, exec.signal)
@@ -941,9 +992,6 @@ async function runConsultation(ctx, config, runtime, adapters, input, exec, pare
 
   const consultationId = priorCall?.consultationId ?? consultationIdFor(thread.threadId, callId)
   const inputMessageId = priorCall?.inputMessageId ?? inputMessageIdFor(thread.threadId, callId)
-  if (hasUnresolvedCall(journalState, thread.threadId, callId)) {
-    return makeBlocked('THREAD_BUSY', '该线程上一条咨询结果不确定；未重发请求。请运行 /mentor reset 后再开新线程。', thread.threadId)
-  }
 
   const formatted = formatConsultation(input)
   const newInputBytes = Buffer.byteLength(formatted, 'utf8')
@@ -954,40 +1002,6 @@ async function runConsultation(ctx, config, runtime, adapters, input, exec, pare
     source: { kind: PLUGIN_ID },
   })
 
-  const storedChild = await readStoredSession(ctx.sessionPersistence, thread.threadId)
-  const hasInputAlready = storedChild?.events.some((event) => event.type === 'user/message' && event.data?.id === inputMessageId) === true
-  if (priorCall?.status === 'dispatched' || priorCall?.status === 'indeterminate' || hasInputAlready) {
-    const recovered = storedChild === undefined
-      ? null
-      : extractSettledReply(storedChild.events, inputMessageId, adapters.lastAssistantStreamChunk)
-    if (recovered !== null) {
-      const revision = completedGenerationsForThread(journalState, thread.threadId) + 1
-      const result = makeReply({
-        threadId: thread.threadId,
-        consultationId,
-        revision,
-        message: recovered.message,
-        usage: recovered.usage,
-      })
-      await appendJournal(ctx, parentSessionId, adapters, 'consultation-settled', {
-        hostCallId: callId,
-        revision,
-        usage: recovered.usage,
-        replyUtf8Bytes: Buffer.byteLength(recovered.message, 'utf8'),
-        result,
-      })
-      return result
-    }
-    if (priorCall !== undefined || hasInputAlready) {
-      if (priorCall?.status !== 'indeterminate') {
-        await appendJournal(ctx, parentSessionId, adapters, 'consultation-indeterminate', {
-          hostCallId: callId,
-          reason: 'dispatched-without-durable-complete-reply',
-        })
-      }
-      throw new Error('MENTOR_OUTCOME_INDETERMINATE: no durable complete reply is available; the request will not be sent again')
-    }
-  }
 
   const ownerAgents = parentAgent.ctx?.agents ?? ctx.agents
   if (typeof ownerAgents?.create !== 'function' || typeof ownerAgents?.resume !== 'function') {
@@ -1041,8 +1055,10 @@ async function runConsultation(ctx, config, runtime, adapters, input, exec, pare
     timeout: undefined,
     onParentAbort: undefined,
   }
-  if (runtime.disposed) throw new Error('Mentor plugin is stopping')
-  if (exec.signal.aborted) throw exec.signal.reason ?? new Error('Mentor call was cancelled before dispatch')
+  if (runtime.disposed || exec.signal.aborted) {
+    await releaseMentorHandle(ctx, runtime, thread.threadId, handle)
+    throw exec.signal.reason ?? new Error('Mentor plugin is stopping')
+  }
   operation.onParentAbort = () => {
     controller.abort(exec.signal.reason ?? new Error('parent tool call cancelled'))
     agent.cancel({ kind: 'parent' })
@@ -1299,7 +1315,7 @@ function configureMentorAgent(agentCtx, threadState, adapters) {
     const operation = attempt.operation
     const outcome = frame.outcome
     if (outcome?.kind !== 'committed' || outcome.eventType !== 'assistant/message') {
-      operation.failure = new Error('MENTOR_INCOMPLETE: no committed assistant message was produced')
+      operation.failure ??= new Error('MENTOR_INCOMPLETE: no committed assistant message was produced')
       return
     }
     const event = readMessageEvent(agent.session, outcome.seq)
@@ -1367,6 +1383,8 @@ function createToolMetadata() {
     activeOperations: new Set(),
     activeByAgentId: new Map(),
     parentBusy: new Set(),
+    waiting: [],
+    shutdown: new AbortController(),
     inFlight: new Map(),
     threads: new Map(),
     handles: new Map(),
@@ -1571,8 +1589,9 @@ function installCommands(ctx, config, runtime, adapters) {
   ctx.effect(() => commands.register({
     name: 'mentor',
     description: 'View or reset the Mentor thread for the current primary Session.',
+    input: { hint: 'status|reset' },
     recordInput: true,
-    handler: async ({ agent, rawInput }) => {
+    handler: async ({ agent, rawInput, signal }) => {
       const session = agent?.session
       if (session === undefined) return { kind: 'error', text: '当前没有可管理的主 Session。' }
       if (!isPrimaryAgent(ctx.agents, agent)) return { kind: 'error', text: 'Mentor 命令仅支持主 Agent Session。' }
@@ -1585,7 +1604,7 @@ function installCommands(ctx, config, runtime, adapters) {
         const initial = projectJournal(journal.events)
         const observed = busy
           ? { state: initial }
-          : await reconcileDeliveries(ctx, config, adapters, runtime, session, initial, undefined, false, undefined)
+          : await reconcileDeliveries(ctx, config, adapters, runtime, session, initial, undefined)
         const state = observed.state
         let statusConfig = config
         if (config.enabled) {
@@ -1612,17 +1631,20 @@ function installCommands(ctx, config, runtime, adapters) {
       }
       if (action === 'reset') {
         const parentId = String(session.id)
-        if (runtime.parentBusy.has(parentId)) {
-          return { kind: 'error', text: 'Mentor 正在咨询；请等当前调用收敛后再重置。' }
-        }
-        runtime.parentBusy.add(parentId)
+        // Match tool scheduling so reset is a FIFO barrier between submitted consultations.
+        await Promise.resolve()
+        const release = await acquireConsultation(runtime, parentId, signal)
         try {
+          if (runtime.disposed) throw new Error('Mentor plugin stopped')
+          if (signal?.aborted) throw signal.reason
           const journal = await readJournal(ctx, parentId, adapters, { create: true })
           const state = projectJournal(journal.events)
+          if (runtime.disposed) throw new Error('Mentor plugin stopped')
+          if (signal?.aborted) throw signal.reason
           await appendJournal(ctx, parentId, adapters, 'thread-reset', {
             threadId: state.activeThread?.threadId ?? null,
             epoch: state.epoch + 1,
-          })
+          }, signal)
           if (state.activeThread !== null) {
             const handle = runtime.handles.get(state.activeThread.threadId)
             runtime.handles.delete(state.activeThread.threadId)
@@ -1631,7 +1653,7 @@ function installCommands(ctx, config, runtime, adapters) {
           }
           return { kind: 'success', text: 'Mentor 线程已封存并重置。历史记录与已记录指标保留；下一次咨询会创建空线程。' }
         } finally {
-          runtime.parentBusy.delete(parentId)
+          release()
         }
       }
       return { kind: 'error', text: '用法：/mentor status 或 /mentor reset。' }
@@ -1756,6 +1778,8 @@ export function installMentor(ctx, rawConfig, adapters) {
           yield chunk
         }
       } catch (error) {
+        // Keep the first provider failure even if AgentLoop contains it or attempts another request.
+        operation.failure ??= error
         if (operation.dispatched && error?.code === 'NO_ADAPTER') {
           await markAbortedBeforeProvider(ctx, mentorConfig, adapters, operation, error.message)
         }
@@ -1787,6 +1811,7 @@ export function installMentor(ctx, rawConfig, adapters) {
 
   ctx.effect(() => () => {
     runtime.disposed = true
+    runtime.shutdown.abort(new Error('Mentor plugin stopped'))
     const mentorAgents = new Set([...runtime.mentorAgents.values()].map((thread) => thread.agent).filter(Boolean))
     for (const operation of runtime.activeOperations) {
       operation.controller.abort(new Error('Mentor plugin stopped'))

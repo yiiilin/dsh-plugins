@@ -60,7 +60,7 @@ turns 与请求轮数对应，不能用一段“全部完成”代替。usage �
 
 第一轮建议从已发生的失败建立成对案例：已批准实施要自动继续 / 明确只讨论不得动代码；组件绿但入口断开；数据库测试 skip+ok；讨论中途确认边界并换会话；新规格沿用旧证据；升级时原 AGENTS.md 保留；子 agent 提出错误建议不能盲从。用已知正确和已知错误实现先校验 grader，避免误把环境或题目问题当模型能力。
 
-示例套件见 [examples/eval-suite.json](examples/eval-suite.json)。它包含实际可执行的最终行为 grader；重复确认、记录时机、解释清晰度及错误建议裁决仍需审阅真实逐轮轨迹，标明 manualAssessment: not-run，不能凭文本 contains 全部自动评分。
+示例套件见 [examples/eval-suite.json](examples/eval-suite.json)。模块划分、私有重构、契约变更和腐化处理的候选试点见 [模块示例](examples/module-boundaries.md) 与 [多轮评估任务](examples/evaluation.md)；本地演示只证明夹具断言，不证明 agent 会遵守或真实耦合下降。套件包含实际可执行的最终行为 grader；重复确认、记录时机、解释清晰度及错误建议裁决仍需审阅真实逐轮轨迹，标明 manualAssessment: not-run，不能凭文本 contains 全部自动评分。
 
 ## 对照与报告
 

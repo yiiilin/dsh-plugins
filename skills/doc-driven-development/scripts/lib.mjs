@@ -304,9 +304,10 @@ export function replaceIndex(text, block) {
   try { return mergeBlock(text, block, START, END).text; }
   catch (error) { throw new Error(`Index markers: ${error.message}`); }
 }
+export const INDEX_INTRO = '# 项目设计文档\n\n## 系统概览\n项目目标、外部参与者、领域职责与关键约束在实际分析后填写。\n\n## 阅读导航\n先读本页概览，再按领域定位本次功能与模块契约，核对职责、状态所有权和依赖。只有需要独立阅读的内容才拆文档；索引不替代可验证契约。\n';
 export function updateIndex(root, config) {
   const file = safePath(root, config.index);
-  const old = fs.existsSync(file) ? decodeText(fs.readFileSync(file), config.index) : '# 项目设计文档\n\n先读系统概要，再读本次涉及的功能与共享模块。\n';
+  const old = fs.existsSync(file) ? decodeText(fs.readFileSync(file), config.index) : INDEX_INTRO;
   const { docs } = documents(root, config), next = replaceIndex(old, indexBlock(config, docs));
   if (next !== old) writeAtomic(root, config.index, next);
   return { count: docs.length, changed: next !== old };

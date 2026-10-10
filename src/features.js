@@ -6,4 +6,5 @@ export const FEATURES = Object.freeze([
   { key: 'session-list-cache', id: 'session-list-cache', legacy: '@yiln-dsh/dsh-plugin-session-list-cache' },
   { key: 'web-daemon', id: 'web-daemon', legacy: '@yiln-dsh/dsh-plugin-web-daemon', client: 'lib/client.js' },
   { key: 'session-mode', id: 'session-mode', client: 'client.js' },
+  { key: 'work-journal', id: 'dsh-work-journal', client: 'client.js' },
 ])

@@ -49,9 +49,9 @@ Mentor 只有**一份全局设置**（本插件自己的配置行）。模型路
 | `consultation-settled.replyUtf8Bytes` | 导师最终回复的 UTF-8 字节数。 |
 | `consultation-settled.usage` / `consultation-indeterminate.usage` | provider 报告的 token 用量；未报告时保持 `null` 与 `unknown`。 |
 
-仍然生效的只有两个运行保护：`globalConcurrency`（同时进行的咨询数）和 `requestTimeoutMs`（单次超时）。工具参数本身仍有 schema 级字符/字节边界（`maxInputBytes`）。
+同一主 Session 的咨询按提交顺序串行运行；超过 `globalConcurrency` 的请求在运行时等待，等待可取消。`requestTimeoutMs` 从开始实际咨询时计时，不包含排队时间。一次调用成功、失败、取消或超时并释放 child 后结束，历史 journal 的未决/未送达状态不占用运行锁，也不再返回永久 `THREAD_BUSY`。工具参数仍保留 schema 级字符/字节边界（`maxInputBytes`）。
 
-首次咨询只需 `message`。可选的 `evidence` 接收 `id`、`kind`、`source`、`content`；来源只是主 Agent 提供的标签，不会触发文件或 URL 读取。每个主 Session 自动使用一个 Mentor 线程，`/mentor reset` 或配置变化时才封存并新建线程。提交的 message/evidence 会发送给可信配置中的 provider；不要提交凭据或不应外发的数据。
+首次咨询只需 `message`。可选的 `evidence` 接收 `id`、`kind`、`source`、`content`；来源只是主 Agent 提供的标签，不会触发文件或 URL 读取。每个主 Session 自动使用一个 Mentor 线程；成功且已送达的上下文可继续。旧线程有失败、未决或未送达记录时，新调用自动封存并新建干净线程，无需 `/mentor reset`；手工 reset 或配置变化也会封存。提交的 message/evidence 会发送给可信配置中的 provider；不要提交凭据或不应外发的数据。
 
 ## 界面
 
@@ -68,13 +68,14 @@ Mentor 使用新 Agent Session，不复制父 transcript，也不传入 workspac
 
 导师 Session 保存对话；独立的 DSH 持久化 journal 保存线程、幂等状态、记录到的度量，以及用于 PTC/工具结果丢失恢复的规范回复副本。未知 journal 事件带 `ignorable: true`，不写入父 Session 的未知事件类型。冷 journal 不带 `cwd`，当前 Web controller 的普通会话列表会隐藏它，但它仍能被 `sessionPersistence.list()` / `sessionQuery.listSessions()` 等受信代码发现；它不是私密存储，DSH 也没有通用删除或保留期 API。只有父 Session 记录了与规范回复一致的成功工具结果，旧线程才会继续；结果未落盘、被策略改写或作为错误返回时，不会把父 Agent 未收到的建议带进下一轮。RC.2 若把未完成的父工具调用修复成 `TOOL_OUTCOME_UNKNOWN`，但 journal 已持久化了完成结果，完全相同的规范输入可用新 `callId` 重放该结果而不再生成；人工 reset 会提升 epoch 并关闭这条恢复路径。
 
-本主 Session 可用 Web slash command `/mentor status` 查看状态，用 `/mentor reset` 封存当前线程并开始新线程。状态行报告路由、当前线程、已派发生成次数（无上限，仅记录）、provider usage、待交付与未送达计数。这依赖 `dsh-commands` 与交互式 Web adapter；headless、ACP、JSON-RPC 和 `dsh mentor ...` CLI 命令不在支持范围。
+本主 Session 可用 Web slash command `/mentor status` 查看状态，用 `/mentor reset` 封存当前线程并开始新线程。`/mentor reset` 同样排队，作为先前与后续咨询之间的屏障；取消后不写入 reset。新输入开始时尚未观察到父结果的成功记录标为未送达并保留原因；迟到交付可更新交付事实，但不重新启用已封存线程。状态行报告路由、当前线程、已派发生成次数（无上限，仅记录）、provider usage、待交付与未送达计数。这依赖 `dsh-commands` 与交互式 Web adapter；headless、ACP、JSON-RPC 和 `dsh mentor ...` CLI 命令不在支持范围。
 
 ## 已知边界
 
 - 度量用 JSON/UTF-8 序列化字节数，不是 provider tokenizer 的精确 token 计数。这可能较保守，也不是任意 provider 的通用 token 证明。
 - 若 provider usage 未报告，结果会保留 `null` 和 `unknown`，不会记成零。`cost_estimate_usd` 当前始终为 `null`；未实现货币预算或价格表。
-- 取消、超时与重试语义不变：插件会在 Agent 请求边界停用循环级重试。provider adapter 内部是否重试、远端取消是否停止计费仍由 adapter/provider 决定；真正派发状态不明的调用不会重新生成。若 journal 已证明生成完成但父结果丢失，只对完全相同的规范输入重放已保存结果；不同输入在原结果未交付时会转到空线程，不继承未见过的建议。
+- 取消、超时或失败结束当前调用，下一条新调用可以继续；等待前一条 child 收敛并释放后才开始下一次咨询。插件仍在 Agent 请求边界停用循环级重试，adapter 内部是否重试及远端取消是否停止计费由 provider 决定。
+- 历史未决状态保留为事实。相同 host `callId` 先从原线程恢复结果，没有完整回复时报告旧调用结果不确定，不自动再次生成；使用新的工具调用可重新咨询。同规范输入存在已完成但未送达结果时优先重放，不同输入自动换干净线程。等待取消不产生咨询 journal，插件关闭时终止等待队列。
 - Native 工具结果以简洁文本展示导师回复和线程标识；顶层 `tool/result` 的 presentation metadata 保存规范结果，nested PTC 不提供该 metadata，恢复时从 journal 与已持久化的 Mentor turn 重建。真实 `ptc` nested dispatch 尚未联调。
 - Mentor 子 Session 带 `origin: subagent` 和 `parentSession` 以保留 Agent runtime parent 关系，但不创建 SubagentRuntime Activation/descriptor；Web daemon 若在它运行时重启，可能把它报告为不可续传。插件只在下一次显式 `mentor` 调用时直接恢复日志，不会自动补发模型请求。
 - 全局设置写入 profile patch 需要 `dsh-settings` 与 `dsh-config-editor` 两个 Host 服务；缺少任一时设置页显示只读，可直接编辑 YAML。

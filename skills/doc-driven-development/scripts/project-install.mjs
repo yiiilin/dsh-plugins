@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
-  VERSION, DEFAULTS, safePath, validateRel, sha, loadConfig, documents, indexBlock, replaceIndex,
+  VERSION, DEFAULTS, INDEX_INTRO, safePath, validateRel, sha, loadConfig, documents, indexBlock, replaceIndex,
   SKIP_DIRS, slash, git,
 } from './lib.mjs';
 import { decodeText, inspectBlock, mergeBlock } from './managed-text.mjs';
@@ -146,7 +146,7 @@ function prepareProjectConfigAndIndex(plan, flags) {
   if (!config.docsRoots.some(d => config.index.startsWith(`${d}/`))) throw new Error('Index must be inside docsRoots for safe project installation. Existing configuration was not changed.');
   if (config.docsRoots.some(d => d.startsWith('.') && SKIP_DIRS.has(d.split('/')[0]))) throw new Error('docsRoots cannot be a tool/backup directory.');
   const record = guard(plan, config.index);
-  const text = record ? decodeText(record.data, config.index) : '# 项目设计文档\n\n先读系统概要，再读本次涉及的功能与共享模块。\n';
+  const text = record ? decodeText(record.data, config.index) : INDEX_INTRO;
   const { docs } = documents(plan.root, config);
   const layout = checkLayout(config, docs);
   plan.warnings.push(...layout.errors.map(e => `Document layout (installation does not migrate it): ${e}`), ...layout.warnings);

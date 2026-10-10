@@ -6,21 +6,43 @@ plugin injects and the Cordis services/Slots used by its Host and Client halves.
 
 ## Unified Package
 
-The workspace root defines `@yiln-dsh/dsh-plugins@0.1.1` (published to npm as
-public, under the `latest` tag), with seven internal Host modules and one
+The workspace root defines `@yiln-dsh/dsh-plugins@0.1.2` (published to npm as
+public, under the `latest` tag), with eight internal Host modules and one
 composed Client entry. Its current peer
 window is `>=0.2.0-rc.2 <0.2.0-rc.3`; the older standalone package windows below
-are historical, not a certification of the new suite. The root contract,
-configuration migration and existing feature tests pass (271 tests). A packed
-installation in a fresh DSH `0.2.0-rc.2` container passed all seven editor browser
-regressions, single-package inventory, Mentor settings persistence, all three
-settings tabs, metrics/PWA/Git asset checks and real Git reads. A separate legacy
-profile rehearsal also passed six-package removal and structured reference
-migration. Production then migrated to the root suite with full DSH_HOME backup;
-only the Web Daemon and Mentor module names changed in the user patch. Other
-configuration values, Auth secret and Passkey records were retained. The original
-3080 GUI shows the one suite plus the existing third-party packages. See
-[the unified-suite verification](docs/verifications/unified-suite.md).
+are historical, not a certification of the new suite. The 0.1.1 baseline root
+contract and migration suite passed 271 tests; its packed-install evidence is
+retained below. The current 0.1.2 suite passed 364 tests; the added Work Journal
+and Mentor serial-queue scope is recorded below.
+
+### 0.1.2 — Work Journal and serial Mentor consultations (2026-10-10)
+
+- Adds the `dsh-work-journal` Host row and one Client contribution. It reads the
+  existing `sessionPersistence` service and adds no package dependency or peer.
+  The index is derived, profile/offset-scoped data under `$DSH_HOME`; all three
+  consumers (model tool, `/journal` command and right-sidebar panel) share one
+  runtime. Partial scans are labelled rather than presented as complete reports.
+- Mentor consultations for each primary Session now queue FIFO. Live work holds
+  the queue only until success, failure, cancellation or timeout; historical
+  unresolved/undelivered journal outcomes do not permanently block later calls.
+  Reset uses the same queue as a barrier. Replaying the same host call only
+  recovers an existing complete reply and never silently re-dispatches an
+  indeterminate request.
+- Compatibility assumptions, privacy boundaries, persistence revision semantics,
+  fork-inherited event cuts and failed-delivery behavior are documented in
+  [Work Journal](docs/modules/work-journal.md) and [Mentor](docs/modules/mentor.md).
+- Verification: root `npm test` passed 364/364; `npm run build` and
+  `npm run check` passed. The Mentor isolated deployment evidence and limitations
+  are recorded in [its verification report](docs/verifications/mentor-serial-20261009.md).
+  A packed `0.1.2` artifact was installed in a separate `DSH_HOME` profile;
+  `dsh plugin add` exited successfully and `--dump-config` contained the Work Journal
+  row and package address. The installer warned that the required peer packages
+  were not present in that profile's pnpm project. This verifies tarball
+  installation and Cordis composition, not Host peer resolution or a full Web
+  runtime boot. The live profile was not changed.
+- The repository's doc-driven-development skill source was also improved and
+  self-checked (612/612); it remains Git source material and is intentionally not
+  included in the plugin npm tarball.
 
 ### 0.1.1 — Agent Teams under delegate-writes
 

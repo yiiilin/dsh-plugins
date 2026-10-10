@@ -199,7 +199,7 @@ node .agents/skills/doc-driven-development/scripts/check-doc-set.mjs . --base or
 
 ## 文档布局：安装不是目录迁移
 
-新配置默认 `layout: domain`，功能与模块分别位于文档根的 `domains/<domain>/features/`、`domains/<domain>/modules/`。`<domain>` 是实际领域目录，领域概览只在需要时置于其中的 README/architecture；安装不会创建未经分析的领域或空规格。
+新配置默认一个文档根 `docs` 与 `layout: domain`，独立功能/模块分别位于 `domains/<domain>/features/`、`domains/<domain>/modules/`。新建索引提供薄系统概览入口；领域范围、概念和模块关系按需写在领域 README，复杂内容才独立 architecture。配置 index 不作为受管契约。安装不创建未经分析的领域或空规格，已有人工导航保持原文；详见 [LAYOUT.md](LAYOUT.md)。
 
 `--layout domain|preserve` 仅用于创建新配置。旧配置不覆盖，未含 layout 时按 preserve 读取；首次接入已有受管功能/模块文档时也默认 preserve 并提示。原始正文、目录、历史引用不会因升级而移动。迁移的路径映射、批准和引用核对要求见 [LAYOUT.md](LAYOUT.md)。
 

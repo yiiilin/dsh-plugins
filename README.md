@@ -1,10 +1,10 @@
 # @yiln-dsh/dsh-plugins
 
-One DSH Web plugin package containing seven internal feature modules. This
+One DSH Web plugin package containing eight internal feature modules. This
 workspace is the project root; dependencies, versioning, build, tests and
 publication are managed here, not in individual feature directories.
 
-Current version: `0.1.1` (published to npm as public). Verified target:
+Current version: `0.1.2` (published to npm as public). Verified target:
 DSH `0.2.0-rc.2`.
 
 ## Features
@@ -14,10 +14,11 @@ DSH `0.2.0-rc.2`.
 | Auth Webserver | `webserver-auth` | Authenticated LAN gateway, TOTP/Passkeys, PWA, mobile layout and configuration editor. |
 | Delete Session | `dsh-delete-session` | Confirmed single/batch deletion with subagent cascade and guarded persistence paths. |
 | Git Graph | `dsh-git-graph` | Right-sidebar Git history, working-tree changes and file diffs. |
-| Mentor | `dsh-mentor` | Isolated tool-less consultations, durable replay and global settings. |
+| Mentor | `dsh-mentor` | Isolated tool-less consultations, per-session serial queue, durable replay and global settings. |
 | Session List Cache | `session-list-cache` | Coalesces and caches concurrent session enumeration. |
 | Web Daemon | `web-daemon` | Systemd management, server metrics and interrupted-session recovery. |
 | Session Mode | `session-mode` | Per-session `normal` / `delegate-writes` permissions: the restricted main agent gets a pruned tool catalog plus an execution guard, with separate system prompts. |
+| Work Journal | `dsh-work-journal` | Daily/weekly/monthly reports of what this harness was used for, projected from the durable session store: a `work_journal` tool, a `/journal` command, and a right-sidebar panel. |
 
 A single installed bundle owns these modules. Their separate Cordis rows retain
 independent Config schemas and the existing settings namespaces. Auth sessions,
@@ -29,7 +30,7 @@ keep their original names and locations.
 Install the published package:
 
 ```bash
-dsh plugin --profile web add @yiln-dsh/dsh-plugins@0.1.1
+dsh plugin --profile web add @yiln-dsh/dsh-plugins@0.1.2
 ```
 
 Or install the current workspace build:
@@ -93,6 +94,26 @@ dictionary. The two modes have independent `normalPrompt` and
 permissions and prompts use the mode captured at creation.
 See [Session Mode](<docs/modules/session-mode.md>) for configuration and boundaries.
 
+## Work Journal
+
+Ask the harness what you did, without preparing anything in advance. The journal
+reads the same session logs the conversations are replayed from, so it covers
+history from before it was installed and cannot disagree with what happened.
+
+- In a conversation: ask "我昨天做了什么" / "总结一下这周" and the agent calls
+  `work_journal`.
+- Without the model: `/journal week`, `/journal 2026-09-13`, `/journal status`,
+  `/journal rebuild`.
+- In the GUI: the "工作日志" tab in the right Sidebar, with a range switch, a
+  project filter, and a copy-Markdown action.
+
+The first query after a restart builds the whole index; later passes read only
+what changed. A report that could not be built from the whole store says so
+instead of quietly under-counting. Reports count your own prompts, tool calls, files
+written, commands run, per-day active windows, and per-project totals. See
+[Work Journal](<docs/modules/work-journal.md>) for the projection rules, the
+incremental index, and configuration.
+
 ## Development
 
 ```bash
@@ -110,7 +131,7 @@ production port. Do not point mutating test journeys at production.
 ## Layout
 
 - `package.json`: the only plugin package manifest and version.
-- `cordis.patch.yml`: root discovery anchor and seven feature rows.
+- `cordis.patch.yml`: root discovery anchor and eight feature rows.
 - `index.js`: no-op Host discovery anchor.
 - `src/<feature>/`: internal Host/Client implementations and feature tests.
 - `src/features.js`: canonical identities for composition and migration checks.
@@ -119,6 +140,14 @@ production port. Do not point mutating test journeys at production.
 - `test/`: root-package and migration contracts.
 - `docs/`: feature notes, compatibility research and verification evidence.
 - `skills/`: repository skill material, not a second plugin package.
+
+The [doc-driven-development source](skills/doc-driven-development/SKILL.md) keeps
+human-readable domain/module contracts in a small, uniform documentation layout.
+Its [module example](skills/doc-driven-development/examples/module-boundaries.md)
+shows public entry points, state ownership and scoped document maintenance.
+Run `node skills/doc-driven-development/scripts/check.mjs` for the skill's
+isolated package regressions; these materials are not installed or published
+by the plugin build, and existing project documents are not migrated automatically.
 
 ## Release
 

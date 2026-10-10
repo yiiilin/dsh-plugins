@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import vm from 'node:vm'
 
 const ROOT = new URL('../', import.meta.url)
-const FEATURES = ['auth-webserver', 'delete-session', 'git-graph', 'mentor', 'session-list-cache', 'web-daemon', 'session-mode']
+const FEATURES = ['auth-webserver', 'delete-session', 'git-graph', 'mentor', 'session-list-cache', 'web-daemon', 'session-mode', 'work-journal']
 const read = (path) => readFile(new URL(path, ROOT), 'utf8')
 
 test('workspace root is the only installable suite package', async () => {
@@ -22,7 +22,7 @@ test('workspace root is the only installable suite package', async () => {
   assert.ok(Object.keys(pkg.dependencies).every((name) => !name.startsWith('@yiln-dsh/dsh-plugin-')))
 })
 
-test('single browser entry registers all six client modules under child lifetimes', async () => {
+test('single browser entry registers every client module under child lifetimes', async () => {
   const styles = []
   const document = {
     getElementById: () => null,
@@ -45,8 +45,8 @@ test('single browser entry registers all six client modules under child lifetime
   const modules = [], disposers = []
   assert.ok(exports.inject.includes('timer'))
   await exports.apply({ plugin(module) { modules.push(module) }, effect(factory) { disposers.push(factory()) } })
-  assert.equal(modules.length, 6)
-  assert.equal(new Set(modules.map((module) => module.name)).size, 6)
+  assert.equal(modules.length, 7)
+  assert.equal(new Set(modules.map((module) => module.name)).size, 7)
   assert.ok(modules.every((module) => typeof module.apply === 'function' && Array.isArray(module.inject)))
   assert.ok(styles.every((style) => style['data-plugin'] === '@yiln-dsh/dsh-plugins'))
   for (const dispose of disposers.reverse()) dispose()

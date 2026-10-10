@@ -89,3 +89,13 @@
         port: 3080
         systemdUnit: dsh-web.service
         systemdScope: system
+    - id: dsh-work-journal
+      name: '@yiln-dsh/dsh-plugins/work-journal'
+      inject:
+        - tools
+        - commands
+        - sessionPersistence
+      config:
+        indexDir: ''
+        refreshTtlMs: 60000
+        maxSessionsPerScan: 400

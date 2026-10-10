@@ -38,7 +38,9 @@ node "$SKILL_DIR/scripts/context.mjs" . --compare .doc-driven/context/design-sta
 
 ## 3. 少量明确关系，而不是全量手工知识图谱
 
-索引使用 Doc-ID、R-/C-/D-/E- 标识、Owns、Targets、Covers、显式 `Depends on` 和普通链接。Depends on 写当前文档或条目 ID，如 `Depends on: MOD-STORAGE, C-STORAGE-001`，必须来自实际设计依赖并保留正文解释。代码文件通过 Owns 关联；同一共享模块只在一个主要位置定义。
+索引使用 Doc-ID、R-/C-/D-/E- 标识、Owns、Targets、Covers、显式 `Depends on` 和普通链接。Depends on 写当前文档或条目 ID，如 `Depends on: MOD-STORAGE, C-STORAGE-001`，必须来自实际设计依赖并保留正文解释；它不是代码导入允许表，实际 imports 由项目工具或定向审阅检查。Owns 只认领主要实现，不表示所有引用源码或状态写入权限。一个模块只有一个主契约；功能引用它，不重复 Owns。
+
+按 [LAYOUT.md](LAYOUT.md) 从项目概览定位领域及相关契约；配置 index 本身不进入受管文档索引。普通导航的相关性需要阅读者判断，不能用生成索引声称已覆盖全部概念或依赖。
 
 语义影响沿显式依赖、目标、归属和证据关系反向遍历；普通链接只标 reference，不推断强依赖。两种方向都处理定义条目与所属文档的关联，保守按文档整体指纹看待变更。新/旧关系合并用于识别删除后的潜在影响。未知或历史目标给诊断，循环图有限遍历，不伪造全覆盖。
 

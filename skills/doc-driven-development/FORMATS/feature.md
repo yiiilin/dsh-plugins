@@ -2,7 +2,9 @@
 
 落点：`<docsRoot>/domains/<domain>/features/<feature>.md`，归属见 [LAYOUT.md](../LAYOUT.md)。先按 [DESIGN.md](../DESIGN.md) 主动调查、讨论并画草图，再整理结论；不要只填模板后让人批准。
 
-**摘要和三层 H2 骨架保留**；小节按适用性调整。已有正文局部补齐，不整篇覆盖。新功能 proposed，逆向 observed；所有占位、路径、原因都必须替换为实际内容。完整填写形态见 [假设示例](../examples/import-design.md)。
+**摘要和三层 H2 骨架保留**；小节按适用性调整。已有正文局部补齐，不整篇覆盖。新功能 proposed，逆向 observed；所有占位、路径、原因都必须替换为实际内容。模块划分与精简维护见 [模块示例](../examples/module-boundaries.md)，复杂流程见 [导入示例](../examples/import-design.md)。
+
+Owns 只认领本功能独立入口、编排或专属测试；模块已拥有的源码通过链接与 Depends on 引用，无独占源码填 `—`。简单局部模块可在本规格内说明，不强制再建模块文档。
 
 ````markdown
 # 功能名称
@@ -46,7 +48,7 @@ Design-Format: layered-v1
 
 ### 2.1 职责、边界和协作
 模块各做什么、不做什么、依赖谁、状态/数据由谁拥有。
-引用全局架构和共享模块；理由未知时不要编造历史决定。
+引用项目/领域概览与模块主契约，说明本次规则变化应影响哪些模块及理由；理由未知时保留未知。准确签名/字段链接代码或 schema，只定义本功能需要的业务含义。
 
 ### 2.2 端到端处理流程
 <!-- ddd:diagram flow -->

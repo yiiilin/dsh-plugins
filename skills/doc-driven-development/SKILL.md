@@ -17,7 +17,7 @@ metadata:
 |---|---|
 | 项目采用、安装、卸载、生效检查 | [INSTALL.md](INSTALL.md)。从实际完整包运行 doctor；未接入时 install 预览/按授权 apply，不删除原配置重来 |
 | 升级“文档驱动/基于文档开发” | 新包 [UPGRADE.md](UPGRADE.md)，用新 upgrade 预览/apply，保留项目正文；当前会话重读实际新入口 |
-| 新功能或重要设计变化 | [DESIGN.md](DESIGN.md) 与一个适用模板；需要解释时用 [COMMUNICATION.md](COMMUNICATION.md) |
+| 新功能或重要设计变化 | [DESIGN.md](DESIGN.md) 与一个适用模板；拆模块或首次组织文档时读 [模块与维护示例](examples/module-boundaries.md)；需要解释时用 [COMMUNICATION.md](COMMUNICATION.md) |
 | 已授权实现、缺陷修复、集成、验收 | [EXECUTION.md](EXECUTION.md) + [VERIFICATION.md](VERIFICATION.md) |
 | 已有项目渐进/全量接管 | [ADOPTION.md](ADOPTION.md)；全量目标不得降成当前文件，保留实际阅读进度 |
 | 人工改代码后核对 | [REFERENCE.md](REFERENCE.md) 的代码优先规则 + [EXECUTION.md](EXECUTION.md) |
@@ -50,13 +50,13 @@ metadata:
 
 **讨论：**自己查事实，主动找场景、状态、数据与跨模块矛盾。先说明什么时候发生、上下文、预期结果、推荐与代价，再引入术语；用适用 ASCII 图共同推演。按 DESIGN 每轮明确确认、撤回或范围变化在本轮结束前小范围记录并给真实回执；只读/写入失败说明未保存。
 
-**设计：**固定需求说明 → 概要设计 → 详细设计的阅读骨架；状态/数据/流程图各解释实际问题。新文档默认放在 `docs/domains/<domain>/features/` 或领域内 `modules/`；旧布局映射保留，不顺手迁移。使用 [功能模板](FORMATS/feature.md)、[模块模板](FORMATS/module.md) 或 [短提案](FORMATS/change.md)，不每次复制全部规格。普通自审与高风险独立评审按 DESIGN 执行，核实意见，不凑数量、不盲从。
+**设计：**先按职责、业务不变量与状态所有权划分模块，明确公开入口和依赖方向，再整理需求说明 → 概要设计 → 详细设计。统一文档根；薄概览合并进 README，独立规格仍在 `docs/domains/<domain>/features/` 或领域内 `modules/`，按 [LAYOUT.md](LAYOUT.md) 按需创建。功能/模块模板可裁剪深度；旧布局保留。普通自审与高风险独立评审按 DESIGN 执行。
 
 **实施：**原任务要求实现/修复且方案已确认，就持续开发、接线、测试，不再问“是否实现”。恢复既有契约的修复/等价重构不重新审批，也不重画未变设计；需补充的回归、实际入口与风险检查不能省。仅设计/暂停必须遵守；新增重要选择或真实权限/环境阻塞只暂停受影响部分。复杂分工沿 EXECUTION 维护行为切片和最终集成责任。
 
 **验证：**先按需求定义必测场景、真实入口、预期结果、方法与环境。新实施范围使用 runner-v1；读 VERIFICATION，预览后在已有授权下实际执行 verify。当前规格头只需 Verification-Plan 与实际 Verification-Receipt 引用运行事实；用 `verify --report ... --summary` 查看覆盖/限制，不再重复填写测试计数和 E 副本。旧 E 兼容，评审和人工验收仍独立。
 
-**交付：**逐项从要求追到实现和证据，再从每项代码/配置/依赖/测试变化反查授权。按本次范围运行文档/交付检查，不批量重写未涉及旧文档。确认、实现、验证分别陈述；先用领域/模块/行为说明用户能做什么、缺什么，再给证据入口，不让人解码编号和哈希。
+**交付：**逐项从要求追到实现和证据，再从实际 diff 反查授权、模块边界和契约变化。按 [REFERENCE.md](REFERENCE.md) 判断更新范围并处理文码偏差，私有重构不重写未变正文，证据仍核对失效。确认、实现、验证分别陈述；先说明可用行为与限制，再给来源。
 
 ## 不可缩减的边界
 

@@ -1,11 +1,15 @@
 {
   "name": "@yiln-dsh/dsh-plugins",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Unified DSH Web suite: authenticated gateway, session deletion, Git Graph, Mentor, session-list caching, daemon recovery and session modes.",
   "type": "module",
   "license": "MIT",
-  "publishConfig": { "access": "public" },
-  "engines": { "node": ">=22" },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "main": "index.js",
   "exports": {
     ".": "./index.js",
@@ -17,13 +21,20 @@
     "./session-list-cache": "./src/session-list-cache/index.js",
     "./web-daemon": "./src/web-daemon/index.js",
     "./session-mode": "./src/session-mode/index.js",
+    "./work-journal": "./src/work-journal/index.js",
     "./package.json": "./package.json"
   },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
-      "external": ["react", "react-dom", "@deepseek-ai/dsh-client-ui-primitives"],
+      "external": [
+        "react",
+        "react-dom",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ],
       "inject": [
         "@deepseek-ai/dsh-api-remotes",
         "@deepseek-ai/dsh-client-connection",
@@ -50,8 +61,16 @@
     "prepack": "npm run build && npm run check"
   },
   "files": [
-    "index.js", "client.js", "cordis.patch.yml", "README.md", "docs/modules/", "src/", "scripts/migrate-profile.mjs",
-    "!src/**/test/", "!src/**/README.md", "!src/**/TESTING.md"
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "docs/modules/",
+    "src/",
+    "scripts/migrate-profile.mjs",
+    "!src/**/test/",
+    "!src/**/README.md",
+    "!src/**/TESTING.md"
   ],
   "dependencies": {
     "@simplewebauthn/server": "13.3.3",
