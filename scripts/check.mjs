@@ -20,6 +20,15 @@ for (const feature of FEATURES) {
   const module = await import(new URL(target, root))
   assert.equal(typeof module.apply, 'function')
   assert.ok(Array.isArray(module.inject))
+  // A row that injects fewer services than its module reads leaves
+  // `ctx.get(...)` undefined at runtime, which silently drops registrations —
+  // this is how the work-journal web route went missing. A row may inject more
+  // (it can widen the module's own list), so only missing entries are errors.
+  if (Array.isArray(row.inject)) {
+    const declared = new Set(row.inject)
+    const missing = module.inject.filter((service) => !declared.has(service))
+    assert.deepEqual(missing, [], `Loader row "${feature.id}" must inject every service of its module`)
+  }
   if (['auth-webserver', 'mentor', 'web-daemon'].includes(feature.key)) assert.ok(module.Config, `Missing Config: ${feature.key}`)
 }
 const checkDirectory = async (path) => {

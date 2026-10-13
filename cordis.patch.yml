@@ -95,7 +95,18 @@
         - tools
         - commands
         - sessionPersistence
+        - connection
       config:
         indexDir: ''
         refreshTtlMs: 60000
         maxSessionsPerScan: 400
+        # Reports are generated on a calendar schedule: yesterday's day report at
+        # 00:00 daily, the completed Sat-Fri week on Saturdays, the previous
+        # calendar month on the 1st. Off by default because it spends model
+        # tokens unattended; turn it on per deployment.
+        schedule: false
+        # Periods one kind may backfill at startup, bounding a long downtime.
+        maxCatchUp: 31
+        # Build the local embedding index so the panel can search semantically.
+        # The first write on a machine with no cached model downloads ~24 MB.
+        semanticSearch: true

@@ -50,6 +50,9 @@ async function mountTool(directory) {
   }
   await apply({ ...services, logger: { warn() {}, error() {} }, get: (name) => services[name], effect: (factory) => factory() }, {
     indexDir: directory,
+    // Pinned: an omitted reportsDir falls back to DSH_HOME, which is the live
+    // profile during a developer's own `npm test`.
+    reportsDir: join(directory, 'reports'),
     tzOffsetMinutes: TZ,
   })
   assert.equal(registered.length, 1)
