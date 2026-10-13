@@ -4,8 +4,18 @@ One DSH Web plugin package containing eight internal feature modules. This
 workspace is the project root; dependencies, versioning, build, tests and
 publication are managed here, not in individual feature directories.
 
-Current version: `0.1.2` (published to npm as public). Verified target:
-DSH `0.2.0-rc.2`.
+Current version: `0.1.3`. Verified targets: DSH `0.2.0-rc.2` (reference; 482/482
+tests) and `0.2.1-alpha.2` (all eight modules verified, boots live, and driven in
+a real browser against the running GUI). The DSH peer window is
+`>=0.2.0-rc.2 <0.2.1`, so the installer admits the `0.2.1-alpha` line and no
+version exemption is needed. See [compatibility notes](COMPATIBILITY.md) for the
+exact scope.
+
+`0.1.3` also fixes a safety defect: Web Daemon re-derives its systemd unit on
+every boot, and before this release a boot from a different `DSH_HOME` (a
+rehearsal or second profile) could overwrite the host unit to point at that other
+installation. The write is now refused when the existing unit belongs to a
+different `DSH_HOME`; the refusal is non-fatal and logged.
 
 ## Features
 
@@ -18,7 +28,7 @@ DSH `0.2.0-rc.2`.
 | Session List Cache | `session-list-cache` | Coalesces and caches concurrent session enumeration. |
 | Web Daemon | `web-daemon` | Systemd management, server metrics and interrupted-session recovery. |
 | Session Mode | `session-mode` | Per-session `normal` / `delegate-writes` permissions: the restricted main agent gets a pruned tool catalog plus an execution guard, with separate system prompts. |
-| Work Journal | `dsh-work-journal` | Daily/weekly/monthly reports of what this harness was used for, projected from the durable session store: a `work_journal` tool, a `/journal` command, and a right-sidebar panel. |
+| Work Journal | `dsh-work-journal` | Daily/weekly/monthly reports of what this harness was used for, read from the durable session store: a `work_journal` tool, a `/journal` command, and a left-rail 工作日志 panel over scheduled, searchable reports. |
 
 A single installed bundle owns these modules. Their separate Cordis rows retain
 independent Config schemas and the existing settings namespaces. Auth sessions,
@@ -27,11 +37,18 @@ keep their original names and locations.
 
 ## Install
 
-Install the published package:
+Install the published package (this command applies once `0.1.3` is published;
+`0.1.2` is the current npm `latest`):
 
 ```bash
-dsh plugin --profile web add @yiln-dsh/dsh-plugins@0.1.2
+dsh plugin --profile web add @yiln-dsh/dsh-plugins@0.1.3
 ```
+
+The declared DSH peer window is `>=0.2.0-rc.2 <0.2.1`. Within it the installer's
+peer gate admits both the `0.2.0` line and the `0.2.1` prerelease line, so no
+`dsh plugin allow-version` exemption is required for `0.2.1-alpha.2`. A future
+`0.2.1` final release or a later line is deliberately outside the window and
+needs a fresh compatibility pass.
 
 Or install the current workspace build:
 
@@ -104,8 +121,16 @@ history from before it was installed and cannot disagree with what happened.
   `work_journal`.
 - Without the model: `/journal week`, `/journal 2026-09-13`, `/journal status`,
   `/journal rebuild`.
-- In the GUI: the "工作日志" tab in the right Sidebar, with a range switch, a
-  project filter, and a copy-Markdown action.
+- In the GUI: the "工作日志" button on the left rail, beside 插件 and 自动化任务
+  and below 新建会话, listing generated reports newest-first with the time span
+  each one covers, plus a search box over them.
+
+With `schedule: true` the module also writes reports on its own: yesterday's
+report every midnight, the completed Saturday–Friday week each Saturday, and the
+previous calendar month on the 1st. Each one is a Markdown file plus a metadata
+record under `<DSH_HOME>/work-journal/`, kept permanently and indexed in SQLite
+for keyword and semantic search. Scheduled generation spends model tokens
+unattended, so it is off by default.
 
 The first query after a restart builds the whole index; later passes read only
 what changed. A report that could not be built from the whole store says so

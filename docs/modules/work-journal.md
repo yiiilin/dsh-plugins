@@ -5,7 +5,8 @@ this module has no separate npm package or version. Loader row: `dsh-work-journa
 
 Records what this deployment was actually used for and reports it over a
 calendar range. Three consumers share one runtime: the `work_journal` model
-tool, the `/journal` command, and a right-sidebar Web panel.
+tool, the `/journal` command, and a Web panel on the left rail (also exposed
+as a right-Sidebar tab).
 
 ## Why the session store, not new instrumentation
 
@@ -159,13 +160,98 @@ deliberately *not* recorded, so a later pass retries it instead of freezing the
 failure forever. A store that cannot be listed at all does not advance
 `lastScanAt`, so it cannot masquerade as a store that was read and found empty.
 
+## Generated reports
+
+The module has two surfaces that share one directory:
+
+- **Live query** — the `work_journal` tool and `/journal` command project the
+  session store on demand, exactly as described above. This is the original
+  contract and needs nothing but `sessionPersistence`.
+- **Generated reports** — with `schedule: true`, an agent reads the session logs
+  for a closed period and writes a Markdown report that the panel lists and
+  searches. This spends model tokens unattended, so it is off by default.
+
+### Schedule
+
+| Report | Fires | Covers |
+| --- | --- | --- |
+| `day` | every day 00:00 local | the previous day |
+| `week` | every Saturday 00:00 local | the completed Saturday–Friday week |
+| `month` | the 1st, 00:00 local | the previous calendar month |
+
+A slot always names the period it owns, never "now", so a late timer, a suspended
+host, and an in-process catch-up all resolve the same range. Each kind's watermark
+is a *contiguity* record: a failed run freezes it, so the next boot re-runs
+everything after the hole rather than orphaning it. `maxCatchUp` bounds a long
+downtime, and always reserves the newest period of every kind first — a month
+offline must still produce a monthly report rather than spending the whole budget
+on daily ones.
+
+### Self-contamination
+
+The report agent is itself a DSH session in the store it scans. Left alone, each
+day's report would include yesterday's report as material. Two guards:
+
+1. `agents.create({ meta: { agentPreset: 'yiln-work-journal' } })` stamps the
+   session, and the scan skips any session carrying that preset.
+2. The handle is disposed after each run, which removes the session outright.
+
+`agentPreset` is the durable half: it survives a crash between generation and
+disposal, which the removal does not.
+
+### Storage
+
+`<DSH_HOME>/work-journal/<profile-key>/reports/` holds, per period, a `.md` body
+and a `.json` metadata record carrying `startTime`/`endTime` (the span the panel
+shows), `status`, the model route, and `sessionCount`. An `index.sqlite` beside
+them mirrors every report into three tables: the rows themselves, an FTS5 trigram
+index for keyword search, and a `vec0` table of 512-dimension embeddings for
+semantic search.
+
+Keyword search splits by term length: FTS5's trigram tokenizer cannot match a
+term shorter than three characters, so two-character Chinese words such as 修复
+are answered by a `LIKE` scan instead. Without that split they would silently
+return nothing. Hybrid mode fuses the two rankings with RRF, because a bm25 score
+and a cosine similarity are not comparable numbers.
+
+Reports are kept permanently.
+
+### Search degradation
+
+Semantic search needs both the `sqlite-vec` extension and a local embedding
+model, and neither is required:
+
+- Without `sqlite-vec`, the store opens, keyword search works, and the vector
+  table is skipped.
+- Without `@huggingface/transformers` or a cached model, reports are still
+  written and keyword search still works.
+- A client asking for `semantic` on a deployment that cannot serve it is answered
+  with `keyword` hits and a `mode` field naming what actually ran, rather than an
+  error.
+
+The model is `onnx-community/bge-small-zh-v1.5-ONNX` (q8, 512 dims, ~24 MB). It
+was chosen over `Qwen3-Embedding-0.6B` on measured grounds: on this deployment's
+own Chinese session logs the larger model scored 86.7% vs 79.2% self-retrieval
+Top-1, but at 8x the latency, 25x the download, and a first-write cost of 9.7 s
+against 0.1 s. At a few thousand reports, hybrid keyword+vector search closes the
+accuracy gap, and the Chinese technical vocabulary in these logs (tool names,
+hostnames, version strings) favours the keyword half anyway.
+
+### Memory
+
+Embedding runs in batches and concurrent calls are serialized: ONNX activation
+memory scales with batch size, and a single 120-text batch has already OOM-killed
+a host. Do not raise `batchSize` casually.
+
 ## Boundaries
 
 - Host-side. The panel is the only Client contribution.
 - Reads only. The module never writes to the session store.
-- Hard service dependency: `sessionPersistence`. `sessionQuery`, `sessions`, and
-  `connection` are read optionally — each improves the result (mid-turn
-  visibility, the panel channel) without being required.
+- Hard service dependencies: `sessionPersistence` and `connection`.
+  `sessionPersistence` carries the log; `connection` is what registers the panel's
+  `/api/work-journal` route, so the Loader row declares it too. `sessionQuery` and
+  `sessions` are read optionally — each improves the result (mid-turn visibility)
+  without being required.
 - The tool is available to every session on this deployment, including subagent
   children; the journal is deployment-wide history, not per-session state.
 - `work_journal` clips its Markdown to 24,000 characters; use `project` or a
@@ -191,6 +277,10 @@ npm test
 | `test/collector.test.js` | Revision reuse, deletion, per-pass budget, failure isolation and retry. |
 | `test/store.test.js` | Profile scoping, first run, corrupt-document recovery, atomic owner-only writes. |
 | `test/runtime.test.js` | Cold-versus-warm query policy, cold build to completion, partial-answer labelling, live-session reads, project filtering, rebuild, scan joining. |
-| `test/plugin.test.js` | Tool, command, and route registration; tool output envelope; command and panel responses. |
+| `test/plugin.test.js` | Tool, command, and route registration; tool output envelope; command and panel responses; the shared `/api/work-journal` envelope and its guards. |
 | `test/schema.test.js` | The definition through the real `dsh-tools` boundary: compiled JSON Schema, argument rejection, and canonical-value validation. |
-| `test/client.test.js` | Tab and guide registration, locale parity, RPC error mapping, panel filtering, stylesheet lifetime. |
+| `test/client.test.js` | Left-rail button and `main` page registration, load cancellation (the blank-page regression), locale parity, RPC error mapping, report-list ordering and spans, search, detail loading. |
+| `test/report-store.js` | Frozen schema, FTS5 trigram plus short-term LIKE fallback, `vec0` KNN with a similarity floor, RRF fusion, atomic writes, degradation without `sqlite-vec`. |
+| `test/scheduler.test.js` | Calendar alignment across month/year/leap boundaries, catch-up enumeration and its per-kind quota, watermark freezing on failure, timer cleanup. |
+| `test/reporter.test.js` | The self-contamination guard, range filtering, prompt material bounds, failed-report recording, timeout on a wedged turn. |
+| `test/embedding.test.js` | Batching, normalization, abort, serialized concurrency. Model-dependent cases skip without a cache. |
