@@ -9,9 +9,10 @@ plugin injects and the Cordis services/Slots used by its Host and Client halves.
 The workspace root defines `@yiln-dsh/dsh-plugins@0.1.3`, with eight internal Host
 modules and one composed Client entry. Its current peer window is
 `>=0.2.0-rc.2 <0.2.1`; the older standalone package windows below are historical,
-not a certification of the new suite. `0.1.2` remains the latest published
-artifact (npm public, `latest` tag). The 0.1.1 baseline root contract and
-migration suite passed 271 tests; its packed-install evidence is retained below.
+not a certification of the new suite. `0.1.3` is the latest published artifact
+(npm public, `latest` tag, published 2026-10-13). The 0.1.1 baseline root
+contract and migration suite passed 271 tests; its packed-install evidence is
+retained below.
 The 0.1.2 suite passed 364 tests; the current `0.1.3` suite passes 484 (2 skipped
 without a local model cache); the
 added Work Journal and Mentor serial-queue scope is recorded below.

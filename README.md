@@ -37,8 +37,7 @@ keep their original names and locations.
 
 ## Install
 
-Install the published package (this command applies once `0.1.3` is published;
-`0.1.2` is the current npm `latest`):
+Install the published package (`0.1.3` is the current npm `latest`):
 
 ```bash
 dsh plugin --profile web add @yiln-dsh/dsh-plugins@0.1.3
