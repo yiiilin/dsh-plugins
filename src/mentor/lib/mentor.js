@@ -621,9 +621,42 @@ function isExactTextMessage(message, text) {
     && message.content[0].text === text
 }
 
+// DSH 0.2.1 injects its own runtime-context snapshot into every Agent surface and
+// now retains `working-directory:current` even under `suppressRuntimeContext()`.
+// That message is DSH-owned, recorded in the child session, and carries no
+// plugin-external payload, so it is excluded from the Mentor history comparison
+// instead of failing the consultation. Every other user source stays rejected.
+function isRuntimeContextMessage(message) {
+  return message?.role === 'user'
+    && message?.source?.kind === 'runtime-context'
+    && message?.source?.form === 'snapshot'
+}
+
 function readMessageEvent(session, seq) {
   if (typeof session.eventAt === 'function') return session.eventAt(seq)
   return session.snapshotEvents?.().find((event) => event.seq === seq)
+}
+
+// Recover the child turn's own recorded failure. A guard rejection never reaches
+// the assistant-stream listener or the provider generator, so without this the
+// only surviving description of a deterministic local violation is a generic
+// MENTOR_INCOMPLETE. The recorded error is preferred only when it belongs to this
+// consultation's input.
+function turnFailureFor(events, operation) {
+  const inputIndex = events.findIndex((event) => event.type === 'user/message' && event.data?.id === operation.messageId)
+  if (inputIndex < 0) return undefined
+  for (let index = events.length - 1; index > inputIndex; index -= 1) {
+    const event = events[index]
+    if (event.type !== 'turn/end') continue
+    const reason = event.data?.reason
+    if (reason?.kind !== 'error') return undefined
+    const message = reason.error?.message
+    if (typeof message !== 'string' || message === '') return undefined
+    const error = new Error(message)
+    if (typeof reason.error?.code === 'string' && reason.error.code !== 'UNKNOWN') error.code = reason.error.code
+    return error
+  }
+  return undefined
 }
 
 // ponytail: UTF-8 serialized-byte upper bound substitutes for a provider tokenizer; tighten with a route tokenizer when one is available.
@@ -1101,7 +1134,13 @@ async function runConsultation(ctx, config, runtime, adapters, input, exec, pare
       ) ?? undefined
       if (committed !== undefined) operation.reply = committed
     }
-    if (committed === undefined) throw operation.failure ?? new Error('MENTOR_INCOMPLETE: no committed final reply was produced')
+    if (committed === undefined) {
+      // A guard can reject the request before any assistant-stream frame exists,
+      // so `operation.failure` stays empty. The child session still records the
+      // real reason on its `turn/end`, and reporting that beats a generic
+      // MENTOR_INCOMPLETE that hides a deterministic local violation.
+      throw operation.failure ?? turnFailureFor(agent.session.ownEvents(), operation) ?? new Error('MENTOR_INCOMPLETE: no committed final reply was produced')
+    }
     const turnEnd = agent.session.ownEvents().findLast((event) => event.type === 'turn/end' && event.data?.turn === committed.turn)
     if (turnEnd?.data?.reason?.kind !== 'completed') throw new Error('MENTOR_INCOMPLETE: the correlated Mentor turn did not complete')
     await flushSession(ctx, agent.session)
@@ -1723,13 +1762,24 @@ export function installMentor(ctx, rawConfig, adapters) {
       throw new Error('MENTOR_PROMPT_VIOLATION: leading DSH system message is not the Mentor prompt')
     }
     const recorded = threadState.agent.session.deriveMessages()
-    const historyMessages = requestMessages?.length === recorded.length
-      ? requestMessages
-      : requestMessages?.length === recorded.length + 1 ? requestMessages.slice(1) : undefined
+    // DSH 0.2.1 keeps its own `working-directory:current` snapshot in the Agent
+    // surface even under `suppressRuntimeContext()`, so that recorded DSH message
+    // reaches the outgoing request too. Drop exactly the runtime-context messages
+    // the child session already recorded, then compare the rest positionally.
+    // Anything unrecorded, or recorded under any other source, still fails closed.
+    const recordedContextIds = new Set(recorded.filter((message) => isRuntimeContextMessage(message)).map((message) => message.id))
+    const isRecordedRuntimeContext = (message) => isRuntimeContextMessage(message) && recordedContextIds.has(message?.id)
+    const recordedHistory = recorded.filter((message) => !isRecordedRuntimeContext(message))
+    const requestedHistory = Array.isArray(requestMessages)
+      ? requestMessages.filter((message) => !isRecordedRuntimeContext(message))
+      : undefined
+    const historyMessages = requestedHistory?.length === recordedHistory.length
+      ? requestedHistory
+      : requestedHistory?.length === recordedHistory.length + 1 ? requestedHistory.slice(1) : undefined
     if (historyMessages === undefined) throw new Error('MENTOR_CONTEXT_VIOLATION: request messages differ from the Mentor session history')
-    for (let index = 0; index < recorded.length; index += 1) {
+    for (let index = 0; index < recordedHistory.length; index += 1) {
       const message = historyMessages[index]
-      if (message?.id !== recorded[index]?.id || message.role !== recorded[index]?.role) {
+      if (message?.id !== recordedHistory[index]?.id || message.role !== recordedHistory[index]?.role) {
         throw new Error('MENTOR_CONTEXT_VIOLATION: request includes unrecorded message content')
       }
       if (message.role === 'user' && message.source?.kind !== PLUGIN_ID) {

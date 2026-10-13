@@ -1597,6 +1597,7 @@ function writeSystemdUnit(cfg) {
     previous = undefined;
   }
   if (previous === rendered) return { target, changed: false };
+  assertUnitHomeOwner(target, previous);
   mkdirSync(resolve(target, ".."), { recursive: true });
   writeFileSync(target, rendered, "utf8");
   runSystemctl(cfg, ["daemon-reload"]);
@@ -1608,6 +1609,58 @@ function execStartOf(source) {
   if (typeof source !== "string") return undefined;
   const line = source.split("\n").find((entry) => entry.startsWith("ExecStart="));
   return line === undefined ? undefined : line.slice("ExecStart=".length);
+}
+
+/**
+ * The `DSH_HOME=` value one rendered unit records, when it records one.
+ *
+ * A unit written before that line existed has no recorded owner, and neither
+ * does an unreadable or absent file; those are free to adopt.
+ * @param source - the unit file's current content, or undefined.
+ * @returns the recorded home, or undefined when the unit names no owner.
+ */
+function recordedDshHome(source) {
+  if (typeof source !== "string") return undefined;
+  const line = source.split("\n").find((entry) => entry.startsWith("Environment=DSH_HOME="));
+  if (line === undefined) return undefined;
+  const raw = line.slice("Environment=DSH_HOME=".length).trim();
+  const value = raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')
+    ? raw.slice(1, -1).replace(/\\"/gu, '"').replace(/\\\\/gu, "\\")
+    : raw;
+  if (value === "") return undefined;
+  try {
+    return resolve(value);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Refuse to adopt a unit that another DSH home already owns.
+ *
+ * `apply()` re-derives the unit on every boot, and that repair is what recovers
+ * from a node upgrade moving the interpreter path. The same write is also a
+ * cross-installation hazard: the unit path comes from configuration
+ * (`systemdUnit` plus `systemdScope: system` names a real host unit), so a boot
+ * from a throwaway `DSH_HOME` — a rehearsal, a test profile, a second install —
+ * would otherwise rewrite the production supervisor to run *its* interpreter,
+ * *its* `PATH` and *its* home. Restarting the service then silently replaces the
+ * real daemon. The recorded `DSH_HOME=` is the ownership mark that separates the
+ * two cases: same home repairs, different home is refused.
+ * @param target - the unit path about to be written.
+ * @param previous - the unit file's current content, when it exists.
+ */
+function assertUnitHomeOwner(target, previous) {
+  const owner = recordedDshHome(previous);
+  if (owner === undefined) return;
+  const home = dshHome();
+  if (owner === home) return;
+  throw new Error(
+    `web-daemon: refusing to overwrite ${target}: it is owned by the DSH home ${owner}, `
+    + `not the current ${home}. A boot from another DSH_HOME must not rewrite this `
+    + "installation's unit; give the other profile its own systemdUnit, or set "
+    + "systemdScope: user.",
+  );
 }
 
 function createWebDaemonManager(ctx, settings, config, readConfig = () => config) {

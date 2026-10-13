@@ -29,7 +29,7 @@ test('unwraps live-editable config wrappers before the runtime reads them', () =
   })
 })
 
-function createHarness({ containProviderFailure = false, globalConcurrency = 2, requestTimeoutMs = 1000, replyText = 'Use the smallest discriminating test.', settingsReadOnly = false, volatileConfig = false, persistenceStyle = 'modern', toolSchemas = false, extraSystemBlock = false, mutateRenderedResults = false, waitForAbort = false, noAdapterOnce = false, emitAssistantStream = true, sharedFetch = false, strictMessageSource = false, sessionSystemMessage = false, profileProvider = 'mentor-route', profileModel = 'mentor-model' } = {}) {
+function createHarness({ containProviderFailure = false, globalConcurrency = 2, requestTimeoutMs = 1000, replyText = 'Use the smallest discriminating test.', settingsReadOnly = false, volatileConfig = false, persistenceStyle = 'modern', toolSchemas = false, extraSystemBlock = false, mutateRenderedResults = false, waitForAbort = false, noAdapterOnce = false, emitAssistantStream = true, sharedFetch = false, strictMessageSource = false, sessionSystemMessage = false, runtimeContextSnapshot = false, foreignUserMessage = false, profileProvider = 'mentor-route', profileModel = 'mentor-model' } = {}) {
   const listeners = new Map()
   const journalRows = new Map()
   const childRows = new Map()
@@ -221,6 +221,22 @@ function createHarness({ containProviderFailure = false, globalConcurrency = 2, 
           }
           if (sessionSystemMessage) session.append('system/message', { turn, step: 1, message: systemMessage })
           for (const input of decision.messages) session.append('user/message', input)
+          if (runtimeContextSnapshot) {
+            session.append('user/message', {
+              id: `runtime-context-${turn}`,
+              role: 'user',
+              content: [{ type: 'text', text: 'Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\nCurrent working directory: "/".' }],
+              source: { kind: 'runtime-context', form: 'snapshot', sections: [{ name: 'working-directory:current', text: 'Current working directory: "/".' }] },
+            })
+          }
+          if (foreignUserMessage) {
+            session.append('user/message', {
+              id: `foreign-${turn}`,
+              role: 'user',
+              content: [{ type: 'text', text: 'workspace instructions that were never submitted to Mentor' }],
+              source: { kind: 'plugin', plugin: 'workspace-context' },
+            })
+          }
           for (const listener of scoped.get('agent/inbox/claimed') ?? []) listener({ agent: this, message, turn })
           const options = {
             provider: agentOptions.provider,
@@ -236,14 +252,13 @@ function createHarness({ containProviderFailure = false, globalConcurrency = 2, 
           }
           requests.push(options)
           currentAgent = this
+          const attemptId = `attempt-${turn}`
+          // Real AgentLoop obtains the stream first (a `llm/stream` listener can
+          // throw synchronously here, before any frame exists) and only then
+          // starts the attempt and iterates it.
+          let stream
           try {
-            const attemptId = `attempt-${turn}`
-            if (emitAssistantStream) {
-              for (const listener of scoped.get('agent/assistant-stream') ?? []) {
-                listener({ agent: this, frame: { type: 'start', attemptId, turn, step: 1 } })
-              }
-            }
-            const stream = waterfall('llm/stream', [options], () => (async function* () {
+            stream = waterfall('llm/stream', [options], () => (async function* () {
               providerStartedResolve()
               if (routeFailure) {
                 routeFailure = false
@@ -261,6 +276,21 @@ function createHarness({ containProviderFailure = false, globalConcurrency = 2, 
               yield { type: 'text-delta', index: 0, text: replyText }
               yield { type: 'finish', reason: { kind: 'stop' } }
             })())
+          } catch (error) {
+            // A pre-start rejection produces no assistant-stream frame. AgentLoop
+            // either propagates it or records it and quiesces.
+            if (!containProviderFailure) throw error
+            session.append('turn/end', { turn, reason: { kind: 'error', error: { message: error.message, code: error.code } } })
+            this.status = 'idle'
+            currentAgent = undefined
+            return
+          }
+          try {
+            if (emitAssistantStream) {
+              for (const listener of scoped.get('agent/assistant-stream') ?? []) {
+                listener({ agent: this, frame: { type: 'start', attemptId, turn, step: 1 } })
+              }
+            }
             for await (const _chunk of stream) {}
             const assistantEvent = session.append('assistant/message', {
               turn,
@@ -1354,4 +1384,39 @@ test('an idle child after a provider failure exposes the original error, not a g
   await assert.rejects(harness.invoke({ message: 'Next failure.' }, 'provider-failure-two'), error => error.code === 'SERVER' && error.message.includes('(502)'))
   assert.equal(harness.providerCalls(), 2)
   assert.equal(harness.handles.length, 0)
+})
+
+test('dispatches when DSH records its own runtime-context snapshot in the child surface', async () => {
+  // DSH 0.2.1 retains `working-directory:current` in the Agent surface even
+  // though Mentor calls suppressRuntimeContext(), so the request carries one
+  // extra user message that is recorded in the child session. It is DSH-owned
+  // data, not an unsubmitted injection, and must not fail the consultation.
+  const harness = createHarness({ runtimeContextSnapshot: true })
+  const result = await harness.invoke({ message: 'Answer with the snapshot present.' }, 'runtime-context-call')
+  assert.equal(result.kind, 'reply')
+  assert.equal(harness.providerCalls(), 1)
+  const request = harness.requests[0]
+  assert.equal(request.messages.some((message) => message.source?.kind === 'runtime-context'), true)
+  assert.equal(request.messages.some((message) => message.source?.kind === 'dsh-plugin-mentor'), true)
+})
+
+test('still rejects a recorded user message whose source is not Mentor', async () => {
+  const harness = createHarness({ foreignUserMessage: true })
+  await assert.rejects(
+    harness.invoke({ message: 'Reject unsubmitted workspace context.' }, 'foreign-source-call'),
+    /MENTOR_CONTEXT_VIOLATION: only explicit Mentor inputs may reach the model/u,
+  )
+  assert.equal(harness.providerCalls(), 0)
+})
+
+test('a guard violation contained by the child turn still reports its real reason', async () => {
+  // When AgentLoop contains the pre-dispatch failure, no assistant-stream frame
+  // is ever emitted, so the caller must not be handed a generic
+  // MENTOR_INCOMPLETE that hides a deterministic local violation.
+  const harness = createHarness({ foreignUserMessage: true, containProviderFailure: true })
+  await assert.rejects(
+    harness.invoke({ message: 'Report the real reason.' }, 'contained-guard-call'),
+    /MENTOR_CONTEXT_VIOLATION: only explicit Mentor inputs may reach the model/u,
+  )
+  assert.equal(harness.providerCalls(), 0)
 })

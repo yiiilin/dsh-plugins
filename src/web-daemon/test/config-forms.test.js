@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -25,7 +25,7 @@ function escapeRegExp(value) {
 /**
  * Load the plugin against a temporary DSH home and a `systemctl` shim, then hand
  * the Settings card's JSON API and the generated unit to one test body.
- * @param run - receives `{ call, config, unitPath, readUnit }`.
+ * @param run - receives `{ call, config, ctx, unitPath, readUnit, warnings }`.
  */
 async function withHarness(run) {
   const home = mkdtempSync(join(tmpdir(), "dsh-web-daemon-config-"));
@@ -79,9 +79,10 @@ async function withHarness(run) {
       return () => routes.delete(path);
     },
   };
+  const warnings = [];
   const ctx = {
     fiber: {},
-    logger: { info() {}, warn() {}, error() {} },
+    logger: { info() {}, warn(...args) { warnings.push(args.map(String).join(" ")); }, error() {} },
     get(name) {
       if (name === "settings") return settings;
       if (name === "webServer") return webServer;
@@ -129,7 +130,7 @@ async function withHarness(run) {
 
   try {
     await apply(ctx, config);
-    await run({ call, save, config, unitPath, readUnit });
+    await run({ call, save, config, ctx, unitPath, readUnit, warnings });
   } finally {
     for (const dispose of disposers.reverse()) await dispose();
     for (const [key, previous] of Object.entries(previousEnv)) {
@@ -187,5 +188,28 @@ test("a multi-line start command is refused before it reaches the unit", async (
     assert.equal(response.status, 400);
     assert.match(response.payload.error, /one line/u);
     assert.equal(readUnit(), before);
+  });
+});
+
+test("a boot from another DSH_HOME does not adopt this installation's unit", async () => {
+  await withHarness(async ({ unitPath, readUnit, warnings, ctx, config }) => {
+    // A unit recording a different home belongs to that other installation.
+    // The boot-time repair loop must not rewrite it to point at this home:
+    // that would make a later `systemctl restart` start the wrong daemon.
+    const foreign = readUnit().replace(
+      /^Environment=DSH_HOME=.*$/mu,
+      "Environment=DSH_HOME=/somewhere/else/.dsh",
+    );
+    assert.match(foreign, /^Environment=DSH_HOME=\/somewhere\/else\/\.dsh$/mu);
+    writeFileSync(unitPath, foreign, "utf8");
+
+    // A second boot with the foreign unit already in place.
+    await apply(ctx, config);
+
+    assert.equal(readUnit(), foreign, "the foreign unit is left byte-for-byte alone");
+    assert.ok(
+      warnings.some((line) => /owned by the DSH home \/somewhere\/else\/\.dsh/u.test(line)),
+      `expected a refusal warning, got ${JSON.stringify(warnings)}`,
+    );
   });
 });
