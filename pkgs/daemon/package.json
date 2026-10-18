@@ -16,13 +16,11 @@
   "exports": {
     "./package.json": "./package.json",
     ".": "./index.js",
-    "./client": "./client.js",
-    "./build-helper": "./lib/helper-build.js"
+    "./client": "./client.js"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-ssh": "0.2.1-rc.2",
     "@simplewebauthn/server": "13.3.3",
-    "js-yaml": "4.3.2"
+    "ws": "8.22.0"
   },
   "dsh": {
     "bundle": {

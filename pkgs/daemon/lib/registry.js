@@ -1,243 +1,127 @@
 /**
- * Profile registry: the durable list of development profiles this daemon runs.
+ * The environment registry.
  *
- * One *profile* is one development target. It owns a profile directory, a
- * loopback TCP port on this host, and — for an SSH profile — the connection
- * coordinates plus the remote helper installation. Everything is plain JSON so
- * an operator can read or hand-edit it, and a daemon restart never depends on a
- * database.
+ * In a federation there is no child process to describe: an environment is another
+ * machine's dsh, reachable only while its tunnel is up. So a record holds no port, no
+ * profile name and no filesystem path — those belong to the edge and are discovered
+ * from it, not configured here.
  *
- * The module is deliberately store-agnostic: {@link normalizeProfile} validates
- * untrusted JSON, and the manager owns reading and writing the file.
+ * What is configured is the token. It is the environment's identity: an edge presenting
+ * it *is* that environment. `machineId` only helps a human tell two similarly named hosts
+ * apart, and warns when a machine is enrolled twice.
  *
  * @module @yiln-dsh/dsh-daemon/registry
  */
 
-/** Profile ids address a URL prefix, a profile directory, and a port. */
-const ID_PATTERN = /^[a-z][a-z0-9-]{0,30}$/u
+import { randomBytes } from 'node:crypto'
 
-/**
- * Prefixes the daemon serves itself, so a profile may not claim one.
- *
- * A collision would make a profile unreachable behind the daemon's own routes,
- * so these are refused at registration rather than debugged later.
- */
+/** Environment ids appear in URLs, so they are restricted to something safe there. */
+export const ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/u
+
+/** Ids that would be mistaken for a route of our own. */
 export const RESERVED_IDS = new Set([
-  'admin',
-  'api',
-  'assets',
-  'connect',
-  'devtools',
-  'favicon.ico',
-  'index.html',
-  'plugins',
-  'settings',
+  'admin', 'api', 'assets', 'main', 'portal', 'tunnel', 'self', 'static', 'auth',
 ])
 
-/**
- * Fields every environment carries.
- *
- * There is no `kind`: a managed environment is always reached over SSH. The main
- * environment — the one running this daemon — is not a registry entry at all, so a
- * local variant has no representation here.
- */
-const COMMON_FIELDS = ['id', 'label', 'profile', 'port', 'workspace', 'enabled']
-
-/** Fields describing how to reach the remote host. */
-const SSH_FIELDS = [
-  'sshHost',
-  'sshPort',
-  'sshUser',
-  'sshHelper',
-  'sshHelperHash',
-  'sshKeyPath',
-]
+const FIELDS = ['id', 'label', 'token', 'hostname', 'machineId', 'lastSeen', 'enabled']
 
 /**
- * Normalize a raw profile record and reject one the daemon could not serve.
+ * Validate one record.
  *
- * Strict on purpose: an unknown key is a typo that would otherwise be silently
- * dropped from a file an operator hand-edits.
+ * Unknown fields are rejected rather than ignored: a silently dropped field is a
+ * configuration that looks applied and is not.
  *
- * @param raw - one registry entry from untrusted JSON.
- * @returns the normalized profile.
- * @throws {TypeError} when a field is missing, out of range, or unknown.
+ * @param raw - the stored record.
+ * @returns the normalized record.
  */
-export function normalizeProfile(raw) {
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new TypeError('daemon: a profile must be an object')
-  }
-  const known = new Set([...COMMON_FIELDS, ...SSH_FIELDS])
+export function normalizeEnvironment(raw) {
+  if (raw === null || typeof raw !== 'object') throw new TypeError('daemon: environment must be an object')
   for (const key of Object.keys(raw)) {
-    if (!known.has(key)) throw new TypeError(`daemon: profile has unknown field ${JSON.stringify(key)}`)
+    if (!FIELDS.includes(key)) throw new TypeError(`daemon: unknown environment field ${JSON.stringify(key)}`)
   }
-
-  const id = requireString(raw, 'id')
-  if (!ID_PATTERN.test(id)) {
-    throw new TypeError(`daemon: profile id ${JSON.stringify(id)} must match ${String(ID_PATTERN)}`)
+  const id = raw.id
+  if (typeof id !== 'string' || !ID_PATTERN.test(id)) {
+    throw new TypeError(`daemon: environment id must match ${ID_PATTERN}, got ${JSON.stringify(id)}`)
   }
-  if (RESERVED_IDS.has(id)) {
-    throw new TypeError(`daemon: profile id ${JSON.stringify(id)} is reserved by the daemon`)
+  if (RESERVED_IDS.has(id)) throw new TypeError(`daemon: environment id ${JSON.stringify(id)} is reserved`)
+  const token = raw.token
+  if (typeof token !== 'string' || token.length < 32) {
+    throw new TypeError('daemon: environment token must be at least 32 characters')
   }
-
-  const profile = {
+  const environment = {
     id,
-    label: raw.label === undefined ? id : requireString(raw, 'label'),
-    profile: raw.profile === undefined ? `daemon-${id}` : requireString(raw, 'profile'),
-    port: requirePort(raw, 'port'),
-    workspace: requireAbsolutePath(raw, 'workspace'),
-    enabled: raw.enabled === undefined ? true : requireBoolean(raw, 'enabled'),
-    sshHost: requireString(raw, 'sshHost'),
-    sshUser: requireString(raw, 'sshUser'),
-    sshHelper: requireAbsolutePath(raw, 'sshHelper'),
-    sshHelperHash: requireHash(raw, 'sshHelperHash'),
+    label: raw.label === undefined ? id : String(raw.label),
+    token,
+    enabled: raw.enabled === undefined ? true : raw.enabled === true,
   }
-  // An omitted port stays omitted: an ssh_config alias may declare its own, and an
-  // explicit default would override it.
-  if (raw.sshPort !== undefined) profile.sshPort = requirePort(raw, 'sshPort')
-  if (raw.sshKeyPath !== undefined) profile.sshKeyPath = requireAbsolutePath(raw, 'sshKeyPath')
-
-  return profile
+  if (raw.hostname !== undefined) environment.hostname = String(raw.hostname)
+  if (raw.machineId !== undefined) environment.machineId = String(raw.machineId)
+  if (raw.lastSeen !== undefined) environment.lastSeen = Number(raw.lastSeen)
+  return environment
 }
 
 /**
- * Validate an untrusted registry document.
+ * Validate a whole registry.
  *
- * @param parsed - the decoded JSON value.
- * @returns the profile list, empty when the document is empty.
- * @throws {TypeError} when the document is not a `{ profiles: [...] }` object.
+ * @param value - parsed JSON, or undefined when the file is absent.
+ * @returns the environments.
  */
-export function parseRegistry(parsed) {
-  if (parsed === null || parsed === undefined) return []
-  if (typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new TypeError('daemon: registry must be an object')
+export function parseRegistry(value) {
+  if (value === undefined || value === null) return []
+  if (typeof value !== 'object' || !Array.isArray(value.environments)) {
+    throw new TypeError('daemon: registry must be an object with an "environments" array')
   }
-  const profiles = parsed.profiles
-  if (profiles === undefined) return []
-  if (!Array.isArray(profiles)) throw new TypeError('daemon: registry "profiles" must be an array')
-  const normalized = profiles.map(normalizeProfile)
+  const environments = value.environments.map(normalizeEnvironment)
   const seen = new Set()
-  const helpers = new Map()
-  for (const profile of normalized) {
-    if (seen.has(profile.id)) throw new TypeError(`daemon: duplicate environment id ${JSON.stringify(profile.id)}`)
-    seen.add(profile.id)
-    // One helper defines exactly one environment: two records sharing a helper
-    // would fight over the same file and the same authorized_keys line.
-    const key = `${profile.sshHost}\u0000${profile.sshHelper}`
-    const existing = helpers.get(key)
-    if (existing !== undefined) {
+  const tokens = new Map()
+  for (const environment of environments) {
+    if (seen.has(environment.id)) {
+      throw new TypeError(`daemon: duplicate environment id ${JSON.stringify(environment.id)}`)
+    }
+    seen.add(environment.id)
+    // One token, one environment: sharing would make an edge's identity depend on
+    // insertion order.
+    const owner = tokens.get(environment.token)
+    if (owner !== undefined) {
       throw new TypeError(
-        `daemon: helper ${profile.sshHelper} on ${profile.sshHost} is already used by environment ${existing}`,
+        `daemon: environments ${JSON.stringify(owner)} and ${JSON.stringify(environment.id)} share a token`,
       )
     }
-    helpers.set(key, profile.id)
+    tokens.set(environment.token, environment.id)
   }
-  return normalized
+  return environments
+}
+
+/** Serialize for storage. The file holds tokens, so it is written 0600. */
+export function serializeRegistry(environments) {
+  return `${JSON.stringify({ environments }, null, 2)}\n`
 }
 
 /**
- * Serialize profiles for storage.
+ * Generate an environment id from what the operator typed.
  *
- * @param profiles - the normalized profiles.
- * @returns the JSON-safe document.
- */
-export function serializeRegistry(profiles) {
-  return { profiles: profiles.map((profile) => ({ ...profile })) }
-}
-
-/**
- * Pick the lowest free port at or above the base.
- *
- * Allocating from a fixed base keeps ports recognizable and stable in a
- * firewall rule; a used port is skipped rather than reassigned.
- *
- * @param base - the first candidate port.
- * @param used - ports already taken by the registry.
- * @param isFree - predicate that also rejects a port the OS reports as bound.
- * @returns the chosen port.
- * @throws {Error} when every candidate up to the ceiling is taken.
- */
-export function allocatePort(base, used, isFree = () => true) {
-  const ceiling = Math.min(base + 500, 65535)
-  for (let port = base; port <= ceiling; port += 1) {
-    if (used.has(port)) continue
-    if (!isFree(port)) continue
-    return port
-  }
-  throw new Error(`daemon: no free port in ${base}..${ceiling}`)
-}
-
-/**
- * Derive a usable profile id from a host name or a user-supplied label.
- *
- * The daemon owns id allocation, so a cosmetic name must not surface as an
- * error: invalid characters are dropped and a reserved or taken id is suffixed
- * until it is usable.
- *
- * @param wanted - the requested name, possibly empty or badly shaped.
- * @param taken - ids already in use, including the reserved set.
- * @returns an id that passes {@link normalizeProfile}.
+ * @param wanted - a label or host the operator supplied.
+ * @param taken - ids already in use.
+ * @returns a unique, URL-safe id.
  */
 export function deriveId(wanted, taken) {
-  const base = String(wanted ?? '')
+  const base = String(wanted)
     .toLowerCase()
-    .replace(/[^a-z0-9-]+/gu, '-')
+    .replace(/[^a-z0-9]+/gu, '-')
     .replace(/^-+|-+$/gu, '')
-    .replace(/-{2,}/gu, '-')
-    .slice(0, 24)
-  // An empty or purely symbolic name has nothing to derive from; fall back to a
-  // stable noun rather than emitting a one-letter id.
-  const seed = base === '' ? 'profile' : /^[a-z]/u.test(base) ? base : `p-${base}`
-  const candidate = seed
-  if (!taken.has(candidate) && !RESERVED_IDS.has(candidate)) return candidate
-  for (let suffix = 2; suffix < 1000; suffix += 1) {
-    const next = `${candidate}-${suffix}`.slice(0, 32)
-    if (!taken.has(next) && !RESERVED_IDS.has(next)) return next
+    .slice(0, 28)
+  const seed = /^[a-z]/u.test(base) ? base : `env-${base}`
+  // Trailing separators are noise in a URL and would survive into the id.
+  const start = seed.replace(/-+$/u, '') === '' ? 'env' : seed.replace(/-+$/u, '')
+  if (!taken.has(start) && !RESERVED_IDS.has(start)) return start
+  for (let n = 2; n < 1000; n += 1) {
+    const candidate = `${start}-${n}`
+    if (!taken.has(candidate) && !RESERVED_IDS.has(candidate)) return candidate
   }
-  throw new Error(`daemon: cannot derive an unused id from ${JSON.stringify(wanted)}`)
+  throw new Error('daemon: could not derive a free environment id')
 }
 
-function requireString(raw, key) {
-  const value = raw[key]
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new TypeError(`daemon: profile field ${JSON.stringify(key)} must be a non-empty string`)
-  }
-  return value
-}
-
-function requireBoolean(raw, key) {
-  const value = raw[key]
-  if (typeof value !== 'boolean') {
-    throw new TypeError(`daemon: profile field ${JSON.stringify(key)} must be a boolean`)
-  }
-  return value
-}
-
-function requirePort(raw, key) {
-  const value = raw[key]
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 65535) {
-    throw new TypeError(`daemon: profile field ${JSON.stringify(key)} must be a port number`)
-  }
-  return value
-}
-
-function requireAbsolutePath(raw, key) {
-  const value = requireString(raw, key)
-  if (!value.startsWith('/')) {
-    throw new TypeError(`daemon: profile field ${JSON.stringify(key)} must be an absolute path`)
-  }
-  return value
-}
-
-function optionalAbsolutePath(raw, key) {
-  if (raw[key] === undefined) return undefined
-  return requireAbsolutePath(raw, key)
-}
-
-function requireHash(raw, key) {
-  const value = requireString(raw, key)
-  if (!/^[0-9a-f]{64}$/u.test(value)) {
-    throw new TypeError(`daemon: profile field ${JSON.stringify(key)} must be a lowercase SHA-256`)
-  }
-  return value
+/** A token with enough entropy that guessing is not a strategy. */
+export function freshToken() {
+  return randomBytes(32).toString('base64url')
 }

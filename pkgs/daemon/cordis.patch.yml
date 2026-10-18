@@ -4,32 +4,29 @@
     - id: daemon
       name: '@yiln-dsh/dsh-daemon'
       config:
-        # The only public listener. TLS is terminated by an external proxy.
+        # The panel's own listener. TLS is terminated by an external proxy.
         host: 0.0.0.0
         port: 3080
-        # Profile processes listen here, one port each, allocated upward.
-        portBase: 56789
-        # Loopback port of this process's own harness listener, proxied for
-        # paths no profile prefix claims. 0 answers 404 instead.
-        upstreamPort: 0
-        # Registry of the profiles this daemon starts and routes.
-        registryPath: !!js dshHomePath('daemon/profiles.json')
+        # main: accepts tunnels from edges and can list/switch environments.
+        # edge: dials a main node; manages no environments of its own.
+        role: main
+        # Edge only: where the main node is, and which environment this is.
+        mainUrl: ''
+        token: ''
+        # Environment registry. Holds tokens, so it is written 0600.
+        registryPath: !!js dshHomePath('daemon/environments.json')
         homeDir: !!js dshHomePath()
-        # Helper artifact cache; a missing artifact is built or downloaded.
         cacheDir: !!js dshHomePath('daemon/cache')
-        # Download template used only when a local build is impossible.
-        helperDownloadUrl: 'https://dsh.yiln.de/daemon/helper-<version>-<arch>.gz'
-        # Bundle layers every generated profile mounts.
-        profileBundles:
-          - '@deepseek-ai/dsh-base'
-          - '@deepseek-ai/dsh-web-app'
-          - '@local/yiln-agent-preset'
-        harnessVersion: 0.2.1-rc.2
-        # A profile id here makes that profile answer paths no prefix claims, so
-        # the existing origin keeps working unchanged. Empty owns `/` (portal).
-        rootProfile: ''
-        # Start enabled profiles when the daemon boots.
+        # This process's own harness, mounted behind the panel. Every dsh — main or
+        # edge — has one; the difference is only what the panel adds around it.
+        rootEmbedded: true
+        # Prefix the harness is served under. Empty serves it at the origin root, which
+        # is what an edge wants: its UI should look like a plain dsh.
+        rootPrefix: ''
+        # Empty hides the panel's restart control. Name this deployment's own unit to
+        # enable it; a guess would restart the wrong service.
         selfUnit: ''
-        autostart: true
-        # Seconds a profile has to answer its port after spawn.
-        readyMs: 90000
+        # Login for this listener. Falls back to AUTH_USER / AUTH_PASS when empty, so an
+        # existing deployment keeps the credentials it already has.
+        username: admin
+        password: ''

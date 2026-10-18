@@ -8,160 +8,61 @@ window.__ModuleLoader__.load({
 
     const ZH = {
       title: '开发守护',
-      hint: '一个入口，多个环境。每个环境是一个独立的 dsh 进程，文件与命令落在它自己的机器上。',
+      hint: '一个入口，多个环境。每个环境是另一台机器上的完整 dsh：它自己跑工具、自己存会话，所以没有网络延迟。',
       refresh: '刷新',
-      loading: '正在读取…',
       unreachable: '无法读取守护状态（管理接口只接受已登录的请求）。',
-      empty: '还没有配置任何远程环境。',
-      colName: '名称', colKind: '类型', colPort: '端口', colWorkspace: '工作区', colState: '状态', colActions: '操作',
-      running: '运行中', stopped: '已停止',
-      stNotRunning: '未运行',
-      stUnreachable: '远端不可达',
-      stHelperBad: 'helper 异常',
-      stOk: '正常',
-      stUnknown: '检查中…',
-      selfLabel: '本机',
-      selfCurrent: '当前',
-      selfNoUnit: '未托管',
-      minutesShort: '分钟',
-      colHost: '主机',
-      confirmSelfRestart: '重启主环境会重启整个 dsh 进程（{unit}），当前页面会断开，稍后自动恢复。继续？',
-      selfRestarting: '已请求重启 {unit}，页面将在几秒后重连。',
-      fixDeploy: '部署 helper',
-      fixRetest: '重试',
-      fixStart: '启动',
-      logTitle: '最近日志',
-      logEmpty: '（无输出）',
-      logClose: '收起',
-      enableLabel: '开机自启',
-      enabledOn: '自启',
-      enabledOff: '不自启',
-      askRemoveHelper: '同时删除远端机器上的 helper？\n\n主机：{host}\n路径：{path}\n\n默认会删除；取消则只移除本地环境，并生成卸载脚本供你以后手动执行。',
-      uninstallAt: '卸载脚本：{path}',
-      deployingNow: '正在部署 helper…',
-      preparing: '正在探测远端…',
-      fingerprintLabel: '主机指纹（请与你已知的指纹核对）',
-      confirmInstall: '确认并安装',
-      hostFacts: '远端信息',
-      authPasswordLabel: '密码（仅本次探测用，不保存）',
-      authKeyLabel: '私钥路径（可选，仅本次用）',
-      probeAction: '探测远端',
-      factTitle: '探测结果',
-      start: '启动', stop: '停止', remove: '移除', open: '打开',
-      createTitle: '添加环境',
-      idLabel: '标识（留空自动生成）', workspaceLabel: '工作区绝对路径',
-      sshHostLabel: 'SSH 主机（别名或 host:port）', sshUserLabel: 'SSH 用户',
-      sshHelperLabel: '远端 helper 路径', sshHelperHashLabel: 'helper 的 SHA-256',
-      create: '创建', creating: '创建中…',
-      confirmRemove: '确定要移除 {id} 吗？它的进程会被停止。',
-      errWorkspace: '工作区必须是绝对路径。',
-      errSsh: 'SSH 类型必须填写主机、用户和 helper 的 hash。',
+      empty: '还没有环境。创建一个，把 token 填到那台机器的 dsh 配置里。',
+      colName: '名称', colPath: '访问路径', colToken: '令牌', colState: '状态', colActions: '操作',
+      online: '在线', offline: '离线', never: '从未连接',
+      open: '打开', rotate: '换令牌', remove: '移除',
+      labelLabel: '名称（可留空）', labelPlaceholder: '例如 6.13',
+      create: '创建环境', creating: '创建中…',
+      tokenOnce: '这个令牌只显示一次，请现在复制',
+      tokenHint: '把它填到那台机器 dsh 的 daemon 配置：role=edge，并填上主节点地址。',
+      confirmRemove: '移除环境 {id}？那台机器上的 dsh 不会被删除，只是不再连进来。',
+      confirmRotate: '为 {id} 换一个新令牌？旧令牌立即失效，那台机器要改成新令牌才能重连。',
+      removed: '已移除 {id}。', rotated: '已为 {id} 换令牌。',
       actionFailed: '操作失败：{message}',
-      deployNote: '远程环境需要先部署 helper：填好连接信息并确认后才会写入远端，远端不需要 Node。',
-      modeLabel: '模式',
-      sshHostLabel: 'SSH 主机（别名或 host:port）会用于建连',
-      sshPortLabel: 'SSH 端口（留空跟随 ssh_config）',
-      sshHelperHashLabel: 'helper 的 SHA-256（部署后自动填入）',
-      deploy: '部署 helper',
-      deploying: '部署中…',
-      create: '创建',
-      creating: '创建中…',
-      created: '已创建 {id}。',
-      adopted: '已接管 {id}。',
-      deployed: 'helper 已部署到 {host}。',
-      startedMsg: '已启动 {id}。',
-      stoppedMsg: '已停止 {id}。',
-      removedMsg: '已移除 {id}。',
-      refresh: '刷新',
+      edgeNote: '这台 dsh 是边端：它连向主节点，自己不管理其它环境。要在这里管理环境，把 role 改成 main。',
     }
+
     const EN = {
-      title: 'Development daemon',
-      hint: 'One entry, many environments. Each is its own dsh process whose files and commands run on its own machine.',
+      title: 'Daemon',
+      hint: 'One entry, many environments. Each is a complete dsh on another machine: it runs its own tools and keeps its own sessions, so there is no network latency.',
       refresh: 'Refresh',
-      loading: 'Loading…',
-      unreachable: 'Cannot read daemon state (the admin endpoints require an authenticated request).',
-      empty: 'No remote environments configured yet.',
-      colName: 'Name', colKind: 'Kind', colPort: 'Port', colWorkspace: 'Workspace', colState: 'State', colActions: 'Actions',
-      running: 'running', stopped: 'stopped',
-      stNotRunning: 'not running',
-      stUnreachable: 'remote unreachable',
-      stHelperBad: 'helper unhealthy',
-      stOk: 'healthy',
-      stUnknown: 'checking…',
-      selfLabel: 'This host',
-      selfCurrent: 'current',
-      selfNoUnit: 'unmanaged',
-      minutesShort: 'min',
-      colHost: 'Host',
-      confirmSelfRestart: 'Restarting the main environment restarts the whole dsh process ({unit}). This page will disconnect and reconnect shortly. Continue?',
-      selfRestarting: 'Restart of {unit} requested; the page will reconnect in a few seconds.',
-      fixDeploy: 'Deploy helper',
-      fixRetest: 'Retry',
-      fixStart: 'Start',
-      logTitle: 'Recent output',
-      logEmpty: '(no output)',
-      logClose: 'Hide',
-      enableLabel: 'Start on boot',
-      enabledOn: 'autostart',
-      enabledOff: 'manual',
-      askRemoveHelper: 'Also delete the helper on the remote host?\n\nHost: {host}\nPath: {path}\n\nOK deletes it; Cancel removes only the local environment and writes an uninstall script for later.',
-      uninstallAt: 'Uninstall script: {path}',
-      deployingNow: 'Deploying helper…',
-      preparing: 'Probing the remote…',
-      fingerprintLabel: 'Host fingerprint (compare with what you know)',
-      confirmInstall: 'Confirm and install',
-      hostFacts: 'Remote facts',
-      authPasswordLabel: 'Password (this probe only, never stored)',
-      authKeyLabel: 'Private key path (optional, this probe only)',
-      probeAction: 'Probe the host',
-      factTitle: 'Probe result',
-      start: 'Start', stop: 'Stop', remove: 'Remove', open: 'Open',
-      createTitle: 'Add an environment',
-      idLabel: 'Id (blank derives one)', workspaceLabel: 'Workspace absolute path',
-      sshHostLabel: 'SSH host (alias or host:port)', sshUserLabel: 'SSH user',
-      sshHelperLabel: 'Remote helper path', sshHelperHashLabel: "Helper's SHA-256",
-      create: 'Create', creating: 'Creating…',
-      confirmRemove: 'Remove {id}? Its process will be stopped.',
-      errWorkspace: 'Workspace must be an absolute path.',
-      errSsh: 'An SSH profile needs a host, a user and the helper hash.',
-      actionFailed: 'Action failed: {message}',
-      deployNote: 'A remote environment needs its helper deployed first: nothing is written to the host until you confirm, and the host needs no Node.',
-      modeLabel: 'Mode',
-      sshHostLabel: 'SSH host (alias or host:port) used to connect',
-      sshPortLabel: 'SSH port (blank follows ssh_config)',
-      sshHelperHashLabel: 'Helper SHA-256 (filled after deploy)',
-      deploy: 'Deploy helper',
-      deploying: 'Deploying…',
-      create: 'Create',
-      creating: 'Creating…',
-      created: 'Created {id}.',
-      adopted: 'Adopted {id}.',
-      deployed: 'Helper deployed to {host}.',
-      startedMsg: 'Started {id}.',
-      stoppedMsg: 'Stopped {id}.',
-      removedMsg: 'Removed {id}.',
-      refresh: 'Refresh',
+      unreachable: 'Could not read daemon state (the admin API only answers authenticated requests).',
+      empty: 'No environments yet. Create one and put its token in that machine\'s dsh config.',
+      colName: 'Name', colPath: 'Path', colToken: 'Token', colState: 'State', colActions: 'Actions',
+      online: 'online', offline: 'offline', never: 'never connected',
+      open: 'Open', rotate: 'Rotate token', remove: 'Remove',
+      labelLabel: 'Name (optional)', labelPlaceholder: 'e.g. 6.13',
+      create: 'Create environment', creating: 'Creating…',
+      tokenOnce: 'This token is shown once — copy it now',
+      tokenHint: 'Put it in that machine\'s dsh daemon config: role=edge, plus this node\'s address.',
+      confirmRemove: 'Remove environment {id}? The dsh on that machine stays; it just stops connecting here.',
+      confirmRotate: 'Give {id} a new token? The old one stops working immediately, and that machine must be updated before it can reconnect.',
+      removed: 'Removed {id}.', rotated: 'New token issued for {id}.',
+      actionFailed: 'Failed: {message}',
+      edgeNote: 'This dsh is an edge: it connects to a main node and manages no environments itself. Set role to main to manage them here.',
     }
 
     const styles = {
-      wrap: { display: 'grid', gap: 12 },
-      hint: { margin: '0 0 4px', opacity: 0.7, fontSize: 13 },
+      wrap: { padding: '18px 20px', maxWidth: 1100, margin: '0 auto' },
+      hint: { margin: '0 0 6px', opacity: 0.7, fontSize: 13 },
       detail: { fontSize: 11, opacity: 0.6, marginTop: 2 },
-      dimText: { fontSize: 13, opacity: 0.7 },
-      warn: { fontSize: 13, color: '#b7791f' },
-      logBox: { padding: '8px 12px', background: 'rgba(128,128,128,.08)' },
-      facts: { padding: '8px 10px', borderRadius: 6, background: 'rgba(128,128,128,.08)', display: 'grid', gap: 3 },
-      factTitle: { fontSize: 12, fontWeight: 600, opacity: 0.8 },
-      logPre: { margin: '4px 0 0', fontSize: 11, lineHeight: 1.45, maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace, monospace' },
-      error: { color: '#c0392b', fontSize: 13 },
-      ok: { color: '#2a7a3f', fontSize: 13 },
+      mono: { fontFamily: 'ui-monospace, monospace', fontSize: 12 },
+      dim: { opacity: 0.6, fontSize: 13 },
+      ok: { color: '#2f855a', fontSize: 13 },
+      error: { color: '#c53030', fontSize: 13 },
+      note: { marginTop: 12, padding: '10px 12px', background: 'rgba(128,128,128,.08)', borderRadius: 6, fontSize: 13 },
       table: { width: '100%', borderCollapse: 'collapse', fontSize: 13 },
-      cell: { textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid rgba(128,128,128,.25)' },
-      mono: { fontFamily: 'ui-monospace, monospace', fontSize: 12, opacity: 0.8, wordBreak: 'break-all' },
-      button: { font: 'inherit', fontSize: 12, padding: '2px 8px', marginRight: 4, borderRadius: 6, border: '1px solid rgba(128,128,128,.4)', background: 'transparent', color: 'inherit', cursor: 'pointer' },
-      input: { font: 'inherit', fontSize: 13, padding: '4px 6px', borderRadius: 6, border: '1px solid rgba(128,128,128,.4)', background: 'transparent', color: 'inherit' },
-      form: { display: 'grid', gridTemplateColumns: 'max-content minmax(0, 1fr)', gap: 8, maxWidth: 560, alignItems: 'center' },
-      label: { fontSize: 12, opacity: 0.7 },
+      cell: { padding: '7px 8px', borderBottom: '1px solid rgba(128,128,128,.18)', textAlign: 'left', verticalAlign: 'top' },
+      button: { marginRight: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer', borderRadius: 5, border: '1px solid rgba(128,128,128,.35)', background: 'transparent' },
+      input: { padding: '5px 8px', fontSize: 13, borderRadius: 5, border: '1px solid rgba(128,128,128,.35)', background: 'transparent', marginRight: 8 },
+      form: { display: 'flex', alignItems: 'center', gap: 0, marginTop: 16, flexWrap: 'wrap' },
+      tokenBox: { margin: '10px 0', padding: '10px 12px', borderRadius: 6, background: 'rgba(214,158,46,.12)', border: '1px solid rgba(214,158,46,.4)' },
+      tokenTitle: { fontSize: 13, fontWeight: 600, marginBottom: 6 },
+      tokenCode: { display: 'block', fontFamily: 'ui-monospace, monospace', fontSize: 12, wordBreak: 'break-all', userSelect: 'all' },
     }
 
     const call = async (path, options) => {
@@ -170,290 +71,8 @@ window.__ModuleLoader__.load({
       try {
         return JSON.parse(text)
       } catch {
-        return { ok: false, error: text.slice(0, 200) }
+        return { ok: false, error: `HTTP ${response.status}: ${text.slice(0, 200)}` }
       }
-    }
-
-    const makeCard = (t) => function DaemonCard() {
-      const [state, setState] = useState({ phase: 'loading', environments: [], self: undefined })
-      const [flash, setFlash] = useState('')
-      const [busy, setBusy] = useState('')
-      const [form, setForm] = useState({
-        sshHost: '', sshPort: '', sshUser: '', password: '', bootstrapKey: '',
-        workspace: '', sshHelper: '/opt/dsh-helper/dsh-ssh-helper',
-      })
-      const [prepared, setPrepared] = useState(undefined)
-
-      const [openLog, setOpenLog] = useState('')
-      const [logText, setLogText] = useState('')
-
-      const load = useCallback(async (fresh = false) => {
-        try {
-          // `fresh` skips the daemon's health cache, which a retry button must do or it
-          // would report the same stale verdict.
-          const result = await call(fresh ? '/admin/state?fresh=1' : '/admin/state')
-          if (result.ok) setState({ phase: 'ready', environments: result.environments, self: result.self })
-          else setState({ phase: 'failed', environments: [], self: undefined, error: result.error })
-        } catch (error) {
-          setState({ phase: 'failed', environments: [], self: undefined, error: String(error) })
-        }
-      }, [])
-
-      const toggleLog = useCallback(async (id) => {
-        if (openLog === id) { setOpenLog(''); setLogText(''); return }
-        setOpenLog(id)
-        setLogText('')
-        const result = await call(`/admin/profiles/${id}/log`)
-        setLogText(result.ok ? (result.log ?? '') : String(result.error ?? ''))
-      }, [openLog])
-
-      const run = useCallback(async (label, path, options, message) => {
-        setBusy(label)
-        setFlash('')
-        try {
-          const result = await call(path, options)
-          if (result.ok) {
-            if (message !== '') setFlash(message)
-            await load()
-          } else {
-            setFlash(t('actionFailed').replace('{message}', result.error ?? ''))
-          }
-          return result
-        } finally {
-          setBusy('')
-        }
-      }, [load, t])
-
-      const restartMain = useCallback(async () => {
-        if (!confirm(t('confirmSelfRestart').replace('{unit}', state.self?.unit ?? ''))) return
-        setBusy('self')
-        try {
-          const result = await call('/admin/self/restart', { method: 'POST' })
-          setFlash(result.ok ? t('selfRestarting').replace('{unit}', state.self?.unit ?? '') : t('actionFailed').replace('{message}', result.error ?? ''))
-        } finally {
-          setBusy('')
-        }
-      }, [state.self, t])
-
-      const toggleEnabled = useCallback(async (entry) => {
-        await run('toggle', `/admin/profiles/${entry.id}`, {
-          method: 'PATCH',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ enabled: !entry.enabled }),
-        }, '')
-      }, [run])
-
-      const removeEnvironment = useCallback(async (entry) => {
-        const deleteHelper = confirm(
-          t('askRemoveHelper').replace('{host}', entry.sshHost).replace('{path}', entry.sshHelper),
-        )
-        const result = await run('remove', `/admin/profiles/${entry.id}?remoteHelper=${deleteHelper}`, { method: 'DELETE' }, t('removedMsg').replace('{id}', entry.id))
-        if (result.ok && typeof result.uninstallScript === 'string') {
-          setFlash(`${t('removedMsg').replace('{id}', entry.id)} ${t('uninstallAt').replace('{path}', result.uninstallScript)}`)
-        }
-      }, [run, t])
-
-      useEffect(() => { void load() }, [load])
-
-      const field = (key) => ({
-        value: form[key],
-        onChange: (event) => setForm((prev) => ({ ...prev, [key]: event.target.value })),
-        style: styles.input,
-      })
-
-      const prepareEnvironment = useCallback(async () => {
-        const sshHost = form.sshHost.trim()
-        const sshUser = form.sshUser.trim()
-        if (sshHost === '' || sshUser === '') { setFlash(t('errSsh')); return }
-        setBusy('prepare')
-        setFlash('')
-        setPrepared(undefined)
-        try {
-          const result = await call('/admin/environments/prepare', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-              sshHost,
-              sshUser,
-              ...(form.sshPort.trim() === '' ? {} : { sshPort: Number(form.sshPort) }),
-              ...(form.password === '' ? {} : { password: form.password }),
-            }),
-          })
-          if (result.ok) setPrepared(result)
-          else setFlash(t('actionFailed').replace('{message}', result.error ?? ''))
-        } finally {
-          setBusy('')
-        }
-      }, [form, t])
-
-      const confirmEnvironment = useCallback(async () => {
-        if (prepared === undefined) return
-        setBusy('confirm')
-        setFlash('')
-        try {
-          const result = await call('/admin/environments/confirm', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-              sshHost: form.sshHost.trim(),
-              sshUser: form.sshUser.trim(),
-              ...(form.sshPort.trim() === '' ? {} : { sshPort: Number(form.sshPort) }),
-              ...(form.password === '' ? {} : { password: form.password }),
-              workspace: form.workspace.trim() === '' ? undefined : form.workspace.trim(),
-              sshHelper: form.sshHelper.trim(),
-              fingerprint: prepared.fingerprint,
-              // A placeholder: `confirm` deploys the helper and records the real digest.
-              sshHelperHash: '0'.repeat(64),
-            }),
-          })
-          if (result.ok) {
-            setFlash(t('created').replace('{id}', result.environment.id))
-            setPrepared(undefined)
-            setForm((prev) => ({ ...prev, password: '', workspace: '' }))
-            await load(true)
-          } else {
-            setFlash(t('actionFailed').replace('{message}', result.error ?? ''))
-          }
-        } finally {
-          setBusy('')
-        }
-      }, [form, load, prepared, t])
-
-      // One row plus its optional log panel. Health decides both the label and the
-      // action offered: four states exist because they fail for unrelated reasons.
-      const statusOf = (entry) => {
-        if (!entry.running) return { label: t('stNotRunning'), action: 'start', tone: 'down' }
-        const state = entry.health?.state
-        if (state === 'ok') return { label: t('stOk'), action: null, tone: 'up' }
-        if (state === 'helper-bad') return { label: t('stHelperBad'), action: 'deploy', tone: 'warn' }
-        if (state === 'unreachable') return { label: t('stUnreachable'), action: 'retest', tone: 'warn' }
-        return { label: t('stUnknown'), action: 'retest', tone: 'dim' }
-      }
-
-      const actionButton = (entry, status) => {
-        if (status.action === 'start') {
-          return h('button', { key: 'start', style: styles.button, disabled: busy !== '', onClick: () => void run('start', `/admin/profiles/${entry.id}/start`, { method: 'POST' }, t('startedMsg').replace('{id}', entry.id)) }, t('fixStart'))
-        }
-        if (status.action === 'deploy') {
-          return h('button', { key: 'deploy', style: styles.button, disabled: busy !== '', onClick: () => void run('deploy', `/admin/profiles/${entry.id}/deploy`, { method: 'POST' }, t('deployed').replace('{host}', entry.sshHost)) }, busy === 'deploy' ? t('deployingNow') : t('fixDeploy'))
-        }
-        if (status.action === 'retest') {
-          return h('button', { key: 'retest', style: styles.button, disabled: busy !== '', onClick: () => void load(true) }, t('fixRetest'))
-        }
-        return null
-      }
-
-      const renderRow = (entry) => {
-        const status = statusOf(entry)
-        const expanded = openLog === entry.id
-        const main = h('tr', { key: entry.id },
-          h('td', { style: styles.cell },
-            h('div', null, entry.label),
-            h('div', { style: styles.mono }, `/${entry.id}/`),
-            entry.health?.detail !== undefined && entry.health.detail !== ''
-              ? h('div', { style: styles.detail }, entry.health.detail)
-              : null),
-          h('td', { style: styles.cell },
-            h('div', { style: styles.mono }, entry.sshHost),
-            h('div', { style: styles.detail }, entry.sshHelper)),
-          h('td', { style: styles.cell }, String(entry.port)),
-          h('td', { style: { ...styles.cell, ...styles.mono } }, entry.workspace),
-          h('td', { style: styles.cell },
-            h('span', { style: status.tone === 'up' ? styles.ok : status.tone === 'warn' ? styles.warn : styles.dimText }, status.label),
-            h('div', { style: styles.detail }, entry.enabled ? t('enabledOn') : t('enabledOff'))),
-          h('td', { style: styles.cell },
-            entry.running
-              ? h('button', { key: 'open', style: styles.button, onClick: () => window.open(entry.url ?? `/${entry.id}/`, '_blank') }, t('open'))
-              : null,
-            actionButton(entry, status),
-            h('button', { key: 'restart', style: styles.button, disabled: !entry.running || busy !== '', onClick: () => void run('restart', `/admin/profiles/${entry.id}/restart`, { method: 'POST' }, t('startedMsg').replace('{id}', entry.id)) }, t('restart')),
-            h('button', { key: 'stop', style: styles.button, disabled: !entry.running || busy !== '', onClick: () => void run('stop', `/admin/profiles/${entry.id}/stop`, { method: 'POST' }, t('stoppedMsg').replace('{id}', entry.id)) }, t('stop')),
-            h('button', { key: 'log', style: styles.button, disabled: busy !== '', onClick: () => void toggleLog(entry.id) }, expanded ? t('logClose') : t('log')),
-            h('button', { key: 'toggle', style: styles.button, disabled: busy !== '', onClick: () => void toggleEnabled(entry) }, entry.enabled ? t('enabledOn') : t('enabledOff')),
-            h('button', { key: 'remove', style: styles.button, disabled: busy !== '', onClick: () => void removeEnvironment(entry) }, t('remove'))))
-
-        if (!expanded) return main
-        const panel = h('tr', { key: `${entry.id}-log` },
-          h('td', { colSpan: 6, style: { ...styles.cell, padding: 0 } },
-            h('div', { style: styles.logBox },
-              h('div', { style: styles.detail }, t('logTitle')),
-              h('pre', { style: styles.logPre }, logText === '' ? t('logEmpty') : logText))))
-        return [main, panel]
-      }
-
-      /** The main environment, shown first: this process. */
-      const renderSelfRow = () => {
-        const self = state.self
-        if (self === undefined) return null
-        const uptime = Math.max(0, Math.round((self.uptimeMs ?? 0) / 60000))
-        return h('tr', { key: '__self' },
-          h('td', { style: styles.cell },
-            h('div', null, h('strong', null, t('selfLabel')), ' ', h('span', { style: styles.detail }, `(${t('selfCurrent')})`)),
-            h('div', { style: styles.mono }, `${self.host}:${self.port}`)),
-          h('td', { style: styles.cell },
-            self.unit === undefined ? t('selfNoUnit') : h('div', { style: styles.mono }, self.unit)),
-          h('td', { style: styles.cell }, String(self.plugins ?? '–')),
-          h('td', { style: styles.cell }, `${uptime} ${t('minutesShort')}`),
-          h('td', { style: styles.cell }, ''),
-          h('td', { style: styles.cell },
-            h('button', { key: 'open', style: styles.button, onClick: () => window.open('/', '_blank') }, t('open')),
-            self.restartable
-              ? h('button', { key: 'restart', style: styles.button, disabled: busy !== '', onClick: restartMain }, t('restart'))
-              : null))
-      }
-
-      const table = h('table', { style: styles.table },
-        h('thead', null, h('tr', null,
-          ['colName', 'colHost', 'colPort', 'colWorkspace', 'colState', 'colActions'].map((key) => h('th', { key, style: styles.cell }, t(key))))),
-        h('tbody', null, [renderSelfRow(), ...state.environments.flatMap(renderRow)].filter(Boolean)))
-
-      const children = [h('p', { key: 'hint', style: styles.hint }, t('hint'))]
-      if (flash !== '') children.push(h('div', { key: 'flash', style: styles.ok }, flash))
-      if (state.phase === 'failed') children.push(h('div', { key: 'error', style: styles.error }, t('unreachable')))
-      if (state.phase === 'ready') children.push(h('div', { key: 'table' }, table))
-      // The empty hint is about managed environments only: the main one is always listed.
-      if (state.phase === 'ready' && state.environments.length === 0) {
-        children.push(h('p', { key: 'empty', style: styles.hint }, t('empty')))
-      }
-      children.push(h('div', { key: 'actions' },
-        h('button', { style: styles.button, disabled: busy !== '', onClick: () => void load() }, t('refresh'))))
-
-      // Two-phase onboarding: `prepare` writes nothing to the remote and returns the
-      // host facts plus its host-key fingerprint. Only after the operator confirms
-      // does `confirm` install anything.
-      const formRows = []
-      const addRow = (label, control) => {
-        formRows.push(h('label', { key: `l-${label}` }, t(label)))
-        formRows.push(control)
-      }
-      addRow('sshHostLabel', h('input', { key: 'host', ...field('sshHost'), placeholder: '192.168.1.10 或 dsh-box1' }))
-      addRow('sshPortLabel', h('input', { key: 'port', ...field('sshPort'), placeholder: '22' }))
-      addRow('sshUserLabel', h('input', { key: 'user', ...field('sshUser'), placeholder: 'root' }))
-      addRow('authPasswordLabel', h('input', { key: 'pass', ...field('password'), type: 'password', placeholder: '①' }))
-      addRow('authKeyLabel', h('input', { key: 'keyfile', ...field('bootstrapKey'), placeholder: '~/.ssh/id_ed25519（可留空）' }))
-      addRow('workspaceLabel', h('input', { key: 'ws', ...field('workspace'), placeholder: '/root/workspace' }))
-      addRow('sshHelperLabel', h('input', { key: 'helper', ...field('sshHelper') }))
-      formRows.push(h('span', { key: 'gap' }))
-      formRows.push(h('button', { key: 'prep', disabled: busy !== '', onClick: prepareEnvironment },
-        busy === 'prepare' ? t('preparing') : t('probeAction')))
-
-      if (prepared !== undefined) {
-        formRows.push(h('span', { key: 'prepGap' }))
-        formRows.push(h('div', { key: 'facts', style: styles.facts },
-          h('div', { style: styles.factTitle }, t('hostFacts')),
-          h('div', { style: styles.mono }, `host ${prepared.host.hostname} · ${prepared.host.arch} · ${prepared.host.os} · glibc ${prepared.host.glibc}`),
-          h('div', { style: styles.detail }, `${t('fingerprintLabel')}: ${prepared.fingerprint}`),
-          h('div', { style: styles.detail }, `${t('idLabel')}: ${prepared.id}`)))
-        formRows.push(h('button', { key: 'doConfirm', disabled: busy !== '', onClick: confirmEnvironment },
-          busy === 'confirm' ? t('deployingNow') : t('confirmInstall')))
-      }
-
-      children.push(h('div', { key: 'createTitle', style: { marginTop: 18 } },
-        h('h3', { style: { margin: '0 0 8px', fontSize: 14 } }, t('createTitle'))))
-      children.push(h('div', { key: 'form', style: styles.form }, formRows))
-      children.push(h('p', { key: 'deploy', style: styles.hint }, t('deployNote')))
-
-      return h('div', { style: styles.wrap }, children)
     }
 
     /** Rail icon for the global panel list. */
@@ -473,12 +92,133 @@ window.__ModuleLoader__.load({
     h('circle', { key: 'c', cx: 7, cy: 7, r: 0.9, fill: 'currentColor', stroke: 'none' }),
     h('circle', { key: 'd', cx: 7, cy: 17, r: 0.9, fill: 'currentColor', stroke: 'none' }))
 
-    /** Panel page: the same card the settings tab used to render, with room. */
+    /** Panel page: the environment list, and the form that adds one. */
     const makePanelPage = (t) => function DaemonPanelPage() {
-      const Card = makeCard(t)
-      return h('div', { style: { padding: '18px 20px', maxWidth: 1100, margin: '0 auto' } },
-        h('h2', { style: { margin: '0 0 12px', fontSize: 17 } }, t('title')),
-        h(Card))
+      const [state, setState] = useState({ phase: 'loading', self: undefined, environments: [] })
+      const [busy, setBusy] = useState('')
+      const [flash, setFlash] = useState('')
+      const [token, setToken] = useState('')
+      const [label, setLabel] = useState('')
+
+      const load = useCallback(async () => {
+        try {
+          const result = await call('/admin/state')
+          if (result.ok) setState({ phase: 'ready', self: result.self, environments: result.environments ?? [] })
+          else setState({ phase: 'failed', self: undefined, environments: [], error: result.error })
+        } catch (error) {
+          setState({ phase: 'failed', self: undefined, environments: [], error: String(error) })
+        }
+      }, [])
+
+      useEffect(() => { void load() }, [load])
+
+      const create = useCallback(async () => {
+        setBusy('create')
+        setFlash('')
+        setToken('')
+        try {
+          const result = await call('/admin/environments', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ label: label.trim() === '' ? undefined : label.trim() }),
+          })
+          if (result.ok) {
+            // Shown once: the token is the edge's credential, not a display value.
+            setToken(result.token)
+            setLabel('')
+            await load()
+          } else {
+            setFlash(t('actionFailed').replace('{message}', result.error ?? ''))
+          }
+        } finally {
+          setBusy('')
+        }
+      }, [label, load, t])
+
+      const remove = useCallback(async (entry) => {
+        if (!confirm(t('confirmRemove').replace('{id}', entry.id))) return
+        setBusy(entry.id)
+        try {
+          const result = await call(`/admin/environments/${entry.id}`, { method: 'DELETE' })
+          setFlash(result.ok ? t('removed').replace('{id}', entry.id) : t('actionFailed').replace('{message}', result.error ?? ''))
+          await load()
+        } finally {
+          setBusy('')
+        }
+      }, [load, t])
+
+      const rotate = useCallback(async (entry) => {
+        if (!confirm(t('confirmRotate').replace('{id}', entry.id))) return
+        setBusy(entry.id)
+        try {
+          const result = await call(`/admin/environments/${entry.id}/token`, { method: 'POST' })
+          if (result.ok) {
+            setToken(result.token)
+            setFlash(t('rotated').replace('{id}', entry.id))
+            await load()
+          } else {
+            setFlash(t('actionFailed').replace('{message}', result.error ?? ''))
+          }
+        } finally {
+          setBusy('')
+        }
+      }, [load, t])
+
+      const role = state.self?.role ?? 'main'
+      const children = [h('p', { key: 'hint', style: styles.hint }, t('hint'))]
+      if (flash !== '') children.push(h('div', { key: 'flash', style: styles.ok }, flash))
+
+      if (token !== '') {
+        children.push(h('div', { key: 'token', style: styles.tokenBox },
+          h('div', { style: styles.tokenTitle }, t('tokenOnce')),
+          h('code', { style: styles.tokenCode }, token),
+          h('p', { style: styles.hint }, t('tokenHint'))))
+      }
+
+      if (state.phase === 'failed') children.push(h('div', { key: 'error', style: styles.error }, t('unreachable')))
+
+      if (role === 'main') {
+        const rows = state.environments.map((entry) => h('tr', { key: entry.id },
+          h('td', { style: styles.cell },
+            h('div', null, entry.label),
+            entry.hostname === undefined ? null : h('div', { style: styles.detail }, entry.hostname)),
+          h('td', { style: { ...styles.cell, ...styles.mono } }, `/${entry.id}/`),
+          h('td', { style: { ...styles.cell, ...styles.mono } }, entry.tokenHint),
+          h('td', { style: styles.cell },
+            h('span', { style: entry.online ? styles.ok : styles.dim }, entry.online ? t('online') : t('offline')),
+            entry.online || entry.lastSeen === undefined
+              ? null
+              : h('div', { style: styles.detail }, new Date(entry.lastSeen).toLocaleString())),
+          h('td', { style: styles.cell },
+            entry.online ? h('button', { key: 'open', style: styles.button, onClick: () => window.open(`/${entry.id}/`, '_blank') }, t('open')) : null,
+            h('button', { key: 'rot', style: styles.button, disabled: busy !== '', onClick: () => void rotate(entry) }, t('rotate')),
+            h('button', { key: 'rm', style: styles.button, disabled: busy !== '', onClick: () => void remove(entry) }, t('remove')))))
+
+        const table = h('table', { style: styles.table },
+          h('thead', null, h('tr', null,
+            ['colName', 'colPath', 'colToken', 'colState', 'colActions'].map((key) => h('th', { key, style: styles.cell }, t(key))))),
+          h('tbody', null, state.environments.length === 0
+            ? h('tr', null, h('td', { colSpan: 5, style: { ...styles.cell, ...styles.dim } }, t('empty')))
+            : rows))
+
+        children.push(h('div', { key: 'table', style: { marginTop: 14 } }, table))
+        children.push(h('div', { key: 'form', style: styles.form },
+          h('label', { key: 'l' }, `${t('labelLabel')} `),
+          h('input', {
+            key: 'i', style: styles.input, value: label,
+            placeholder: t('labelPlaceholder'),
+            onChange: (event) => setLabel(event.target.value),
+          }),
+          h('button', { key: 'b', style: styles.button, disabled: busy !== '', onClick: () => void create() },
+            busy === 'create' ? t('creating') : t('create'))))
+      } else {
+        children.push(h('div', { key: 'edge', style: styles.note }, t('edgeNote')))
+      }
+
+      children.push(h('div', { key: 'actions', style: { marginTop: 14 } },
+        h('button', { style: styles.button, disabled: busy !== '', onClick: () => void load() }, t('refresh'))))
+
+      return h('div', { style: styles.wrap }, children)
     }
 
     const apply = (ctx) => {

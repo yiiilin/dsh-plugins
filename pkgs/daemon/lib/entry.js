@@ -36,7 +36,17 @@ import { connect } from 'node:net'
  * @returns the value with its path scoped under the prefix.
  */
 export function scopeCookiePath(value, prefix) {
-  return value.replace(/;\s*Path=\/(?=;|$)/iu, `; Path=${prefix}/`)
+  // An exact `Path=/` is the one we own; a narrower one belongs to the upstream and
+  // rewriting it would widen a cookie that was deliberately restricted.
+  if (/;\s*Path=\/(?=;|$)/iu.test(value)) {
+    return value.replace(/;\s*Path=\/(?=;|$)/iu, `; Path=${prefix}/`)
+  }
+  // Any other Path means the upstream already scoped this cookie. Leave it alone: a
+  // second `Path` attribute in one Set-Cookie is a duplicate the browser rejects.
+  if (/;\s*Path=/iu.test(value)) return value
+  // No Path at all would default to the request's directory, and two environments share
+  // one origin — such a cookie would be sent to both.
+  return `${value}; Path=${prefix}`
 }
 
 /**
@@ -49,7 +59,7 @@ export function scopeCookiePath(value, prefix) {
  * @param ids - the profile ids this entry routes.
  * @returns the matched id and stripped upstream path, or undefined.
  */
-export function routeProfile(url, ids) {
+export function routeEnvironment(url, ids) {
   const queryAt = url.indexOf('?')
   const path = queryAt === -1 ? url : url.slice(0, queryAt)
   const search = queryAt === -1 ? '' : url.slice(queryAt)
@@ -90,7 +100,7 @@ export function scopeLocation(location, prefix) {
  * @param options.host - bind address (`0.0.0.0` is allowed here; this listener
  *   is the authenticated surface, unlike a profile's loopback port).
  * @param options.port - bind port.
- * @param options.listProfiles - returns `{ id, port }` for every running profile.
+ * @param options.listEnvironments - returns `{ id, online }` for every environment.
  * @param options.local - handles a daemon-owned request; returns true when it
  *   wrote the response. Everything it declines is matched against profiles.
  * @param options.root - the upstream that owns paths no prefix claims, or
@@ -98,13 +108,16 @@ export function scopeLocation(location, prefix) {
  *   upstream session, `ensure()` to mint it, and `refresh()` to drop it after a
  *   rejection. When `prefix` is set, the root is reached under that prefix and
  *   every other path redirects there.
+ * @param options.tunnel - `{ path, server, tokenOf, hub }`: where edges connect, the
+ *   WebSocket server that accepts them, how a token is read, and the hub that proxies
+ *   requests into them.
  * @param options.notFound - writes a response for an unroutable request.
  * @returns the listening port and a close function.
  */
-export function startEntry({ host, port, listProfiles, local, root, notFound }) {
+export function startEntry({ host, port, listEnvironments, local, root, tunnel, notFound }) {
   const server = createServer((req, res) => {
     const url = req.url ?? '/'
-    void handleHttp({ req, res, url, listProfiles, local, root, notFound }).catch((error) => {
+    void handleHttp({ req, res, url, listEnvironments, local, root, tunnel, notFound }).catch((error) => {
       if (!res.headersSent) {
         res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' })
         res.end(`daemon: request failed: ${error?.message ?? error}\n`)
@@ -116,10 +129,28 @@ export function startEntry({ host, port, listProfiles, local, root, notFound }) 
 
   server.on('upgrade', (req, socket, head) => {
     const url = req.url ?? '/'
-    const routed = routeProfile(url, listProfiles().map((entry) => entry.id))
-    const upstream = routed === undefined ? undefined : findPort(listProfiles(), routed.id)
-    if (routed !== undefined && upstream !== undefined) {
-      proxyUpgrade({ req, socket, head, port: upstream, path: routed.path })
+    const path = url.split('?')[0]
+
+    // An edge presenting itself. Checked before any environment prefix so an
+    // environment can never be named into this path.
+    if (tunnel !== undefined && path === tunnel.path) {
+      const token = tunnel.tokenOf(req)
+      const environment = token === '' ? undefined : tunnel.hub.verify(token)
+      if (environment === undefined) {
+        socket.end('HTTP/1.1 401 Unauthorized\r\nconnection: close\r\n\r\n')
+        return
+      }
+      tunnel.server.handleUpgrade(req, socket, head, (ws) => {
+        tunnel.hub.accept(environment, ws)
+      })
+      return
+    }
+
+    const routed = routeEnvironment(url, listEnvironments().map((entry) => entry.id))
+    if (routed !== undefined && tunnel !== undefined) {
+      if (!tunnel.hub.proxyUpgrade(routed.id, req, socket, head, routed.path)) {
+        socket.end('HTTP/1.1 503 Service Unavailable\r\nconnection: close\r\n\r\n')
+      }
       return
     }
     // The root profile's client opens its mux socket against `document.baseURI`,
@@ -160,7 +191,7 @@ export function startEntry({ host, port, listProfiles, local, root, notFound }) 
   })
 }
 
-async function handleHttp({ req, res, url, listProfiles, local, root, notFound }) {
+async function handleHttp({ req, res, url, listEnvironments, local, root, tunnel, notFound }) {
   // Daemon-owned paths win: the portal, the login endpoints and `/admin` must
   // never be reachable through a profile whose id happens to look similar.
   let handled
@@ -197,10 +228,13 @@ async function handleHttp({ req, res, url, listProfiles, local, root, notFound }
     }
   }
 
-  const routed = routeProfile(url, listProfiles().map((entry) => entry.id))
-  const port = routed === undefined ? undefined : findPort(listProfiles(), routed.id)
-  if (routed !== undefined && port !== undefined) {
-    proxyRequest({ req, res, port, path: routed.path, prefix: `/${routed.id}` })
+  const routed = routeEnvironment(url, listEnvironments().map((entry) => entry.id))
+  if (routed !== undefined) {
+    if (tunnel !== undefined && tunnel.hub.proxy(routed.id, req, res, routed.path)) return
+    // Offline is a state, not a deletion: say which environment is unreachable
+    // instead of a bare 404, which reads as 'this environment does not exist'.
+    res.writeHead(503, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+    res.end(offlinePage(routed.id))
     return
   }
   // No prefix claimed this path, so it belongs to the root profile. That profile
@@ -224,9 +258,15 @@ async function handleHttp({ req, res, url, listProfiles, local, root, notFound }
   notFound(req, res, url)
 }
 
-function findPort(profiles, id) {
-  const entry = profiles.find((candidate) => candidate.id === id)
-  return entry === undefined ? undefined : entry.port
+/** A page for an environment that has no tunnel right now. */
+function offlinePage(id) {
+  const safe = String(id).replace(/[<>&"]/gu, (ch) => `&#${ch.codePointAt(0)};`)
+  return `<!doctype html><meta charset="utf-8"><title>${safe} offline</title>`
+    + '<style>body{font:14px system-ui;margin:12vh auto;max-width:34rem;padding:0 1.5rem;color:#444}'
+    + 'code{background:#f4f4f4;padding:.15em .35em;border-radius:3px}</style>'
+    + `<h1 style="font-size:1.15rem">环境 <code>${safe}</code> 当前离线</h1>`
+    + '<p>这台机器上的 dsh 没有连到主节点。它可能关机、断网，或它的 daemon 没有运行。</p>'
+    + '<p>环境仍然存在，隧道恢复后这里会自动可用。</p>'
 }
 
 /**
