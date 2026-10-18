@@ -59,7 +59,7 @@ export const SSH_PROVIDER_MODULES = ['dsh-ssh', 'dsh-fs-ssh', 'dsh-subprocess-ss
  * @param options.harnessVersion - version to pin the harness modules to.
  * @returns the dependency map written into the profile manifest.
  */
-export function profileDependencies(bundles, { agentPresetsDir, harnessVersion, kind }) {
+export function profileDependencies(bundles, { agentPresetsDir, harnessVersion }) {
   const dependencies = {}
   if (agentPresetsDir !== undefined && bundles.includes('@local/yiln-agent-preset')) {
     // A link keeps the profile on the deployment's live preset, not a copy.
@@ -67,9 +67,8 @@ export function profileDependencies(bundles, { agentPresetsDir, harnessVersion, 
   }
   if (harnessVersion !== undefined) {
     for (const module of HARNESS_MODULES) dependencies[`@deepseek-ai/${module}`] = harnessVersion
-    if (kind === 'ssh') {
-      for (const module of SSH_PROVIDER_MODULES) dependencies[`@deepseek-ai/${module}`] = harnessVersion
-    }
+    // Every managed environment swaps the local providers for SSH-backed ones.
+    for (const module of SSH_PROVIDER_MODULES) dependencies[`@deepseek-ai/${module}`] = harnessVersion
   }
   return dependencies
 }
@@ -90,18 +89,6 @@ export function compose(rows, fragment = '') {
   const body = dumpYaml(rows, { lineWidth: 200 }).trimEnd()
   const extra = fragment.trim()
   return `${PATCH_HEADER}${body}${extra === '' ? '' : `\n\n${extra}`}\n`
-}
-
-/**
- * Render the patch layer for a local profile.
- *
- * @param options.workspace - the working directory sessions start in.
- * @param options.fragment - operator rows appended verbatim (model routing,
- *   preset defaults); deployment facts this package must not know.
- * @returns the patch text, one top-level YAML sequence.
- */
-export function renderLocalPatch({ workspace, fragment = '' }) {
-  return compose([{ id: 'working-directory', config: { defaultDirectory: workspace } }], fragment)
 }
 
 /**
@@ -187,12 +174,7 @@ export async function writeProfile(
   await writeFile(join(profileDir, 'cordis.yml'), '[]\n')
   const patchPath = join(profileDir, 'cordis.patch.yml')
   if (reseed || (await isMissing(patchPath))) {
-    await writeFile(
-      patchPath,
-      profile.kind === 'ssh'
-        ? renderSshPatch(profile, { fragment })
-        : renderLocalPatch({ workspace: profile.workspace, fragment }),
-    )
+    await writeFile(patchPath, renderSshPatch(profile, { fragment }))
   }
   return { packagePath, patchPath, rootPath: join(profileDir, 'cordis.yml') }
 }

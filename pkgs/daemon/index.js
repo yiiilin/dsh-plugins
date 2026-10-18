@@ -14,10 +14,11 @@
  */
 
 import { spawn } from 'node:child_process'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import { createAdmin } from './lib/admin.js'
+import { generateKey, removeSshFragment, writeSshFragment } from './lib/credentials.js'
 import { createAuth } from './lib/auth/gateway.js'
 import { startEntry } from './lib/entry.js'
 import { renderPortal } from './lib/portal.js'
@@ -48,7 +49,13 @@ export const Config = z.object({
   host: z.string().default('0.0.0.0'),
   /** Bind port of the public listener. */
   port: z.natural().max(65535).default(3080),
-  /** First loopback port offered to a profile. */
+  /**
+   * The operator's ssh config. One `Include` line is added there pointing at the
+   * fragment directory, because `dsh-ssh` passes no identity or port flags — ssh can
+   * only learn them from its own configuration.
+   */
+  sshConfigPath: z.string().default(''),
+  /** First loopback port offered to a managed environment. */
   portBase: z.natural().max(65535).default(56789),
   /** Registry JSON path. */
   registryPath: z.string().default(''),
@@ -141,6 +148,9 @@ export function apply(ctx, config) {
     config.registryPath === '' ? join(homeDir, 'daemon', 'profiles.json') : config.registryPath,
   )
   const cacheDir = resolve(config.cacheDir === '' ? join(homeDir, 'daemon', 'cache') : config.cacheDir)
+  const daemonDir = resolve(join(homeDir, 'daemon'))
+  const keysRoot = join(daemonDir, 'keys')
+  const sshConfigDir = join(daemonDir, 'ssh_config.d')
   const profileDir = (profile) => join(homeDir, 'profiles', profile)
 
   let profiles = []
@@ -194,88 +204,42 @@ export function apply(ctx, config) {
      * its dependencies, and register it.
      */
     async create(input) {
-      if (typeof input.adopt === 'string' && input.adopt !== '') {
-        return provision.adopt({ ...input, profile: input.adopt })
-      }
       const id = deriveId(input.id ?? input.sshHost ?? '', new Set([...registry.usedIds(), ...RESERVED_IDS]))
-      const port = allocatePort(config.portBase, registry.usedPorts())
-      const kind = input.kind === 'ssh' ? 'ssh' : 'local'
-      const workspace = input.workspace ?? (kind === 'ssh' ? '/root/workspace' : join(homeDir, 'ws', id))
+      const sshHost = requireField(input, 'sshHost')
+      const sshUser = requireField(input, 'sshUser')
+      const sshHelper = input.sshHelper ?? join('/opt/dsh-helper', 'dsh-ssh-helper')
+
+      // One helper defines one environment (ADR 0002). Two records sharing a helper
+      // would fight over the same file and the same authorized_keys line.
+      const clash = profiles.find((entry) => entry.sshHost === sshHost && entry.sshHelper === sshHelper)
+      if (clash !== undefined) {
+        throw new Error(`daemon: helper ${sshHelper} on ${sshHost} is already used by environment "${clash.id}"`)
+      }
+
+      // Keys first: an environment without a usable credential cannot be started,
+      // and the alias written into ssh_config references the key path.
+      const key = await generateKey({ keysRoot, id })
+      const alias = `dsh-${id}`
       const draft = {
         id,
         label: input.label ?? id,
-        kind,
         profile: `daemon-${id}`,
-        port,
-        workspace,
-        enabled: true,
-        ...(kind === 'ssh'
-          ? {
-              sshHost: requireField(input, 'sshHost'),
-              // Keep an omitted port omitted: an ssh_config alias may already
-              // declare one, and an explicit default would override it.
-              ...(input.sshPort === undefined ? {} : { sshPort: Number(input.sshPort) }),
-              sshUser: requireField(input, 'sshUser'),
-              sshHelper: input.sshHelper ?? '/opt/dsh-helper/dsh-ssh-helper',
-              sshHelperHash: requireField(input, 'sshHelperHash'),
-              ...(input.sshNode === undefined ? {} : { sshNode: input.sshNode }),
-            }
-          : {}),
+        port: allocatePort(config.portBase, registry.usedPorts()),
+        workspace: input.workspace ?? '/root/workspace',
+        enabled: input.enabled === undefined ? true : input.enabled !== false,
+        sshHost,
+        sshUser,
+        sshHelper,
+        sshHelperHash: requireField(input, 'sshHelperHash'),
+        sshKeyPath: key.keyPath,
+        ...(input.sshPort === undefined ? {} : { sshPort: Number(input.sshPort) }),
       }
       const profile = normalizeProfile(draft)
-
-      await mkdir(profile.workspace, { recursive: true }).catch(() => {})
-      await writeProfile(profileDir(profile.profile), profile, {
-        bundles: config.profileBundles,
-        dependencies: profileDependencies(config.profileBundles, {
-          agentPresetsDir: join(homeDir, '.agent-presets'),
-          harnessVersion: config.harnessVersion === '' ? undefined : config.harnessVersion,
-          kind: profile.kind,
-        }),
-        fragment: await readFragment(),
-      })
-      await installDependencies(profileDir(profile.profile), config.pnpmPath, homeDir)
+      await writeSshFragment({ sshConfigDir, alias, entry: profile })
 
       profiles = [...profiles, profile]
       await registry.save()
       logger.info(`daemon: created profile "${profile.id}" on port ${profile.port}`)
-      return profile
-    },
-
-    /**
-     * Register an existing profile directory.
-     *
-     * A hand-managed profile carries its own bundles, plugins and persisted
-     * settings. Regenerating it would discard them, so adoption only records the
-     * coordinates and leaves every file untouched.
-     *
-     * @param input - `{ id, profile, workspace, port? }`.
-     * @returns the registered profile.
-     */
-    async adopt(input) {
-      const profileName = requireField(input, 'profile')
-      const directory = profileDir(profileName)
-      try {
-        await readFile(join(directory, 'package.json'), 'utf8')
-      } catch {
-        throw new Error(`daemon: no profile manifest at ${directory}`)
-      }
-      const id = deriveId(input.id ?? profileName, new Set([...registry.usedIds(), ...RESERVED_IDS]))
-      const port = input.port === undefined
-        ? allocatePort(config.portBase, registry.usedPorts())
-        : Number(input.port)
-      const profile = normalizeProfile({
-        id,
-        label: input.label ?? id,
-        kind: 'local',
-        profile: profileName,
-        port,
-        workspace: input.workspace ?? join(homeDir, 'ws', id),
-        enabled: true,
-      })
-      profiles = [...profiles, profile]
-      await registry.save()
-      logger.info(`daemon: adopted existing profile "${profileName}" as "${profile.id}" on port ${profile.port}`)
       return profile
     },
 
@@ -291,13 +255,21 @@ export function apply(ctx, config) {
       const profile = registry.find(id)
       if (profile === undefined) throw new Error(`daemon: unknown profile "${id}"`)
       await supervisor.stop(id)
+      await removeSshFragment({ sshConfigDir, id })
+      await rm(join(keysRoot, id), { recursive: true, force: true })
       profiles = profiles.filter((candidate) => candidate.id !== id)
       await registry.save()
-      logger.info(`daemon: removed profile "${profile.id}"`)
+      logger.info(`daemon: removed environment "${profile.id}"`)
     },
   }
 
-  const ssh = createSshOps({ config: { ...config, cacheDir, helperVersion: config.helperVersion }, logger })
+  const sshConfigPath = config.sshConfigPath === ''
+    ? join(process.env.HOME ?? '/root', '.ssh', 'config')
+    : config.sshConfigPath
+  const ssh = createSshOps({
+    config: { ...config, cacheDir, helperVersion: config.helperVersion },
+    logger,
+  })
   const admin = createAdmin({ registry, supervisor, provision, ssh, config: { ...config, cacheDir } })
 
   const password = config.password !== ''

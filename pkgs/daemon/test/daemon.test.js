@@ -11,7 +11,6 @@ import {
   HARNESS_MODULES,
   profileDependencies,
   SSH_PROVIDER_MODULES,
-  renderLocalPatch,
   renderSshPatch,
   writeProfile,
 } from '../lib/provision.js'
@@ -28,14 +27,14 @@ import { digestOf, patchBundle } from '../lib/helper.js'
 const sshProfile = () =>
   normalizeProfile({
     id: 'box1',
-    kind: 'ssh',
-    port: 56790,
+    port: 56800,
     workspace: '/root/boxws',
     sshHost: 'dsh-box1',
     sshUser: 'root',
     sshPort: 22,
     sshHelper: '/opt/dsh-helper/dsh-ssh-helper',
     sshHelperHash: 'a'.repeat(64),
+    sshKeyPath: '/root/.dsh/daemon/keys/box1/id_ed25519',
   })
 
 // --- routing -----------------------------------------------------------------
@@ -70,39 +69,51 @@ test('scopeLocation keeps a redirect inside its prefix', () => {
 
 // --- registry ----------------------------------------------------------------
 
-test('a local profile needs only its own fields', () => {
-  const profile = normalizeProfile({ id: 'a', port: 56789, workspace: '/w' })
-  assert.equal(profile.kind, 'local')
+test('every managed environment carries its SSH coordinates', () => {
+  // There is no local variant: a managed environment is always reached over SSH, and
+  // the main environment is not a registry entry at all.
+  const profile = normalizeProfile({
+    id: 'a', port: 56800, workspace: '/w',
+    sshHost: 'h', sshUser: 'root', sshHelper: '/opt/h', sshHelperHash: 'b'.repeat(64),
+  })
+  assert.equal(profile.kind, undefined, 'no kind field anymore')
   assert.equal(profile.profile, 'daemon-a')
   assert.equal(profile.enabled, true)
-  assert.equal(profile.sshHost, undefined)
+  assert.throws(
+    () => normalizeProfile({ id: 'b', port: 56800, workspace: '/w' }),
+    /sshHost/u,
+    'SSH fields are required',
+  )
 })
 
 test('an ssh profile carries its connection coordinates', () => {
   const profile = sshProfile()
   assert.equal(profile.sshHost, 'dsh-box1')
   assert.equal(profile.sshPort, 22)
+  assert.equal(profile.sshKeyPath, '/root/.dsh/daemon/keys/box1/id_ed25519')
   assert.equal(profile.sshNode, undefined, 'a static helper needs no remote node')
 })
 
 test('an omitted ssh port stays omitted so an ssh_config alias keeps its own', () => {
-  // A default of 22 would become an explicit `-p 22` and override the alias's
-  // Port, silently connecting to the wrong port.
+  // A default of 22 would become an explicit `-p 22` and override the alias's Port,
+  // silently connecting to the wrong port.
   const profile = normalizeProfile({
-    id: 'a', kind: 'ssh', port: 1, workspace: '/w',
+    id: 'a', port: 1, workspace: '/w',
     sshHost: 'dsh-box1', sshUser: 'root', sshHelper: '/h', sshHelperHash: 'a'.repeat(64),
   })
   assert.equal(profile.sshPort, undefined)
 })
 
 test('unknown fields are rejected rather than silently dropped', () => {
-  assert.throws(() => normalizeProfile({ id: 'a', port: 1, workspace: '/w', nope: 1 }), /unknown field/)
+  const ssh = { sshHost: 'h', sshUser: 'root', sshHelper: '/h', sshHelperHash: 'e'.repeat(64) }
+  assert.throws(() => normalizeProfile({ id: 'a', port: 1, workspace: '/w', ...ssh, nope: 1 }), /unknown field/u)
 })
 
 test('a reserved or malformed id is refused', () => {
-  assert.throws(() => normalizeProfile({ id: 'admin', port: 1, workspace: '/w' }), /reserved/)
-  assert.throws(() => normalizeProfile({ id: 'A', port: 1, workspace: '/w' }), /must match/)
-  assert.throws(() => normalizeProfile({ id: 'a', port: 1, workspace: 'rel' }), /absolute path/)
+  const ssh = { sshHost: 'h', sshUser: 'root', sshHelper: '/h', sshHelperHash: 'e'.repeat(64) }
+  assert.throws(() => normalizeProfile({ id: 'admin', port: 1, workspace: '/w', ...ssh }), /reserved/u)
+  assert.throws(() => normalizeProfile({ id: 'A', port: 1, workspace: '/w', ...ssh }), /must match/u)
+  assert.throws(() => normalizeProfile({ id: 'a', port: 1, workspace: 'rel', ...ssh }), /absolute path/u)
 })
 
 test('deriveId makes any name usable instead of failing', () => {
@@ -120,20 +131,41 @@ test('allocatePort skips used ports and reports exhaustion', () => {
   assert.throws(() => allocatePort(65000, new Set(Array.from({ length: 600 }, (_, i) => 65000 + i))), /no free port/)
 })
 
-test('the registry round-trips and rejects duplicates', () => {
-  const profiles = [normalizeProfile({ id: 'a', port: 1, workspace: '/w' })]
-  assert.deepEqual(parseRegistry(serializeRegistry(profiles)), profiles)
-  assert.throws(() => parseRegistry({ profiles: [{ id: 'a', port: 1, workspace: '/w' }, { id: 'a', port: 2, workspace: '/w' }] }), /duplicate/)
+test('the registry round-trips and rejects duplicate ids', () => {
+  const one = normalizeProfile({
+    id: 'a', port: 1, workspace: '/w',
+    sshHost: 'h1', sshUser: 'root', sshHelper: '/opt/h', sshHelperHash: 'c'.repeat(64),
+  })
+  assert.deepEqual(parseRegistry(serializeRegistry([one])), [one])
+  assert.throws(() => parseRegistry({ profiles: [one, { ...one, port: 2 }] }), /duplicate/u)
   assert.deepEqual(parseRegistry(undefined), [])
+})
+
+test('one helper defines one environment', () => {
+  // Two records sharing a helper would fight over the same file and the same
+  // authorized_keys line, so the registry refuses the second (ADR 0002).
+  const base = {
+    workspace: '/w', sshUser: 'root', sshHelper: '/opt/dsh-helper/dsh-ssh-helper',
+    sshHelperHash: 'd'.repeat(64),
+  }
+  const a = normalizeProfile({ ...base, id: 'a', port: 1, sshHost: 'box1' })
+  const b = normalizeProfile({ ...base, id: 'b', port: 2, sshHost: 'box1' })
+  assert.throws(() => parseRegistry({ profiles: [a, b] }), /already used by environment a/u)
+  // A different helper path on the same host is a different environment.
+  const c = normalizeProfile({ ...base, id: 'c', port: 3, sshHost: 'box1', sshHelper: '/opt/other' })
+  assert.equal(parseRegistry({ profiles: [a, c] }).length, 2)
 })
 
 // --- provision ---------------------------------------------------------------
 
 test('a generated patch is one YAML sequence even with a fragment', () => {
-  const text = renderLocalPatch({ workspace: '/w', fragment: '- id: agent-default-model\n  config:\n    provider: x' })
+  // Every managed environment is an SSH environment, so the SSH renderer is the only
+  // one; the fragment must still append as more rows of the same sequence.
+  const text = renderSshPatch(sshProfile(), { fragment: '- id: agent-default-model\n  config:\n    provider: x' })
   const rows = yaml.load(text, { schema: yaml.DEFAULT_SCHEMA })
-  assert.equal(rows.length, 2)
-  assert.deepEqual(Object.keys(rows[1]), ['id', 'config'])
+  const agentRow = rows.find((row) => row.id === 'agent-default-model')
+  assert.deepEqual(Object.keys(agentRow), ['id', 'config'])
+  assert.ok(Array.isArray(rows))
 })
 
 test('an ssh patch swaps every provider and pairs permission with approval', () => {
@@ -168,18 +200,15 @@ test('a static helper selects executable launch, a node path selects script', ()
   assert.deepEqual(scriptSsh.config.launch, { kind: 'node-script', node: '/usr/bin/node' })
 })
 
-test('a remote profile declares the providers its patch mounts', () => {
+test('a managed environment declares the providers its patch mounts', () => {
   // A row naming an uninstalled package fails to import, and every service that
-  // depends on it stays pending: the profile listens but cannot create a session.
-  const deps = profileDependencies([], {
-    harnessVersion: '0.2.1-rc.2',
-    kind: 'ssh',
-  })
+  // depends on it stays pending: the environment listens but cannot create a session.
+  const deps = profileDependencies([], { harnessVersion: '0.2.1-rc.2' })
   for (const module of SSH_PROVIDER_MODULES) {
     assert.equal(deps[`@deepseek-ai/${module}`], '0.2.1-rc.2', module)
   }
-  const local = profileDependencies([], { harnessVersion: '0.2.1-rc.2', kind: 'local' })
-  assert.equal(local['@deepseek-ai/dsh-ssh'], undefined, 'a local profile needs no SSH provider')
+  // Without a harness version the pins are skipped rather than guessed.
+  assert.equal(profileDependencies([], {})['@deepseek-ai/dsh-ssh'], undefined)
 })
 
 test('profileDependencies links the preset and pins every harness module', () => {
@@ -199,11 +228,14 @@ test('compose leaves an empty fragment out entirely', () => {
 test('writeProfile seeds the patch once and never overwrites persisted settings', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'daemon-provision-'))
   try {
-    const profile = normalizeProfile({ id: 'seed', port: 56789, workspace: '/w' })
+    const profile = normalizeProfile({
+      id: 'seed', port: 56800, workspace: '/w',
+      sshHost: 'h', sshUser: 'root', sshHelper: '/opt/h', sshHelperHash: 'a'.repeat(64),
+    })
     await writeProfile(dir, profile, { bundles: ['@deepseek-ai/dsh-base'] })
     const patchPath = join(dir, 'cordis.patch.yml')
     const seeded = await readFile(patchPath, 'utf8')
-    assert.match(seeded, /defaultDirectory: \/w/u)
+    assert.match(seeded, /workspace: \/w/u)
 
     // The harness persists runtime settings into this same file; a second seed
     // would discard them, so an existing patch must be left alone.
@@ -291,7 +323,8 @@ test('portal copy follows Accept-Language and escapes untrusted text', () => {
 test('every reserved id is refused as a profile id', () => {
   for (const id of RESERVED_IDS) {
     if (!/^[a-z][a-z0-9-]{0,30}$/u.test(id)) continue
-    assert.throws(() => normalizeProfile({ id, port: 1, workspace: '/w' }), /reserved/u, id)
+    const ssh = { sshHost: 'h', sshUser: 'root', sshHelper: '/h', sshHelperHash: 'f'.repeat(64) }
+    assert.throws(() => normalizeProfile({ id, port: 1, workspace: '/w', ...ssh }), /reserved/u, id)
   }
 })
 
@@ -638,4 +671,73 @@ test('the embedded root mints its session from connection.authenticatedUrl', asy
   } finally {
     await new Promise((done) => upstream.close(done))
   }
+})
+
+// --- credentials -------------------------------------------------------------
+
+test('the ssh fragment gives dsh-ssh everything it needs', async () => {
+  // dsh-ssh passes only a target string to ssh: no -i, no -p, no -F. The identity,
+  // port and user must therefore come from ssh's own configuration.
+  const { renderSshConfig } = await import('../lib/credentials.js')
+  const text = renderSshConfig(
+    { sshHost: '10.0.0.5', sshPort: 2222, sshUser: 'deploy', sshKeyPath: '/keys/a/id_ed25519' },
+    { alias: 'dsh-a' },
+  )
+  assert.match(text, /^Host dsh-a$/mu)
+  assert.match(text, /^ {2}HostName 10\.0\.0\.5$/mu)
+  assert.match(text, /^ {2}Port 2222$/mu)
+  assert.match(text, /^ {2}User deploy$/mu)
+  assert.match(text, /^ {2}IdentityFile \/keys\/a\/id_ed25519$/mu)
+  // Without IdentitiesOnly an unrelated agent key could be offered first.
+  assert.match(text, /^ {2}IdentitiesOnly yes$/mu)
+})
+
+test('an omitted port leaves the alias to decide', async () => {
+  const { renderSshConfig } = await import('../lib/credentials.js')
+  const text = renderSshConfig({ sshHost: 'h', sshUser: 'root', sshKeyPath: '/k' }, { alias: 'dsh-a' })
+  assert.ok(!text.includes('Port'), 'no Port line when the port is omitted')
+})
+
+test('the include block is added once and removed exactly', async () => {
+  // The operator's ssh config gains exactly one block. A second run must not append
+  // another, and removal must leave every other line untouched.
+  const { ensureSshInclude, removeSshInclude } = await import('../lib/credentials.js')
+  const { mkdtemp, readFile, rm, writeFile } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const dir = await mkdtemp(join(tmpdir(), 'daemon-sshcfg-'))
+  const path = join(dir, 'config')
+  try {
+    await writeFile(path, 'Host kept\n  HostName example.com\n')
+    assert.equal(await ensureSshInclude({ configPath: path, includeDir: join(dir, 'd') }), true)
+    assert.equal(await ensureSshInclude({ configPath: path, includeDir: join(dir, 'd') }), false, 'idempotent')
+    const after = await readFile(path, 'utf8')
+    assert.equal(after.match(/Include /gu).length, 1, 'one include line only')
+    assert.match(after, /Host kept/u, 'existing content preserved')
+    assert.equal(await removeSshInclude(path), true)
+    const cleaned = await readFile(path, 'utf8')
+    assert.ok(!cleaned.includes('Include'))
+    assert.match(cleaned, /Host kept/u)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('known_hosts merges without duplicating a known host', async () => {
+  const { mergeKnownHosts } = await import('../lib/credentials.js')
+  const existing = 'h1 ssh-ed25519 AAAA\n'
+  const merged = mergeKnownHosts(existing, ['h1 ssh-ed25519 AAAA', 'h2 ssh-ed25519 BBBB'])
+  assert.equal(merged.trim().split('\n').length, 2)
+})
+
+test('the install command marks the key and replaces the previous one', async () => {
+  // The marker is what makes rotation safe: the old line is matched exactly and
+  // removed before the new one lands, so authorized_keys cannot accumulate keys
+  // nobody can attribute.
+  const { installPublicKeyCommand, removePublicKeyCommand } = await import('../lib/credentials.js')
+  const install = installPublicKeyCommand('ssh-ed25519 AAAA key', 'env1')
+  assert.match(install, /dsh-daemon:env1/u)
+  assert.match(install, /grep -v/u, 'old line removed first')
+  const remove = removePublicKeyCommand('env1')
+  assert.match(remove, /dsh-daemon:env1/u)
+  assert.match(remove, /grep -v/u)
 })

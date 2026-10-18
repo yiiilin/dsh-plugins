@@ -34,11 +34,24 @@ export const RESERVED_IDS = new Set([
   'settings',
 ])
 
-/** Fields every profile carries. */
-const COMMON_FIELDS = ['id', 'label', 'kind', 'profile', 'port', 'workspace', 'enabled']
+/**
+ * Fields every environment carries.
+ *
+ * There is no `kind`: a managed environment is always reached over SSH. The main
+ * environment — the one running this daemon — is not a registry entry at all, so a
+ * local variant has no representation here.
+ */
+const COMMON_FIELDS = ['id', 'label', 'profile', 'port', 'workspace', 'enabled']
 
-/** Fields only an SSH profile carries. */
-const SSH_FIELDS = ['sshHost', 'sshPort', 'sshUser', 'sshNode', 'sshHelper', 'sshHelperHash']
+/** Fields describing how to reach the remote host. */
+const SSH_FIELDS = [
+  'sshHost',
+  'sshPort',
+  'sshUser',
+  'sshHelper',
+  'sshHelperHash',
+  'sshKeyPath',
+]
 
 /**
  * Normalize a raw profile record and reject one the daemon could not serve.
@@ -67,30 +80,22 @@ export function normalizeProfile(raw) {
     throw new TypeError(`daemon: profile id ${JSON.stringify(id)} is reserved by the daemon`)
   }
 
-  const kind = raw.kind ?? 'local'
-  if (kind !== 'local' && kind !== 'ssh') {
-    throw new TypeError(`daemon: profile kind must be "local" or "ssh", got ${JSON.stringify(kind)}`)
-  }
-
   const profile = {
     id,
     label: raw.label === undefined ? id : requireString(raw, 'label'),
-    kind,
     profile: raw.profile === undefined ? `daemon-${id}` : requireString(raw, 'profile'),
     port: requirePort(raw, 'port'),
     workspace: requireAbsolutePath(raw, 'workspace'),
     enabled: raw.enabled === undefined ? true : requireBoolean(raw, 'enabled'),
+    sshHost: requireString(raw, 'sshHost'),
+    sshUser: requireString(raw, 'sshUser'),
+    sshHelper: requireAbsolutePath(raw, 'sshHelper'),
+    sshHelperHash: requireHash(raw, 'sshHelperHash'),
   }
-
-  if (kind === 'ssh') {
-    profile.sshHost = requireString(raw, 'sshHost')
-    if (raw.sshPort !== undefined) profile.sshPort = requirePort(raw, 'sshPort')
-    profile.sshUser = requireString(raw, 'sshUser')
-    const node = optionalAbsolutePath(raw, 'sshNode')
-    if (node !== undefined) profile.sshNode = node
-    profile.sshHelper = requireAbsolutePath(raw, 'sshHelper')
-    profile.sshHelperHash = requireHash(raw, 'sshHelperHash')
-  }
+  // An omitted port stays omitted: an ssh_config alias may declare its own, and an
+  // explicit default would override it.
+  if (raw.sshPort !== undefined) profile.sshPort = requirePort(raw, 'sshPort')
+  if (raw.sshKeyPath !== undefined) profile.sshKeyPath = requireAbsolutePath(raw, 'sshKeyPath')
 
   return profile
 }
@@ -112,9 +117,20 @@ export function parseRegistry(parsed) {
   if (!Array.isArray(profiles)) throw new TypeError('daemon: registry "profiles" must be an array')
   const normalized = profiles.map(normalizeProfile)
   const seen = new Set()
+  const helpers = new Map()
   for (const profile of normalized) {
-    if (seen.has(profile.id)) throw new TypeError(`daemon: duplicate profile id ${JSON.stringify(profile.id)}`)
+    if (seen.has(profile.id)) throw new TypeError(`daemon: duplicate environment id ${JSON.stringify(profile.id)}`)
     seen.add(profile.id)
+    // One helper defines exactly one environment: two records sharing a helper
+    // would fight over the same file and the same authorized_keys line.
+    const key = `${profile.sshHost}\u0000${profile.sshHelper}`
+    const existing = helpers.get(key)
+    if (existing !== undefined) {
+      throw new TypeError(
+        `daemon: helper ${profile.sshHelper} on ${profile.sshHost} is already used by environment ${existing}`,
+      )
+    }
+    helpers.set(key, profile.id)
   }
   return normalized
 }
