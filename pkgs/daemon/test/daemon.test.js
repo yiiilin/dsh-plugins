@@ -741,3 +741,33 @@ test('the install command marks the key and replaces the previous one', async ()
   assert.match(remove, /dsh-daemon:env1/u)
   assert.match(remove, /grep -v/u)
 })
+
+test('the key-removal command is valid shell', async () => {
+  // Joining the steps with spaces produced `grep ... || true cat ...`, which bash
+  // rejects: a rotation would fail with a syntax error instead of rotating.
+  const { removePublicKeyCommand } = await import('../lib/credentials.js')
+  const { execFileSync } = await import('node:child_process')
+  const command = removePublicKeyCommand('env1')
+  assert.match(command, /dsh-daemon:env1/u)
+  execFileSync('bash', ['-n', '-c', command])
+})
+
+test('probe forwards the bootstrap identity file to ssh', async () => {
+  // A key-based bootstrap fell back to ssh's own key lookups, so the generated key —
+  // which is not installed yet — was the only one offered and the probe failed.
+  const source = await (await import('node:fs/promises')).readFile(new URL('../lib/ssh.js', import.meta.url), 'utf8')
+  const probe = source.slice(source.indexOf('async function probe('), source.indexOf('async function preview('))
+  assert.match(probe, /identityFile/u, 'probe must accept an identity file')
+  assert.match(probe, /sshExec\([^)]*identityFile/u, 'probe must forward it')
+})
+
+test('the key-removal helper exists on the ssh ops object', async () => {
+  const { createSshOps } = await import('../lib/ssh.js')
+  const ops = createSshOps({
+    config: { cacheDir: '/tmp/x', helperVersion: '0.0.0', helperDownloadUrl: '' },
+    logger: { info() {}, warn() {}, debug() {} },
+  })
+  for (const method of ['probe', 'preview', 'deploy', 'installPublicKey', 'removePublicKey', 'removeRemoteHelper', 'health']) {
+    assert.equal(typeof ops[method], 'function', method)
+  }
+})

@@ -12,7 +12,7 @@
 import { createReadStream } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { dirname } from 'node:path'
-import { installPublicKeyCommand } from './credentials.js'
+import { installPublicKeyCommand, removePublicKeyCommand } from './credentials.js'
 import { resolveHelper } from './helper.js'
 
 /**
@@ -193,7 +193,7 @@ export function createSshOps({ config, logger }) {
       'echo "home=$(printf %s "$HOME")"',
       'echo "writable=$( [ -w "$HOME" ] && echo yes || echo no)"',
     ].join('; ')
-    const output = await sshExec(target, script, { password })
+    const output = await sshExec(target, script, { password, identityFile })
     const fields = {}
     for (const line of output.split('\n')) {
       const at = line.indexOf('=')
@@ -288,6 +288,23 @@ export function createSshOps({ config, logger }) {
   }
 
   /**
+   * Remove this environment's public key line from the remote host.
+   *
+   * Matched by the `dsh-daemon:<id>` marker, so a line installed by anything else is
+   * never touched. Uses the bootstrap credential: the old key is about to stop working.
+   *
+   * @param entry - the environment whose line should go.
+   * @param options.password - bootstrap password, when used.
+   * @param options.identityFile - bootstrap identity file, when used.
+   * @returns whether a line was reported removed.
+   */
+  async function removePublicKey(entry, { password, identityFile } = {}) {
+    const target = { sshHost: entry.sshHost, sshPort: entry.sshPort, sshUser: entry.sshUser }
+    const output = await sshExec(target, removePublicKeyCommand(entry.id), { password, identityFile })
+    return { removed: output.includes('removed') }
+  }
+
+  /**
    * Remove this environment's helper from the remote host.
    *
    * Uses the environment's own alias, so it works after the bootstrap credential is
@@ -304,6 +321,7 @@ export function createSshOps({ config, logger }) {
     preview,
     deploy,
     installPublicKey,
+    removePublicKey,
     removeRemoteHelper,
     health: (entry) => checkHealth(entry, { alias: aliasFor(entry) }),
   }

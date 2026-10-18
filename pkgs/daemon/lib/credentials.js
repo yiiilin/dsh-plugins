@@ -315,12 +315,13 @@ export function installPublicKeyCommand(publicKey, id) {
 export function removePublicKeyCommand(id) {
   const marker = `dsh-daemon:${id}`
   const file = '$HOME/.ssh/authorized_keys'
+  // Separated with `;`: joining on spaces made `|| true cat ...` one malformed command.
   return [
     `if [ -f ${file} ]; then`,
-    `grep -v '${marker}' ${file} > ${file}.dsh-tmp || true`,
-    `cat ${file}.dsh-tmp > ${file} || true`,
-    `rm -f ${file}.dsh-tmp`,
-    'fi',
+    `grep -v '${marker}' ${file} > ${file}.dsh-tmp || true;`,
+    `cat ${file}.dsh-tmp > ${file} || true;`,
+    `rm -f ${file}.dsh-tmp;`,
+    'fi;',
     `echo "${marker} removed"`,
   ].join(' ')
 }

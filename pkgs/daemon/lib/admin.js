@@ -144,6 +144,16 @@ export function createAdmin({ registry, supervisor, provision, ssh, config }) {
       return true
     }
 
+    if (pathname === '/admin/environments/rekey' && method === 'POST') {
+      const body = await readJson(req)
+      const id = String(body.id ?? '')
+      if (id === '') { json(res, 400, { ok: false, error: 'id is required' }); return true }
+      const updated = await provision.rekey(id, body)
+      healthCache.delete(id)
+      json(res, 200, { ok: true, environment: describe(updated, supervisor) })
+      return true
+    }
+
     if (pathname === '/admin/environments/prepare' && method === 'POST') {
       const body = await readJson(req)
       const prepared = await provision.prepare(body)

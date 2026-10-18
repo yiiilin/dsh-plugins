@@ -224,6 +224,74 @@ export function apply(ctx, config) {
 
   const provision = {
     /**
+     * Rotate one environment's credential without rebuilding it.
+     *
+     * The bootstrap credential proves access once; everything after uses a freshly
+     * generated key. The old public key line is removed by its marker before the new one
+     * is installed, so `authorized_keys` cannot accumulate lines nobody can attribute.
+     *
+     * The port, workspace and id are not editable: changing any of them builds a
+     * different environment rather than repairing this one.
+     *
+     * @param id - the environment id.
+     * @param input - bootstrap `password` or `identityFile`, plus an optional
+     *   `fingerprint` the operator already confirmed.
+     * @returns the updated environment.
+     */
+    async rekey(id, input) {
+      const entry = registry.find(id)
+      if (entry === undefined) throw new Error(`daemon: unknown environment "${id}"`)
+      const running = supervisor.isRunning(id)
+      if (running) await supervisor.stop(id)
+
+      const alias = `dsh-${id}`
+      const resolved = await resolveHost(entry.sshHost, entry.sshPort)
+      const facts = await ssh.probe({
+        sshHost: resolved.host,
+        sshPort: resolved.port,
+        sshUser: entry.sshUser,
+        password: input.password,
+        identityFile: input.identityFile,
+      })
+      const { fingerprint } = await scanHostKey({ host: resolved.host, port: resolved.port })
+      if (input.fingerprint !== undefined && input.fingerprint !== '' && input.fingerprint !== fingerprint) {
+        throw new Error(`daemon: host key fingerprint ${fingerprint} does not match the confirmed ${input.fingerprint}`)
+      }
+      await trustHostKey({
+        knownHostsPath: join(process.env.HOME ?? '/root', '.ssh', 'known_hosts'),
+        host: resolved.host,
+        port: resolved.port,
+        expectedFingerprint: fingerprint,
+      })
+
+      // The old key line goes first: `generateKey` rewrites the same path, so the
+      // authorized_keys line it belongs to must be replaced, not appended to.
+      const previous = entry.sshKeyPath
+      const key = await generateKey({ keysRoot, id })
+      await ssh.removePublicKey({ ...entry, sshHost: resolved.host, sshPort: resolved.port }, { password: input.password, identityFile: input.identityFile })
+      await ssh.installPublicKey({
+        sshHost: resolved.host,
+        sshPort: resolved.port,
+        sshUser: entry.sshUser,
+        password: input.password,
+        identityFile: input.identityFile,
+        publicKey: key.publicKey,
+        id,
+      })
+      if (previous !== key.keyPath) {
+        // A different path means the registry must follow it; a stale path would make
+        // the next connection use a file that no longer exists.
+        await registry.update(id, { sshKeyPath: key.keyPath })
+      }
+      const deployed = await ssh.deploy(registry.find(id))
+      if (deployed.sha256 !== registry.find(id).sshHelperHash) {
+        await registry.update(id, { sshHelperHash: deployed.sha256 })
+      }
+      logger.info(`daemon: rotated the credential for "${id}" (${facts.hostname})`)
+      return registry.find(id)
+    },
+
+    /**
      * Register one environment: allocate a port, write the profile and record it.
      *
      * The credential must already exist; this step only materializes the profile.
