@@ -424,3 +424,31 @@ pnpm 12 造成的。
 
 **教训**：settings 写入会触发 profile reload，而 reload 在本部署上不可靠。
 **不要在生产上用 RPC 直接触发它**，改配置就改文件 + 重启。
+
+### 2026-10-19：mux 事件流已通
+
+**根因**：升级后的 socket 在两端都是暂停态，只挂 `data` 监听器收不到字节；边端又在
+握手完成前用占位对象接帧，丢弃了浏览器发出的第一帧。两处都修好之后，
+`/env-6-13/` 的编辑器开始接受输入、会话能创建、对话能完成。
+
+**验收证据**：
+
+| 项 | 证据 |
+| --- | --- |
+| 切换环境 | `/env-6-13/` 返回 200，加载的是 6.13 自己的 UI |
+| 建会话 | 会话文件落在 6.13：`/root/.dsh/sessions/--root-Documents-.../session-0fa4bc21…`（23 KB） |
+| 完成对话 | 在 6.13 环境里问 `cat /root/work/proof/data.txt`，agent 答 `SIX13_FILE_MARKER`——该文件只存在于 6.13 |
+| 模型可用 | 模型选择器显示 `deepseek-v4.1-flash-free / High`，Model 与 Effort 两项可选 |
+| 工作区 | `Default workspace` 正常列出，会话挂在它下面 |
+
+**同时确认了一件事**：会话文件确实只落在执行它的那台机器上——本机没有那条会话。
+这正是 ADR 0003 里「数据不集中」的代价，也是设计选择。
+
+### 仍未做
+
+- 环境列表与切换 UI（第 3 步）：目前靠直接访问 `/<envId>/`，`sidebar.footer.action`
+  里的 select 未实现
+- 经隧道读取边端 profile/插件/技能清单（第 4 步）
+- 模型配置的同步与编辑做成功能（第 5 步）：手工验证过链路，未固化为界面
+- `dsh: profile reload requires the root Include entry` 的根因：已确认与本设计无关
+  （本机全新 profile 同样失败），但未找到成因

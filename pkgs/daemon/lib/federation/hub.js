@@ -91,7 +91,16 @@ export function createTunnelHub({ verifyToken, logger }) {
     if (frame.type === FRAME.heartbeat) return
     const key = frame.id.toString('hex')
     const entry = record.pending.get(key)
-    if (entry === undefined) return
+    if (entry === undefined) {
+      // Not noise: a frame for a finished request means the browser is still talking
+      // about something we already released, and a frame for a live request means the
+      // key was lost early. Both deserve a name.
+      record.orphans = (record.orphans ?? 0) + 1
+      if (record.orphans <= 5) {
+        logger.warn(`federation: ${record.envId} frame type ${frame.type} for unknown request ${key.slice(0, 8)}`)
+      }
+      return
+    }
     if (frame.type === FRAME.responseHead) {
       entry.onHead(JSON.parse(frame.payload.toString('utf8')))
       return
