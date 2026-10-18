@@ -154,12 +154,12 @@ async function handleHttp({ req, res, url, listProfiles, local, notFound }) {
   if (handled) return
 
   const routed = routeProfile(url, listProfiles().map((entry) => entry.id))
-  const upstream = routed === undefined ? undefined : findPort(listProfiles(), routed.id)
-  if (routed === undefined || upstream === undefined) {
-    notFound(req, res, url)
+  const port = routed === undefined ? undefined : findPort(listProfiles(), routed.id)
+  if (routed !== undefined && port !== undefined) {
+    proxyRequest({ req, res, port, path: routed.path, prefix: `/${routed.id}` })
     return
   }
-  proxyRequest({ req, res, port: upstream, path: routed.path, prefix: `/${routed.id}` })
+  notFound(req, res, url)
 }
 
 function findPort(profiles, id) {

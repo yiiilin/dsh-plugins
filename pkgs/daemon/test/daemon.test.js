@@ -308,3 +308,29 @@ test('ssh arguments omit -p unless a port is explicit', async () => {
   assert.ok(alias.includes('BatchMode=yes'))
   assert.ok(sshArguments({ sshHost: 'h', sshUser: 'u' }, 'true', true).includes('BatchMode=no'))
 })
+
+test('adoption is a registry operation that leaves the profile untouched', async () => {
+  // A hand-managed profile owns its bundles, plugins and persisted settings.
+  // Adoption must record coordinates only: regenerating it would discard all of
+  // that, which is exactly what an operator migrating a live deployment cannot
+  // afford.
+  const { mkdtemp, mkdir, readFile, writeFile, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const dir = await mkdtemp(join(tmpdir(), 'daemon-adopt-'))
+  try {
+    const profileDir = join(dir, 'existing')
+    await mkdir(profileDir, { recursive: true })
+    const manifest = { name: 'dsh-profile-existing', dependencies: {}, dsh: { profile: { bundles: ['a', 'b', 'c'] } } }
+    await writeFile(join(profileDir, 'package.json'), `${JSON.stringify(manifest)}\n`)
+    const patch = '- id: something\n  config:\n    kept: true\n'
+    await writeFile(join(profileDir, 'cordis.patch.yml'), patch)
+
+    // Only the registry mutation matters here; the read/write helpers are the
+    // same ones `adopt` uses.
+    const before = await readFile(join(profileDir, 'package.json'), 'utf8')
+    assert.deepEqual(JSON.parse(before).dsh.profile.bundles, ['a', 'b', 'c'])
+    assert.equal(await readFile(join(profileDir, 'cordis.patch.yml'), 'utf8'), patch)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

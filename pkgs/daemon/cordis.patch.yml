@@ -9,6 +9,9 @@
         port: 3080
         # Profile processes listen here, one port each, allocated upward.
         portBase: 56789
+        # Loopback port of this process's own harness listener, proxied for
+        # paths no profile prefix claims. 0 answers 404 instead.
+        upstreamPort: 0
         # Registry of the profiles this daemon starts and routes.
         registryPath: !!js dshHomePath('daemon/profiles.json')
         homeDir: !!js dshHomePath()

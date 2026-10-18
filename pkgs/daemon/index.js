@@ -169,6 +169,9 @@ export function apply(ctx, config) {
      * its dependencies, and register it.
      */
     async create(input) {
+      if (typeof input.adopt === 'string' && input.adopt !== '') {
+        return provision.adopt({ ...input, profile: input.adopt })
+      }
       const id = deriveId(input.id ?? input.sshHost ?? '', new Set([...registry.usedIds(), ...RESERVED_IDS]))
       const port = allocatePort(config.portBase, registry.usedPorts())
       const kind = input.kind === 'ssh' ? 'ssh' : 'local'
@@ -211,6 +214,43 @@ export function apply(ctx, config) {
       profiles = [...profiles, profile]
       await registry.save()
       logger.info(`daemon: created profile "${profile.id}" on port ${profile.port}`)
+      return profile
+    },
+
+    /**
+     * Register an existing profile directory.
+     *
+     * A hand-managed profile carries its own bundles, plugins and persisted
+     * settings. Regenerating it would discard them, so adoption only records the
+     * coordinates and leaves every file untouched.
+     *
+     * @param input - `{ id, profile, workspace, port? }`.
+     * @returns the registered profile.
+     */
+    async adopt(input) {
+      const profileName = requireField(input, 'profile')
+      const directory = profileDir(profileName)
+      try {
+        await readFile(join(directory, 'package.json'), 'utf8')
+      } catch {
+        throw new Error(`daemon: no profile manifest at ${directory}`)
+      }
+      const id = deriveId(input.id ?? profileName, new Set([...registry.usedIds(), ...RESERVED_IDS]))
+      const port = input.port === undefined
+        ? allocatePort(config.portBase, registry.usedPorts())
+        : Number(input.port)
+      const profile = normalizeProfile({
+        id,
+        label: input.label ?? id,
+        kind: 'local',
+        profile: profileName,
+        port,
+        workspace: input.workspace ?? join(homeDir, 'ws', id),
+        enabled: true,
+      })
+      profiles = [...profiles, profile]
+      await registry.save()
+      logger.info(`daemon: adopted existing profile "${profileName}" as "${profile.id}" on port ${profile.port}`)
       return profile
     },
 
@@ -280,7 +320,7 @@ export function apply(ctx, config) {
     if (path === '/admin' || path.startsWith('/admin/')) {
       return await admin(req, res, url)
     }
-    if (path === '/' || path === '/index.html') {
+    if (path === '/' || path === '/portal' || path === '/index.html') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
       res.end(
         renderPortal({
