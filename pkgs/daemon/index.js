@@ -146,6 +146,8 @@ export function apply(ctx, config) {
       role: config.role,
       host: config.host,
       port: config.port,
+      // Where this node's own UI is mounted, so a switcher can mark it as current.
+      rootPrefix: config.rootPrefix,
       plugins,
       startedAt: started,
       uptimeMs: Date.now() - started,

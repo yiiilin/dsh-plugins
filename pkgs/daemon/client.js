@@ -24,6 +24,11 @@ window.__ModuleLoader__.load({
       removed: '已移除 {id}。', rotated: '已为 {id} 换令牌。',
       actionFailed: '操作失败：{message}',
       edgeNote: '这台 dsh 是边端：它连向主节点，自己不管理其它环境。要在这里管理环境，把 role 改成 main。',
+      switcherLabel: '环境',
+      switcherLocal: '本机',
+      switcherOffline: '（离线）',
+      switcherTitle: '切换环境：打开另一台机器上的 dsh',
+      switcherFailed: '无法读取环境列表',
     }
 
     const EN = {
@@ -44,6 +49,11 @@ window.__ModuleLoader__.load({
       removed: 'Removed {id}.', rotated: 'New token issued for {id}.',
       actionFailed: 'Failed: {message}',
       edgeNote: 'This dsh is an edge: it connects to a main node and manages no environments itself. Set role to main to manage them here.',
+      switcherLabel: 'Environment',
+      switcherLocal: 'This host',
+      switcherOffline: ' (offline)',
+      switcherTitle: 'Switch environment: open the dsh on another machine',
+      switcherFailed: 'Could not read the environment list',
     }
 
     const styles = {
@@ -62,6 +72,12 @@ window.__ModuleLoader__.load({
       form: { display: 'flex', alignItems: 'center', gap: 0, marginTop: 16, flexWrap: 'wrap' },
       tokenBox: { margin: '10px 0', padding: '10px 12px', borderRadius: 6, background: 'rgba(214,158,46,.12)', border: '1px solid rgba(214,158,46,.4)' },
       tokenTitle: { fontSize: 13, fontWeight: 600, marginBottom: 6 },
+      switcher: { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', fontSize: 12 },
+      switcherLabel: { flex: 'none', opacity: 0.65, fontSize: 11 },
+      switcherSelect: {
+        flex: 1, minWidth: 0, padding: '3px 6px', fontSize: 12, borderRadius: 5,
+        border: '1px solid rgba(128,128,128,.35)', background: 'transparent', color: 'inherit',
+      },
       tokenCode: { display: 'block', fontFamily: 'ui-monospace, monospace', fontSize: 12, wordBreak: 'break-all', userSelect: 'all' },
     }
 
@@ -221,6 +237,69 @@ window.__ModuleLoader__.load({
       return h('div', { style: styles.wrap }, children)
     }
 
+
+    /**
+     * Environment switcher in the sidebar footer.
+     *
+     * A plain `select` because it is a location, not a state: choosing one navigates.
+     * The list is fetched once on mount and refreshed when the panel loads, since an
+     * environment's online state changes without anything here noticing.
+     */
+    const makeSwitcher = (t) => function EnvironmentSwitcher() {
+      const [state, setState] = useState({ phase: 'loading', role: 'main', current: '', environments: [] })
+
+      useEffect(() => {
+        let cancelled = false
+        void (async () => {
+          try {
+            const result = await call('/admin/state')
+            if (cancelled) return
+            if (result.ok) {
+              setState({
+                phase: 'ready',
+                role: result.self?.role ?? 'main',
+                current: result.self?.rootPrefix ?? '',
+                environments: result.environments ?? [],
+              })
+            } else {
+              setState((prev) => ({ ...prev, phase: 'failed' }))
+            }
+          } catch {
+            if (!cancelled) setState((prev) => ({ ...prev, phase: 'failed' }))
+          }
+        })()
+        return () => { cancelled = true }
+      }, [])
+
+      // An edge has no other environments to offer, and no list to build one from.
+      if (state.phase === 'loading' || state.role !== 'main' || state.environments.length === 0) return null
+
+      // Where we are now, so the control shows the truth rather than a default.
+      const path = window.location.pathname
+      const active = state.current !== '' && (path === `/${state.current}` || path.startsWith(`/${state.current}/`))
+        ? state.current
+        : state.environments.map((one) => one.id).find((id) => path.startsWith(`/${id}/`)) ?? ''
+
+      return h('label', { style: styles.switcher, title: t('switcherTitle') },
+        h('span', { style: styles.switcherLabel }, t('switcherLabel')),
+        h('select', {
+          style: styles.switcherSelect,
+          value: active,
+          onChange: (event) => {
+            const id = event.target.value
+            window.location.href = id === '' ? '/' : `/${id}/`
+          },
+        },
+        h('option', { value: '' }, t('switcherLocal')),
+        // Offline environments stay in the list: removing them would read as deletion,
+        // and the operator needs to see that a machine is simply unreachable.
+        ...state.environments.map((one) => h('option', {
+          key: one.id,
+          value: one.id,
+          disabled: one.online !== true,
+        }, `${one.label}${one.online === true ? '' : t('switcherOffline')}`))))
+    }
+
     const apply = (ctx) => {
       ctx.effect(() => ctx.locale.register(NS, { zh: ZH, en: EN }), 'daemon: locale')
       const t = ctx.locale.bind(NS)
@@ -237,6 +316,14 @@ window.__ModuleLoader__.load({
         key: 'daemon',
         inject: () => ({}),
       }, makePanelPage(t))), 'daemon: panel page')
+      // The switcher lives at the bottom of the sidebar: `sidebar.workspaces` is a
+      // single slot owned upstream, so there is no "above the workspace list" to use.
+      ctx.effect(() => ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
+        name: 'sidebar.footer.action',
+        id: 'daemon-environment-switcher',
+        order: -20,
+        inject: () => ({}),
+      }, makeSwitcher(t))), 'daemon: environment switcher')
     }
 
     return { name: 'daemon-client', inject: ['locale', 'slots'], apply, __test: { call, ZH, EN } }
