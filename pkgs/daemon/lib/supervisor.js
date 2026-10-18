@@ -54,6 +54,17 @@ export async function waitForPort(port, deadlineMs, intervalMs = 250) {
 }
 
 /**
+ * Read the launch URL from a profile's captured output.
+ *
+ * @param text - the output collected so far.
+ * @returns the announced URL, or undefined when the line has not appeared.
+ */
+export function launchUrlFrom(text) {
+  const match = /dsh web: (\S+)/u.exec(text ?? '')
+  return match === null ? undefined : match[1]
+}
+
+/**
  * Pick up the launch URL a profile printed.
  *
  * `dsh web` announces one line carrying its one-time token. A profile is ready
@@ -145,9 +156,19 @@ export function createSupervisor({
       return logs.get(id) ?? ''
     },
 
-    /** The launch URL a profile printed, or undefined while it is not running. */
+    /**
+     * The launch URL a profile printed.
+     *
+     * The line is printed asynchronously, so it can land after the readiness
+     * deadline; parsing the captured output on demand covers that case instead of
+     * leaving a running profile with no reachable URL.
+     */
     url(id) {
-      return urls.get(id)
+      const cached = urls.get(id)
+      if (cached !== undefined) return cached
+      const found = launchUrlFrom(logs.get(id))
+      if (found !== undefined) urls.set(id, found)
+      return found
     },
 
     /**

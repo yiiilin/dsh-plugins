@@ -291,7 +291,14 @@ export function apply(ctx, config) {
   const ssh = createSshOps({ config: { ...config, cacheDir, helperVersion: config.helperVersion }, logger })
   const admin = createAdmin({ registry, supervisor, provision, ssh, config: { ...config, cacheDir } })
 
-  const password = config.password === '' ? process.env.DSH_AUTH_PASS ?? '' : config.password
+  const password = config.password !== ''
+    ? config.password
+    : process.env.DSH_AUTH_PASS ?? process.env.AUTH_PASS ?? ''
+  // The same fallback chain the retired gateway used, so an existing deployment
+  // keeps the credentials it already has.
+  const username = config.username !== 'admin'
+    ? config.username
+    : process.env.DSH_AUTH_USER ?? process.env.AUTH_USER ?? config.username
   if (password === '') {
     // `Boolean('')` is false, so an empty password rejects every login attempt.
     // Silently serving an unpassable login page is how a deployment locks itself
@@ -300,7 +307,7 @@ export function apply(ctx, config) {
   }
   const auth = createAuth({
     directory: join(homeDir, 'daemon', 'auth'),
-    username: config.username,
+    username,
     password,
     realm: config.realm,
     twoFactorEnabled: config.twoFactorEnabled,

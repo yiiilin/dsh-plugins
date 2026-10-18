@@ -526,3 +526,28 @@ test('the passkey login endpoints are reachable without a session', async () => 
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test('a late startup line still yields the launch URL', async () => {
+  // The line is printed asynchronously; if it lands after the readiness deadline
+  // the profile runs but its URL is unknown, and the root bridge cannot mint the
+  // session the browser needs. The parse therefore runs against the captured log.
+  const { launchUrlFrom } = await import('../lib/supervisor.js')
+  assert.equal(launchUrlFrom(''), undefined)
+  assert.equal(launchUrlFrom('starting up\n'), undefined)
+  assert.equal(
+    launchUrlFrom('noise\ndsh web: http://127.0.0.1:57900/?token=abc123\n'),
+    'http://127.0.0.1:57900/?token=abc123',
+  )
+})
+
+test('the credential chain honours the names the retired gateway used', () => {
+  // Migration must not invalidate an existing credential. The retired gateway
+  // read DSH_AUTH_PASS or AUTH_PASS (and the matching user variable); honouring
+  // only one name silently locks an operator out of their own deployment, which
+  // is exactly what happened on the first cut.
+  const chain = (env, prefix) =>
+    env[`DSH_${prefix}`] ?? env[prefix] ?? ''
+  assert.equal(chain({ DSH_AUTH_PASS: 'a', AUTH_PASS: 'b' }, 'AUTH_PASS'), 'a')
+  assert.equal(chain({ AUTH_PASS: 'b' }, 'AUTH_PASS'), 'b')
+  assert.equal(chain({}, 'AUTH_PASS'), '')
+})
