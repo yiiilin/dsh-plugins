@@ -43,6 +43,15 @@ export const HARNESS_MODULES = [
 ]
 
 /**
+ * Packages a remote profile must install to replace its local providers.
+ *
+ * These are mounted by `renderSshPatch` rows, so they must also be declared:
+ * a row naming an unresolvable package fails to import, and every service that
+ * depends on it stays pending — the profile listens but cannot create a session.
+ */
+export const SSH_PROVIDER_MODULES = ['dsh-ssh', 'dsh-fs-ssh', 'dsh-subprocess-ssh', 'dsh-sandbox-ssh']
+
+/**
  * Dependencies a generated profile declares for its bundle layers.
  *
  * @param bundles - the profile's bundle layers.
@@ -50,7 +59,7 @@ export const HARNESS_MODULES = [
  * @param options.harnessVersion - version to pin the harness modules to.
  * @returns the dependency map written into the profile manifest.
  */
-export function profileDependencies(bundles, { agentPresetsDir, harnessVersion }) {
+export function profileDependencies(bundles, { agentPresetsDir, harnessVersion, kind }) {
   const dependencies = {}
   if (agentPresetsDir !== undefined && bundles.includes('@local/yiln-agent-preset')) {
     // A link keeps the profile on the deployment's live preset, not a copy.
@@ -58,6 +67,9 @@ export function profileDependencies(bundles, { agentPresetsDir, harnessVersion }
   }
   if (harnessVersion !== undefined) {
     for (const module of HARNESS_MODULES) dependencies[`@deepseek-ai/${module}`] = harnessVersion
+    if (kind === 'ssh') {
+      for (const module of SSH_PROVIDER_MODULES) dependencies[`@deepseek-ai/${module}`] = harnessVersion
+    }
   }
   return dependencies
 }

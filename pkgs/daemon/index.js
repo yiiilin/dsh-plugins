@@ -184,7 +184,9 @@ export function apply(ctx, config) {
         ...(kind === 'ssh'
           ? {
               sshHost: requireField(input, 'sshHost'),
-              sshPort: input.sshPort === undefined ? 22 : Number(input.sshPort),
+              // Keep an omitted port omitted: an ssh_config alias may already
+              // declare one, and an explicit default would override it.
+              ...(input.sshPort === undefined ? {} : { sshPort: Number(input.sshPort) }),
               sshUser: requireField(input, 'sshUser'),
               sshHelper: input.sshHelper ?? '/opt/dsh-helper/dsh-ssh-helper',
               sshHelperHash: requireField(input, 'sshHelperHash'),
@@ -200,6 +202,7 @@ export function apply(ctx, config) {
         dependencies: profileDependencies(config.profileBundles, {
           agentPresetsDir: join(homeDir, '.agent-presets'),
           harnessVersion: config.harnessVersion === '' ? undefined : config.harnessVersion,
+          kind: profile.kind,
         }),
         fragment: await readFragment(),
       })

@@ -24,6 +24,18 @@ import { escapeHtml } from './portal.js'
  */
 export function createAdmin({ registry, supervisor, provision, ssh, config }) {
   return async function handleAdmin(req, res, url) {
+    try {
+      return await route(req, res, url)
+    } catch (error) {
+      // A failed deploy or a bad body must not kill the daemon: every other
+      // profile is still being served by this process.
+      if (!res.headersSent) json(res, 500, { ok: false, error: error.message })
+      else res.destroy()
+      return true
+    }
+  }
+
+  async function route(req, res, url) {
     const { pathname, searchParams } = splitUrl(url)
     const method = req.method ?? 'GET'
 

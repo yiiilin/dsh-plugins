@@ -84,7 +84,7 @@ export function normalizeProfile(raw) {
 
   if (kind === 'ssh') {
     profile.sshHost = requireString(raw, 'sshHost')
-    profile.sshPort = raw.sshPort === undefined ? 22 : requirePort(raw, 'sshPort')
+    if (raw.sshPort !== undefined) profile.sshPort = requirePort(raw, 'sshPort')
     profile.sshUser = requireString(raw, 'sshUser')
     const node = optionalAbsolutePath(raw, 'sshNode')
     if (node !== undefined) profile.sshNode = node

@@ -10,6 +10,7 @@ import {
   compose,
   HARNESS_MODULES,
   profileDependencies,
+  SSH_PROVIDER_MODULES,
   renderLocalPatch,
   renderSshPatch,
   writeProfile,
@@ -84,6 +85,16 @@ test('an ssh profile carries its connection coordinates', () => {
   assert.equal(profile.sshNode, undefined, 'a static helper needs no remote node')
 })
 
+test('an omitted ssh port stays omitted so an ssh_config alias keeps its own', () => {
+  // A default of 22 would become an explicit `-p 22` and override the alias's
+  // Port, silently connecting to the wrong port.
+  const profile = normalizeProfile({
+    id: 'a', kind: 'ssh', port: 1, workspace: '/w',
+    sshHost: 'dsh-box1', sshUser: 'root', sshHelper: '/h', sshHelperHash: 'a'.repeat(64),
+  })
+  assert.equal(profile.sshPort, undefined)
+})
+
 test('unknown fields are rejected rather than silently dropped', () => {
   assert.throws(() => normalizeProfile({ id: 'a', port: 1, workspace: '/w', nope: 1 }), /unknown field/)
 })
@@ -155,6 +166,20 @@ test('a static helper selects executable launch, a node path selects script', ()
   )
   const scriptSsh = scriptRows.flatMap((row) => [row, ...(Array.isArray(row.insert) ? row.insert : [])]).find((row) => row.id === 'ssh')
   assert.deepEqual(scriptSsh.config.launch, { kind: 'node-script', node: '/usr/bin/node' })
+})
+
+test('a remote profile declares the providers its patch mounts', () => {
+  // A row naming an uninstalled package fails to import, and every service that
+  // depends on it stays pending: the profile listens but cannot create a session.
+  const deps = profileDependencies([], {
+    harnessVersion: '0.2.1-rc.2',
+    kind: 'ssh',
+  })
+  for (const module of SSH_PROVIDER_MODULES) {
+    assert.equal(deps[`@deepseek-ai/${module}`], '0.2.1-rc.2', module)
+  }
+  const local = profileDependencies([], { harnessVersion: '0.2.1-rc.2', kind: 'local' })
+  assert.equal(local['@deepseek-ai/dsh-ssh'], undefined, 'a local profile needs no SSH provider')
 })
 
 test('profileDependencies links the preset and pins every harness module', () => {
@@ -268,4 +293,18 @@ test('every reserved id is refused as a profile id', () => {
     if (!/^[a-z][a-z0-9-]{0,30}$/u.test(id)) continue
     assert.throws(() => normalizeProfile({ id, port: 1, workspace: '/w' }), /reserved/u, id)
   }
+})
+
+test('ssh arguments omit -p unless a port is explicit', async () => {
+  // An ssh_config alias may declare its own Port; an explicit `-p 22` on the
+  // command line overrides it and connects to the wrong port, which fails as
+  // "permission denied" and looks like a credentials problem.
+  const { sshArguments } = await import('../lib/ssh.js')
+  const alias = sshArguments({ sshHost: 'dsh-box1', sshUser: 'root' }, 'true', false)
+  assert.equal(alias.includes('-p'), false)
+  const explicit = sshArguments({ sshHost: 'h', sshUser: 'root', sshPort: 2222 }, 'true', false)
+  assert.equal(explicit[explicit.indexOf('-p') + 1], '2222')
+  // BatchMode must follow the auth mode or sshpass can never answer.
+  assert.ok(alias.includes('BatchMode=yes'))
+  assert.ok(sshArguments({ sshHost: 'h', sshUser: 'u' }, 'true', true).includes('BatchMode=no'))
 })

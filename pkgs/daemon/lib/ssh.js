@@ -15,43 +15,53 @@ import { dirname } from 'node:path'
 import { resolveHelper } from './helper.js'
 
 /**
- * Run one `ssh` invocation.
+ * Options shared by every `ssh` invocation.
  *
- * `BatchMode=yes` makes a missing key a fast failure instead of a prompt the
- * daemon cannot answer; `StrictHostKeyChecking=accept-new` records a first-seen
- * host key but still refuses a changed one.
+ * `StrictHostKeyChecking=accept-new` records a first-seen key but still refuses a
+ * changed one: a daemon may pin an unknown host on the operator's behalf, but it
+ * must not silently follow a swapped key. `LogLevel=ERROR` keeps the benign
+ * "permanently added" notice off stderr, where it would otherwise be reported as
+ * the cause of a failure.
+ */
+const BASE_OPTIONS = ['-T', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'LogLevel=ERROR', '-o', 'NumberOfPasswordPrompts=1']
+
+/**
+ * Build the argument list for one invocation.
+ *
+ * `BatchMode` follows the authentication mode: a key or agent connection must
+ * fail fast rather than wait for a prompt, while password authentication needs
+ * prompts enabled for `sshpass` to answer.
+ */
+export function sshArguments(target, command, passwordMode) {
+  return [
+    ...BASE_OPTIONS,
+    '-o', `BatchMode=${passwordMode ? 'no' : 'yes'}`,
+    ...(target.sshPort === undefined ? [] : ['-p', String(target.sshPort)]),
+    ...(passwordMode ? ['-o', 'PreferredAuthentications=password', '-o', 'PubkeyAuthentication=no'] : []),
+    `${target.sshUser}@${target.sshHost}`,
+    command,
+  ]
+}
+
+/**
+ * Run one `ssh` invocation.
  *
  * @param target - connection parameters.
  * @param command - the remote command.
  * @param options.password - when set, the connection is made with `sshpass`.
+ * @param options.timeoutMs - ceiling for the whole invocation.
  * @returns stdout.
  */
 export function sshExec(target, command, { password, timeoutMs = 60_000 } = {}) {
-  const args = []
-  if (password !== undefined && password !== '') {
-    args.push('-o', 'PreferredAuthentications=password', '-o', 'PubkeyAuthentication=no')
-  }
-  args.push(
-    '-T',
-    '-p', String(target.sshPort ?? 22),
-    '-o', 'BatchMode=no',
-    '-o', 'StrictHostKeyChecking=accept-new',
-    '-o', `ConnectTimeout=${Math.min(30, Math.ceil(timeoutMs / 1000))}`,
-    '-o', 'NumberOfPasswordPrompts=1',
-    `${target.sshUser}@${target.sshHost}`,
-    command,
-  )
-  const binary = password !== undefined && password !== '' ? 'sshpass' : 'ssh'
-  const finalArgs = binary === 'sshpass' ? ['-e', 'ssh', ...args] : args
+  const passwordMode = password !== undefined && password !== ''
+  const args = sshArguments(target, command, passwordMode)
+  const binary = passwordMode ? 'sshpass' : 'ssh'
+  const finalArgs = passwordMode ? ['-e', 'ssh', ...args] : args
   return new Promise((done, fail) => {
     execFile(
       binary,
       finalArgs,
-      {
-        env: { ...process.env, SSHPASS: password ?? '' },
-        maxBuffer: 8 * 1024 * 1024,
-        timeout: timeoutMs,
-      },
+      { env: { ...process.env, SSHPASS: password ?? '' }, maxBuffer: 8 * 1024 * 1024, timeout: timeoutMs },
       (error, stdout, stderr) => {
         if (error === null) {
           done(stdout)
@@ -66,8 +76,8 @@ export function sshExec(target, command, { password, timeoutMs = 60_000 } = {}) 
 /**
  * Copy one local file to a remote path over the SSH channel.
  *
- * `scp` is avoided because it refuses a stream; piping through `ssh` also lets
- * the same credentials serve both the copy and the verification.
+ * `scp` is avoided because it cannot stream; piping through `ssh` also lets the
+ * same credentials serve both the copy and the verification.
  *
  * @param target - connection parameters.
  * @param localPath - the local file.
@@ -75,21 +85,11 @@ export function sshExec(target, command, { password, timeoutMs = 60_000 } = {}) 
  * @param options.password - password for `sshpass`, when used.
  */
 export function sshUpload(target, localPath, remotePath, { password } = {}) {
+  const passwordMode = password !== undefined && password !== ''
+  const args = sshArguments(target, `cat > ${quote(remotePath)}`, passwordMode)
+  const binary = passwordMode ? 'sshpass' : 'ssh'
+  const finalArgs = passwordMode ? ['-e', 'ssh', ...args] : args
   return new Promise((done, fail) => {
-    const args = []
-    if (password !== undefined && password !== '') {
-      args.push('-o', 'PreferredAuthentications=password', '-o', 'PubkeyAuthentication=no')
-    }
-    args.push(
-      '-T',
-      '-p', String(target.sshPort ?? 22),
-      '-o', 'BatchMode=no',
-      '-o', 'StrictHostKeyChecking=accept-new',
-      `${target.sshUser}@${target.sshHost}`,
-      `cat > ${quote(remotePath)}`,
-    )
-    const binary = password !== undefined && password !== '' ? 'sshpass' : 'ssh'
-    const finalArgs = binary === 'sshpass' ? ['-e', 'ssh', ...args] : args
     const child = execFile(
       binary,
       finalArgs,
@@ -116,7 +116,7 @@ export function sshUpload(target, localPath, remotePath, { password } = {}) {
  */
 export function createSshOps({ config, logger }) {
   /** Probe a host without writing anything to it. */
-  async function probe({ sshHost, sshPort = 22, sshUser, password }) {
+  async function probe({ sshHost, sshPort, sshUser, password }) {
     const target = { sshHost, sshPort, sshUser }
     const script = [
       'echo "hostname=$(hostname 2>/dev/null || echo unknown)"',

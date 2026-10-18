@@ -99,7 +99,14 @@ export function scopeLocation(location, prefix) {
 export function startEntry({ host, port, listProfiles, local, notFound }) {
   const server = createServer((req, res) => {
     const url = req.url ?? '/'
-    void handleHttp({ req, res, url, listProfiles, local, notFound })
+    void handleHttp({ req, res, url, listProfiles, local, notFound }).catch((error) => {
+      if (!res.headersSent) {
+        res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' })
+        res.end(`daemon: request failed: ${error?.message ?? error}\n`)
+        return
+      }
+      res.destroy()
+    })
   })
 
   server.on('upgrade', (req, socket, head) => {
@@ -132,7 +139,19 @@ export function startEntry({ host, port, listProfiles, local, notFound }) {
 async function handleHttp({ req, res, url, listProfiles, local, notFound }) {
   // Daemon-owned paths win: the portal, the login endpoints and `/admin` must
   // never be reachable through a profile whose id happens to look similar.
-  if (await local(req, res, url)) return
+  let handled
+  try {
+    handled = await local(req, res, url)
+  } catch (error) {
+    if (!res.headersSent) {
+      res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: false, error: String(error?.message ?? error) }))
+    } else {
+      res.destroy()
+    }
+    return
+  }
+  if (handled) return
 
   const routed = routeProfile(url, listProfiles().map((entry) => entry.id))
   const upstream = routed === undefined ? undefined : findPort(listProfiles(), routed.id)
