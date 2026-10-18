@@ -284,10 +284,17 @@ export function apply(ctx, config) {
   const ssh = createSshOps({ config: { ...config, cacheDir, helperVersion: config.helperVersion }, logger })
   const admin = createAdmin({ registry, supervisor, provision, ssh, config: { ...config, cacheDir } })
 
+  const password = config.password === '' ? process.env.DSH_AUTH_PASS ?? '' : config.password
+  if (password === '') {
+    // `Boolean('')` is false, so an empty password rejects every login attempt.
+    // Silently serving an unpassable login page is how a deployment locks itself
+    // out; say so once, at startup, and keep serving.
+    logger.warn('daemon: no password configured (config.password or DSH_AUTH_PASS); the login page will reject every attempt')
+  }
   const auth = createAuth({
     directory: join(homeDir, 'daemon', 'auth'),
     username: config.username,
-    password: config.password,
+    password,
     realm: config.realm,
     twoFactorEnabled: config.twoFactorEnabled,
     totpSecret: config.totpSecret,

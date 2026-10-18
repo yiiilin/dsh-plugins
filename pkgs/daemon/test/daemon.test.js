@@ -419,3 +419,81 @@ test('a rejected root session asks the browser to retry once', async () => {
     await new Promise((done) => rootServer.close(done))
   }
 })
+
+test('an empty password rejects every login instead of opening the door', async () => {
+  // `Boolean('')` is false: the shipped gateway treats a missing password as an
+  // unpassable login page, not as "no authentication". The daemon must not turn
+  // that into an open door, and the operator needs to hear about it.
+  const { createAuth } = await import('../lib/auth/gateway.js')
+  const { mkdtemp, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const dir = await mkdtemp(join(tmpdir(), 'daemon-auth-'))
+  try {
+    const auth = createAuth({ directory: dir, username: 'admin', password: '', realm: 'x' })
+    const res = fakeResponse()
+    // A body must be readable: an unreadable one is a 400, which would mask the
+    // behaviour under test.
+    await auth.handle(fakeRequest(JSON.stringify({ username: 'admin', password: '' })), res, '/api/auth.login', false)
+    assert.equal(res.status, 403)
+    assert.equal(res.body.ok, false)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('the right password mints a session the store accepts', async () => {
+  const { createAuth } = await import('../lib/auth/gateway.js')
+  const { mkdtemp, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const dir = await mkdtemp(join(tmpdir(), 'daemon-auth2-'))
+  try {
+    const auth = createAuth({ directory: dir, username: 'admin', password: 'pw', realm: 'x' })
+    const res = fakeResponse()
+    const body = JSON.stringify({ username: 'admin', password: 'pw' })
+    await auth.handle(fakeRequest(body), res, '/api/auth.login', false)
+    assert.equal(res.status, 200)
+    const cookie = res.headers['set-cookie'][0].split(';')[0]
+    // The cookie is `<id>.<issuedAt>`; the store rejects a mismatched issue time,
+    // so both halves must survive the round trip.
+    const record = auth.session({ headers: { cookie } }, false)
+    assert.ok(record !== undefined)
+    assert.equal(record.username, 'admin')
+    // A wrong password must not mint one either.
+    const bad = fakeResponse()
+    await auth.handle(fakeRequest(JSON.stringify({ username: 'admin', password: 'no' })), bad, '/api/auth.login', false)
+    assert.equal(bad.status, 401)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+function fakeResponse() {
+  return {
+    status: 0,
+    headers: {},
+    body: undefined,
+    writeHead(status, headers) {
+      this.status = status
+      this.headers = headers ?? {}
+    },
+    end(body) {
+      try {
+        this.body = body === undefined ? undefined : JSON.parse(body)
+      } catch {
+        this.body = body
+      }
+    },
+  }
+}
+
+function fakeRequest(payload) {
+  const chunks = [Buffer.from(payload ?? '')]
+  return {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    socket: { remoteAddress: '127.0.0.1' },
+    async *[Symbol.asyncIterator]() {
+      yield* chunks
+    },
+  }
+}
