@@ -22,7 +22,12 @@ import { escapeHtml } from './portal.js'
  * @param options.config - resolved daemon configuration.
  * @returns a handler for `/admin…` requests.
  */
+/** How long a health result stays usable. One probe costs ~500 ms of SSH. */
+const HEALTH_TTL_MS = 60_000
+
 export function createAdmin({ registry, supervisor, provision, ssh, config }) {
+  /** id -> `{ at, value }`, so a panel refresh does not re-scan the fleet. */
+  const healthCache = new Map()
   return async function handleAdmin(req, res, url) {
     try {
       return await route(req, res, url)
@@ -45,6 +50,12 @@ export function createAdmin({ registry, supervisor, provision, ssh, config }) {
     }
 
     if (pathname === '/admin/state' && method === 'GET') {
+      const entries = registry.list()
+      // Health costs one SSH round trip per environment, so it runs concurrently and
+      // is cached briefly: opening the panel twice in a row must not re-scan.
+      // `fresh=1` bypasses the cache: a retry button must not replay a stale verdict.
+      const { searchParams } = splitUrl(url)
+      const health = await probeHealth(entries, searchParams.get('fresh') === '1' ? new Map() : healthCache, ssh, searchParams.get('fresh') === '1')
       json(res, 200, {
         ok: true,
         host: config.host,
@@ -52,7 +63,7 @@ export function createAdmin({ registry, supervisor, provision, ssh, config }) {
         portBase: config.portBase,
         cacheDir: config.cacheDir,
         helperVersion: config.helperVersion,
-        profiles: registry.list().map((profile) => describe(profile, supervisor)),
+        environments: entries.map((entry) => describe(entry, supervisor, health.get(entry.id))),
       })
       return true
     }
@@ -73,12 +84,29 @@ export function createAdmin({ registry, supervisor, provision, ssh, config }) {
         return true
       }
       if (action === undefined && method === 'DELETE') {
-        await provision.remove(id)
-        json(res, 200, { ok: true })
+        const { searchParams } = splitUrl(url)
+        const removeHelper = searchParams.get('remoteHelper') === 'true'
+        const result = await provision.remove(id, { removeRemoteHelper: removeHelper })
+        json(res, 200, { ok: true, ...result })
         return true
       }
       if (action === undefined && method === 'GET') {
-        json(res, 200, { ok: true, profile: describe(profile, supervisor) })
+        json(res, 200, { ok: true, environment: describe(profile, supervisor) })
+        return true
+      }
+      if (action === undefined && method === 'PATCH') {
+        const body = await readJson(req)
+        const patch = {}
+        // Only these are editable: an id, port or workspace change is a different
+        // environment, not an edit of this one.
+        if (body.enabled !== undefined) patch.enabled = body.enabled === true
+        if (body.label !== undefined) patch.label = String(body.label)
+        if (Object.keys(patch).length === 0) {
+          json(res, 400, { ok: false, error: 'nothing to update (editable: enabled, label)' })
+          return true
+        }
+        const updated = await registry.update(id, patch)
+        json(res, 200, { ok: true, environment: describe(updated, supervisor) })
         return true
       }
       if (action === 'start' && method === 'POST') {
@@ -103,10 +131,30 @@ export function createAdmin({ registry, supervisor, provision, ssh, config }) {
       }
       if (action === 'deploy' && method === 'POST') {
         const result = await ssh.deploy(profile)
+        // Record what was installed, or every later health check would compare
+        // against the pre-install placeholder and report a false failure.
+        if (result.sha256 !== profile.sshHelperHash) {
+          await registry.update(id, { sshHelperHash: result.sha256 })
+          healthCache.delete(id)
+        }
         json(res, 200, { ok: true, ...result })
         return true
       }
       json(res, 405, { ok: false, error: `${method} is not supported on ${pathname}` })
+      return true
+    }
+
+    if (pathname === '/admin/environments/prepare' && method === 'POST') {
+      const body = await readJson(req)
+      const prepared = await provision.prepare(body)
+      json(res, 200, { ok: true, ...prepared })
+      return true
+    }
+
+    if (pathname === '/admin/environments/confirm' && method === 'POST') {
+      const body = await readJson(req)
+      const created = await provision.confirm(body)
+      json(res, 201, { ok: true, environment: describe(created, supervisor) })
       return true
     }
 
@@ -140,12 +188,49 @@ export function createAdmin({ registry, supervisor, provision, ssh, config }) {
  * @param supervisor - the process supervisor.
  * @returns the JSON-safe view.
  */
-function describe(profile, supervisor) {
+function describe(entry, supervisor, health) {
   return {
-    ...profile,
-    running: supervisor.isRunning(profile.id),
-    url: supervisor.url(profile.id),
+    ...entry,
+    running: supervisor.isRunning(entry.id),
+    url: supervisor.url(entry.id),
+    // Absent when the environment is not running: its health is unknown, not bad.
+    health: supervisor.isRunning(entry.id) ? (health ?? { state: 'unknown', detail: '' }) : undefined,
   }
+}
+
+/**
+ * Compute health for every running environment, reusing a short-lived cache.
+ *
+ * @param entries - the registered environments.
+ * @param cache - a Map keyed by id, holding `{ at, value }`.
+ * @returns a Map of id to health.
+ */
+async function probeHealth(entries, cache, ssh, force = false) {
+  const now = Date.now()
+  const results = new Map()
+  const pending = []
+  for (const entry of entries) {
+    const hit = cache.get(entry.id)
+    if (!force && hit !== undefined && now - hit.at < HEALTH_TTL_MS) {
+      results.set(entry.id, hit.value)
+      continue
+    }
+    // Probes run in parallel: a fleet of three costs one round trip, not three.
+    pending.push(
+      ssh.health(entry)
+        .then((value) => {
+          cache.set(entry.id, { at: Date.now(), value })
+          results.set(entry.id, value)
+        })
+        .catch((error) => {
+          const value = { state: 'unreachable', detail: String(error.message).slice(0, 200) }
+          cache.set(entry.id, { at: Date.now(), value })
+          results.set(entry.id, value)
+        }),
+    )
+  }
+  await Promise.all(pending)
+  return results
 }
 
 function splitUrl(url) {
@@ -193,7 +278,7 @@ function renderAdminPage(profiles, supervisor) {
       const up = supervisor.isRunning(profile.id)
       return `<tr>
       <td class="name">${escapeHtml(profile.label)}<span class="id">/${escapeHtml(profile.id)}/</span></td>
-      <td>${escapeHtml(profile.kind)}</td>
+      <td>${escapeHtml(profile.sshHost)}</td>
       <td class="path">${escapeHtml(profile.workspace)}</td>
       <td>${up ? 'running' : 'stopped'}</td>
       <td class="ops">

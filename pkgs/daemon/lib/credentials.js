@@ -190,8 +190,36 @@ export async function removeSshFragment({ sshConfigDir, id }) {
  * @param options.expectedFingerprint - the value shown to and accepted by the operator.
  * @returns the fingerprints actually scanned.
  */
+/**
+ * Resolve a host or ssh_config alias to the address and port ssh will actually use.
+ *
+ * `ssh -G` prints the effective configuration without connecting, which is the only
+ * reliable way to read an alias: `ssh-keyscan` has no config support at all.
+ *
+ * @param host - a hostname or an ssh_config alias.
+ * @param port - an explicit port, which wins over the alias's own.
+ * @returns the resolved hostname and port.
+ */
+export async function resolveHost(host, port) {
+  let output
+  try {
+    output = await run('ssh', ['-G', ...(port === undefined ? [] : ['-p', String(port)]), host])
+  } catch {
+    // No config entry: the host is already an address, and the default port applies.
+    return { host, port: port ?? 22 }
+  }
+  const fields = {}
+  for (const line of output.split('\n')) {
+    const at = line.indexOf(' ')
+    if (at <= 0) continue
+    fields[line.slice(0, at)] = line.slice(at + 1).trim()
+  }
+  return { host: fields.hostname ?? host, port: Number(fields.port ?? port ?? 22) }
+}
+
 export async function trustHostKey({ knownHostsPath, host, port, expectedFingerprint }) {
-  const args = ['-T', String(port ?? 22), host]
+  const resolved = await resolveHost(host, port)
+  const args = ['-T', String(resolved.port), resolved.host]
   const scanned = await run('ssh-keyscan', args)
   const lines = scanned.split('\n').map((line) => line.trim()).filter((line) => line !== '' && !line.startsWith('#'))
   if (lines.length === 0) throw new Error(`daemon: ssh-keyscan returned no host key for ${host}`)
@@ -233,15 +261,21 @@ export function mergeKnownHosts(existing, lines) {
  * @returns the fingerprint of the ed25519 key, for the operator to compare.
  */
 export async function scanHostKey({ host, port }) {
-  const scanned = await run('ssh-keyscan', ['-T', String(port ?? 22), host])
+  const resolved = await resolveHost(host, port)
+  const scanned = await run('ssh-keyscan', ['-T', String(resolved.port), resolved.host])
   const lines = scanned.split('\n').map((line) => line.trim()).filter((line) => line !== '' && !line.startsWith('#'))
   if (lines.length === 0) throw new Error(`daemon: ssh-keyscan returned no host key for ${host}`)
   return { fingerprint: fingerprintOfEd25519(lines), lines }
 }
 
 function fingerprintOfEd25519(lines) {
-  const ed = lines.find((line) => line.includes(' ssh-ed25519 ')) ?? lines[0]
-  return fingerprintOf(ed.split(' ').slice(2).join(' '))
+  // Format: `<host> <keytype> <base64 key>` — the body is the third field exactly.
+  const ed = lines.find((line) => /\sssh-ed25519\s/u.test(line)) ?? lines[0]
+  const body = ed.trim().split(/\s+/u)[2]
+  if (body === undefined || body === '') {
+    throw new Error(`daemon: no host key body in ssh-keyscan output for ${ed.trim().split(/\s+/u)[0]}`)
+  }
+  return fingerprintOf(`ssh-ed25519 ${body}`)
 }
 
 /**
@@ -289,6 +323,68 @@ export function removePublicKeyCommand(id) {
     'fi',
     `echo "${marker} removed"`,
   ].join(' ')
+}
+
+/**
+ * Write a self-contained uninstall script for one environment.
+ *
+ * The daemon may be gone by the time the operator wants the remote clean, so the
+ * script carries everything it needs: the alias, the helper path and the marker. It
+ * removes the helper and this environment's `authorized_keys` line, and nothing else
+ * on that machine.
+ *
+ * @param options.daemonDir - `$DSH_HOME/daemon`.
+ * @param options.entry - the environment record.
+ * @param options.sshConfigPath - the operator's ssh config, named in the reminder.
+ * @returns the script path.
+ */
+export async function writeUninstallScript({ daemonDir, entry, sshConfigPath }) {
+  const dir = join(daemonDir, 'uninstall')
+  await mkdir(dir, { recursive: true, mode: 0o700 })
+  const path = join(dir, `${entry.id}.sh`)
+  const alias = `dsh-${entry.id}`
+  const marker = `dsh-daemon:${entry.id}`
+
+  // The remote payload is assembled without nested quotes: ssh receives one argument,
+  // and the marker is the only variable the shell on either side must expand.
+  const remote = [
+    'f="$HOME/.ssh/authorized_keys"',
+    'if [ -f "$f" ]; then grep -v MARKER "$f" > "$f.tmp" || true; cat "$f.tmp" > "$f"; rm -f "$f.tmp"; fi',
+    'echo authorized_keys-cleaned',
+  ].join('; ')
+
+  const body = [
+    '#!/bin/bash',
+    `# Uninstall remote environment ${entry.id} — ${entry.sshHost}`,
+    '#',
+    '# Removes, on the remote host:',
+    `#   1. the helper at ${entry.sshHelper}`,
+    `#   2. this environment's authorized_keys line (marker "${marker}")`,
+    '# It touches no other environment and never edits known_hosts.',
+    'set -u',
+    '',
+    `TARGET=${shellQuote(alias)}`,
+    `HELPER=${shellQuote(entry.sshHelper)}`,
+    `MARKER=${shellQuote(marker)}`,
+    `REMOTE=${shellQuote(remote.replaceAll('MARKER', '$MARKER'))}`,
+    '',
+    'echo "==> removing helper $HELPER"',
+    'ssh -o BatchMode=yes "$TARGET" "rm -f $HELPER" || echo "    helper already gone, or host unreachable"',
+    '',
+    'echo "==> cleaning authorized_keys for $MARKER"',
+    'ssh -o BatchMode=yes "$TARGET" "$REMOTE" || echo "    could not reach the host"',
+    '',
+    'echo',
+    `echo "Local cleanup: remove the Host ${alias} block, or drop the Include line"`,
+    `echo "  that points at the daemon ssh_config.d (reviewed in ${sshConfigPath})"`,
+  ]
+  await writeFile(path, `${body.join('\n')}\n`, { mode: 0o700 })
+  await chmod(path, 0o700)
+  return path
+}
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", `'\\''`)}'`
 }
 
 /** List key directories present on disk, for diagnostics. */

@@ -18,7 +18,16 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import { createAdmin } from './lib/admin.js'
-import { generateKey, removeSshFragment, writeSshFragment } from './lib/credentials.js'
+import {
+  ensureSshInclude,
+  generateKey,
+  removeSshFragment,
+  resolveHost,
+  scanHostKey,
+  trustHostKey,
+  writeSshFragment,
+  writeUninstallScript,
+} from './lib/credentials.js'
 import { createAuth } from './lib/auth/gateway.js'
 import { startEntry } from './lib/entry.js'
 import { renderPortal } from './lib/portal.js'
@@ -167,6 +176,21 @@ export function apply(ctx, config) {
   const registry = {
     list: () => [...profiles],
     find: (id) => profiles.find((profile) => profile.id === id),
+    /**
+     * Replace one environment's editable fields.
+     *
+     * @param id - the environment id.
+     * @param patch - fields to merge; validated as a whole record afterwards.
+     * @returns the updated environment.
+     */
+    async update(id, patch) {
+      const current = profiles.find((entry) => entry.id === id)
+      if (current === undefined) throw new Error(`daemon: unknown environment "${id}"`)
+      const next = normalizeProfile({ ...current, ...patch })
+      profiles = profiles.map((entry) => (entry.id === id ? next : entry))
+      await registry.save()
+      return next
+    },
     usedPorts: () => new Set(profiles.map((profile) => profile.port)),
     usedIds: () => new Set(profiles.map((profile) => profile.id)),
     async reload() {
@@ -200,26 +224,15 @@ export function apply(ctx, config) {
 
   const provision = {
     /**
-     * Create one profile: allocate an id and port, write the directory, install
-     * its dependencies, and register it.
+     * Register one environment: allocate a port, write the profile and record it.
+     *
+     * The credential must already exist; this step only materializes the profile.
+     *
+     * @param input - the resolved environment fields.
+     * @returns the registered environment.
      */
-    async create(input) {
-      const id = deriveId(input.id ?? input.sshHost ?? '', new Set([...registry.usedIds(), ...RESERVED_IDS]))
-      const sshHost = requireField(input, 'sshHost')
-      const sshUser = requireField(input, 'sshUser')
-      const sshHelper = input.sshHelper ?? join('/opt/dsh-helper', 'dsh-ssh-helper')
-
-      // One helper defines one environment (ADR 0002). Two records sharing a helper
-      // would fight over the same file and the same authorized_keys line.
-      const clash = profiles.find((entry) => entry.sshHost === sshHost && entry.sshHelper === sshHelper)
-      if (clash !== undefined) {
-        throw new Error(`daemon: helper ${sshHelper} on ${sshHost} is already used by environment "${clash.id}"`)
-      }
-
-      // Keys first: an environment without a usable credential cannot be started,
-      // and the alias written into ssh_config references the key path.
-      const key = await generateKey({ keysRoot, id })
-      const alias = `dsh-${id}`
+    async createEnvironment(input) {
+      const id = input.id
       const draft = {
         id,
         label: input.label ?? id,
@@ -227,20 +240,135 @@ export function apply(ctx, config) {
         port: allocatePort(config.portBase, registry.usedPorts()),
         workspace: input.workspace ?? '/root/workspace',
         enabled: input.enabled === undefined ? true : input.enabled !== false,
-        sshHost,
-        sshUser,
-        sshHelper,
-        sshHelperHash: requireField(input, 'sshHelperHash'),
-        sshKeyPath: key.keyPath,
+        sshHost: input.sshHost,
+        sshUser: input.sshUser,
+        sshHelper: input.sshHelper,
+        sshHelperHash: input.sshHelperHash,
+        sshKeyPath: input.sshKeyPath,
         ...(input.sshPort === undefined ? {} : { sshPort: Number(input.sshPort) }),
       }
       const profile = normalizeProfile(draft)
-      await writeSshFragment({ sshConfigDir, alias, entry: profile })
-
+      await writeSshFragment({ sshConfigDir, alias: input.alias ?? `dsh-${id}`, entry: profile })
+      await writeProfile(profileDir(profile.profile), profile, {
+        bundles: config.profileBundles,
+        dependencies: profileDependencies(config.profileBundles, {
+          agentPresetsDir: join(homeDir, '.agent-presets'),
+          harnessVersion: config.harnessVersion === '' ? undefined : config.harnessVersion,
+        }),
+        fragment: await readFragment(),
+      })
+      await installDependencies(profileDir(profile.profile), config.pnpmPath, homeDir)
       profiles = [...profiles, profile]
       await registry.save()
-      logger.info(`daemon: created profile "${profile.id}" on port ${profile.port}`)
+      logger.info(`daemon: created environment "${profile.id}" on port ${profile.port}`)
       return profile
+    },
+
+    /**
+     * First onboarding phase: identify the host, write nothing.
+     *
+     * The operator's credential is used once and never stored. The host key is only
+     * scanned, not trusted — the fingerprint goes back for the operator to compare
+     * against what the machine reports.
+     *
+     * @param input - `{ sshHost, sshPort?, sshUser, password? }`, or an existing id to
+     *   re-identify while editing credentials.
+     * @returns host facts, the scanned fingerprint and the planned id.
+     */
+    async prepare(input) {
+      const sshHost = requireField(input, 'sshHost')
+      const sshUser = requireField(input, 'sshUser')
+      const sshPort = input.sshPort === undefined ? undefined : Number(input.sshPort)
+      const facts = await ssh.probe({ sshHost, sshPort, sshUser, password: input.password, identityFile: input.identityFile })
+      // Resolve once here: the ssh fragment needs the real address, and the operator
+      // may have typed an ssh_config alias.
+      const resolved = await resolveHost(sshHost, sshPort)
+      const { fingerprint } = await scanHostKey({ host: sshHost, port: sshPort })
+      const existing = typeof input.id === 'string' && input.id !== '' ? registry.find(input.id) : undefined
+      const id = existing?.id ?? deriveId(input.id ?? sshHost, new Set([...registry.usedIds(), ...RESERVED_IDS]))
+      return { id, fingerprint, host: facts, alias: `dsh-${id}` }
+    },
+
+    /**
+     * Second onboarding phase: perform every write.
+     *
+     * Host key trust, key generation, public key install, helper deployment and
+     * profile creation happen here, in that order: the key must be installed before
+     * the helper upload, because `dsh-ssh` runs ssh with `BatchMode=yes` and needs a
+     * working credential for the rest of the environment's life.
+     *
+     * @param input - the fields from `prepare` plus `fingerprint` and `sshHelperHash`.
+     * @returns the created environment.
+     */
+    async confirm(input) {
+      const prepared = await provision.prepare(input)
+      const sshHost = requireField(input, 'sshHost')
+      const sshUser = requireField(input, 'sshUser')
+      const sshPort = input.sshPort === undefined ? undefined : Number(input.sshPort)
+      const sshHelper = input.sshHelper ?? '/opt/dsh-helper/dsh-ssh-helper'
+      const id = prepared.id
+      const resolved = await resolveHost(sshHost, sshPort)
+
+      const clash = profiles.find((entry) => entry.sshHost === sshHost && entry.sshHelper === sshHelper && entry.id !== id)
+      if (clash !== undefined) {
+        throw new Error(`daemon: helper ${sshHelper} on ${sshHost} is already used by environment "${clash.id}"`)
+      }
+
+      await ensureSshInclude({ configPath: sshConfigPath, includeDir: sshConfigDir })
+      await trustHostKey({
+        knownHostsPath: join(process.env.HOME ?? '/root', '.ssh', 'known_hosts'),
+        host: resolved.host,
+        port: resolved.port,
+        expectedFingerprint: input.fingerprint,
+      })
+
+      const key = await generateKey({ keysRoot, id })
+      const alias = `dsh-${id}`
+      await ssh.installPublicKey({
+        sshHost: resolved.host,
+        sshPort: resolved.port,
+        sshUser,
+        password: input.password,
+        identityFile: input.identityFile,
+        publicKey: key.publicKey,
+        id,
+      })
+      const profile = await provision.createEnvironment({
+        id,
+        label: input.label ?? id,
+        // The resolved address: an alias written into HostName would be re-resolved by
+        // ssh as a hostname.
+        sshHost: resolved.host,
+        // The resolved port, not the operator's input: it may have come from an alias.
+        sshPort: resolved.port,
+        sshUser,
+        sshHelper,
+        sshHelperHash: input.sshHelperHash,
+        sshKeyPath: key.keyPath,
+        workspace: input.workspace,
+        enabled: input.enabled,
+        alias,
+      })
+      // The helper upload runs over the alias just written, so it needs no password.
+      try {
+        const deployed = await ssh.deploy(profile)
+        if (deployed.sha256 !== profile.sshHelperHash) {
+          await registry.update(id, { sshHelperHash: deployed.sha256 })
+        }
+      } catch (error) {
+        // The environment exists and the operator can retry from the panel; failing the
+        // whole onboarding here would force re-entering the bootstrap credential.
+        logger.warn(`daemon: environment "${id}" created, helper deploy failed: ${error.message}`)
+      }
+      return registry.find(id) ?? profile
+    },
+
+    /**
+     * Create one profile: allocate an id and port, write the directory, install
+     * its dependencies, and register it.
+     */
+    async create(input) {
+      return provision.confirm(input)
     },
 
     /** Start one profile and wait for its listener. */
@@ -250,16 +378,41 @@ export function apply(ctx, config) {
       return supervisor.start(profile)
     },
 
-    /** Stop and forget one profile. */
-    async remove(id) {
+    /**
+     * Stop and forget one environment.
+     *
+     * Local artifacts always go — the key and the ssh fragment are that
+     * environment's alone. The remote helper is a file on someone else's machine, so
+     * it is removed only when explicitly asked; a script is always written so the
+     * operator can do it later by hand. `known_hosts` is never touched: it records the
+     * machine's identity, not this environment's.
+     *
+     * @param id - the environment id.
+     * @param options.removeRemoteHelper - also delete the helper on the remote host.
+     * @returns the uninstall script path and whether the remote helper was removed.
+     */
+    async remove(id, { removeRemoteHelper = false } = {}) {
       const profile = registry.find(id)
-      if (profile === undefined) throw new Error(`daemon: unknown profile "${id}"`)
+      if (profile === undefined) throw new Error(`daemon: unknown environment "${id}"`)
       await supervisor.stop(id)
+      const scriptPath = await writeUninstallScript({ daemonDir, entry: profile, sshConfigPath })
+      let remoteRemoved = false
+      if (removeRemoteHelper) {
+        // A failed cleanup must not block forgetting the environment: the operator can
+        // still run the script.
+        try {
+          await ssh.removeRemoteHelper(profile)
+          remoteRemoved = true
+        } catch (error) {
+          logger.warn(`daemon: could not remove the remote helper for "${id}": ${error.message}`)
+        }
+      }
       await removeSshFragment({ sshConfigDir, id })
       await rm(join(keysRoot, id), { recursive: true, force: true })
       profiles = profiles.filter((candidate) => candidate.id !== id)
       await registry.save()
       logger.info(`daemon: removed environment "${profile.id}"`)
+      return { uninstallScript: scriptPath, remoteRemoved }
     },
   }
 

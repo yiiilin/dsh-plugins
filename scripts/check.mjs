@@ -6,6 +6,8 @@
 // GitHub install, so every rule below is a mounting requirement.
 import assert from 'node:assert/strict'
 import { readdir, readFile, access } from 'node:fs/promises'
+import { join } from 'node:path'
+import { existsSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import yaml from 'js-yaml'
@@ -95,6 +97,22 @@ for (const name of names) {
     const isDir = entry.isDirectory() && !['test', 'node_modules'].includes(entry.name)
     if (!isSource && !isDir) continue
     assert.ok(shipped.has(entry.name), `${name}: "${entry.name}" is not listed in package.json files`)
+  }
+
+  // A shipped directory is declared once, but its contents can still be missed by a
+  // stale install: `files: ["lib"]` ships whatever exists at pack time, so a new file
+  // must exist in the installed copy too. Verify the tree, not just the top level.
+  const dirPath = fileURLToPath(dir)
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !shipped.has(entry.name)) continue
+    const nested = await readdir(join(dirPath, entry.name), { withFileTypes: true })
+    for (const child of nested) {
+      if (!child.isFile() || !/\.[cm]?js$/u.test(child.name)) continue
+      assert.ok(
+        existsSync(join(dirPath, entry.name, child.name)),
+        `${name}: ${entry.name}/${child.name} is missing from the source tree`,
+      )
+    }
   }
 
   // --- syntax ----------------------------------------------------------------
