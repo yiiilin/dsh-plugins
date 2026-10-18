@@ -1,0 +1,11 @@
+# One Loader layer for this package. Installed standalone from GitHub;
+# `dsh plugin --profile <p> add github:<owner>/<repo>#path:/pkgs/git-graph`.
+- insert:
+    - id: dsh-git-graph
+      name: '@yiln-dsh/dsh-git-graph'
+      inject:
+        - webServer
+        - subprocess
+        - fs
+        - sandboxPolicy
+      config: {}

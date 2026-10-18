@@ -1,0 +1,11 @@
+# One Loader layer for this package. Installed standalone from GitHub;
+# `dsh plugin --profile <p> add github:<owner>/<repo>#path:/pkgs/delete-session`.
+- insert:
+    - id: dsh-delete-session
+      name: '@yiln-dsh/dsh-delete-session'
+      inject:
+        - webServer
+        - sessions
+        - agents
+        - sessionPersistence
+      config: {}

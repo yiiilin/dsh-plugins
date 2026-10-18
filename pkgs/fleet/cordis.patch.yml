@@ -1,0 +1,22 @@
+# One Loader layer for this package. Installed standalone from GitHub;
+# `dsh plugin --profile <p> add github:<owner>/<repo>#path:/pkgs/fleet`.
+- insert:
+    - id: fleet
+      name: '@yiln-dsh/dsh-fleet'
+      config:
+        gatewayPort: 8090
+        gatewayHost: 0.0.0.0
+        registryPath: !!js dshHomePath('fleet/boxes.json')
+        homeDir: !!js dshHomePath()
+        binPath: dsh
+        portBase: 3101
+        readyMs: 60000
+        autostart: false
+        # 浏览器访问网关用的外部 authority（host[:port]）。每个箱进程会收到
+        # --trusted-host；不填则箱只接受 loopback authority，经网关的 /api 会 403。
+        publicAuthority: ''
+        # 生成的箱 profile 使用的 bundle 层。换掉 web 插件时改这里，无需改代码。
+        profileBundles:
+          - '@deepseek-ai/dsh-base'
+          - '@deepseek-ai/dsh-web-app'
+

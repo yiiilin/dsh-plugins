@@ -1,0 +1,17 @@
+# One Loader layer for this package. Installed standalone from GitHub;
+# `dsh plugin --profile <p> add github:<owner>/<repo>#path:/pkgs/auth-webserver`.
+- insert:
+    - id: webserver-auth
+      name: '@yiln-dsh/dsh-auth-webserver'
+      inject:
+        - webStartup
+        - webServer
+        - settings
+        - connection
+        - clientModules
+      config:
+        port: !!js ctx.webStartup.port ?? 3080
+        targetHost: '127.0.0.1'
+        targetPort: !!js ctx.webStartup.port ?? 3080
+        username: 'admin'
+        password: ''

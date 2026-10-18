@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
-import { migrateProfilePatch } from '../src/migration.js'
+import { migrateProfilePatch } from './migration.mjs'
 
 const [mode, file, ...extra] = process.argv.slice(2)
 if (!['--check', '--write'].includes(mode) || !file || extra.length) {

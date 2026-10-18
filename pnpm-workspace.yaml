@@ -1,0 +1,5 @@
+packages:
+  - pkgs/*
+
+nodeLinker: hoisted
+autoInstallPeers: false

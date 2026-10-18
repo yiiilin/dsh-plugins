@@ -1,0 +1,19 @@
+# One Loader layer for this package. Installed standalone from GitHub;
+# `dsh plugin --profile <p> add github:<owner>/<repo>#path:/pkgs/web-daemon`.
+- insert:
+    - id: web-daemon
+      name: '@yiln-dsh/dsh-web-daemon'
+      inject:
+        - webServer
+        - settings
+        - sessionController
+        - goals
+        - agentPresets
+        - subagents
+        - agents
+      config:
+        enabled: false
+        profile: web
+        port: 3080
+        systemdUnit: dsh-web.service
+        systemdScope: system

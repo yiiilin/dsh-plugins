@@ -1,0 +1,23 @@
+{
+  "name": "@yiln-dsh/dsh-session-list-cache",
+  "version": "0.2.1",
+  "private": false,
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "README.md",
+    "cordis.patch.yml",
+    "index.js",
+    "!**/test/"
+  ],
+  "exports": {
+    "package.json": "./package.json",
+    ".": "./index.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "main": "index.js"
+}

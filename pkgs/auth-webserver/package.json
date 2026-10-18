@@ -1,0 +1,41 @@
+{
+  "name": "@yiln-dsh/dsh-auth-webserver",
+  "version": "0.2.1",
+  "private": false,
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "README.md",
+    "cordis.patch.yml",
+    "index.js",
+    "!**/test/"
+  ],
+  "exports": {
+    "package.json": "./package.json",
+    ".": "./index.js",
+    "./client": "./client.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "external": [
+        "react",
+        "react-dom",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ],
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-plugins",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "main": "index.js"
+}

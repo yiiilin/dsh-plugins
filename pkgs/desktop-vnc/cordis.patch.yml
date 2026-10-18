@@ -1,0 +1,44 @@
+# One Loader layer for this package. Installed standalone from GitHub;
+# `dsh plugin --profile <p> add github:<owner>/<repo>#path:/pkgs/desktop-vnc`.
+    # 右侧栏「桌面 VNC」标签页：点开即自动连接，面板里是一个浏览器（不是整个桌面）。
+    # 宿主用 Xephyr 起一个嵌套显示，Chromium 跑在里面；那个 Xephyr 窗口同时出现在
+    # 真实桌面上，所以同一个浏览器「桌面可见 + 面板可见」，只有一个实例。
+    # noVNC 资源与 WS 桥都由本行的路由提供，不依赖外部 VNC 服务或 CDN。
+
+- insert:
+    - id: dsh-desktop-vnc
+      name: '@yiln-dsh/dsh-desktop-vnc'
+      inject:
+        - webServer
+        - subprocess
+        - fs
+      config:
+        enabled: true
+        # 宿主桌面：Xephyr 窗口落在这里，也是浏览器「桌面可见」的地方。
+        display: ':0'
+        rfbPort: 5900
+        viewportWidth: 1280
+        viewportHeight: 800
+        jpegQuality: 72
+        frameRate: 8
+        maxClients: 4
+        browser:
+          # false 退回 v1 行为：直接镜像 display 本身，不启 Xephyr/Chromium。
+          enabled: true
+          executable: chromium
+          # auto = 在 :90..:120 里挑一个空闲显示号
+          nestedDisplay: auto
+          # 桌面上那扇窗口的标题，也用于识别与清理。
+          windowTitle: DSH Desktop Browser
+          startUrl: about:blank
+          extraArgs: []
+
+    # ── 服务器集群（fleet）────────────────────────────────────────────────────
+    # 一个 origin 管理多台开发机：每台是一个独立的 dsh 进程（fs/subprocess/
+    # sandbox 是进程级单例，一个进程只能是一个执行世界）。网关按 /<id>/ 前缀
+    # 路由，并把 Set-Cookie 的 Path 收紧到前缀，否则同一 origin 下各实例算出的
+    # cookie 名相同（dsh-auth-<sha256(authority)>）会互相覆盖登录态。
+    # 管理 API 只允许 loopback：它会启进程，暴露到局域网等于远程代码执行。
+    # 本插件不 inject 任何服务：网关与进程监管自带 HTTP 监听，管理 API 只在
+    # webServer 存在时用 ctx.inject 运行时挂载，所以换掉 web 插件（甚至不装）都
+    # 不影响 fleet 自身启动。箱进程用到的 bundle 由 profileBundles 决定。

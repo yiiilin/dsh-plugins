@@ -1,0 +1,16 @@
+# One Loader layer for this package. Installed standalone from GitHub;
+# `dsh plugin --profile <p> add github:<owner>/<repo>#path:/pkgs/session-mode`.
+- insert:
+    - id: session-mode
+      name: '@yiln-dsh/dsh-session-mode'
+      inject:
+        - tools
+        - agents
+        - commands
+        - connection
+        - systemPrompt
+        - sessionController
+        - jobs
+        - sessions
+      config:
+        defaultMode: normal

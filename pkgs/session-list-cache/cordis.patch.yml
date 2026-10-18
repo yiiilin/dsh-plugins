@@ -1,0 +1,15 @@
+# One Loader layer for this package. Installed standalone from GitHub;
+# `dsh plugin --profile <p> add github:<owner>/<repo>#path:/pkgs/session-list-cache`.
+- insert:
+    - id: session-list-cache
+      name: '@yiln-dsh/dsh-session-list-cache'
+      inject:
+        - sessionQuery
+      config:
+        ttlMs: 1000
+    # Tools a preset promises it does not have must actually be denied. A preset
+    # contributes only its own layer, so it cannot shed the tools the host
+    # composition gives the Agent from above; this row applies
+    # `agent.ctx.tools.restrict({ allow: [] })` to each Agent running one of the
+    # listed presets. Empty by default — a preset id is a deployment fact, so the
+    # profile patch enables the ids that deployment cares about.
