@@ -93,13 +93,16 @@ export function scopeLocation(location, prefix) {
  * @param options.listProfiles - returns `{ id, port }` for every running profile.
  * @param options.local - handles a daemon-owned request; returns true when it
  *   wrote the response. Everything it declines is matched against profiles.
+ * @param options.root - the profile that owns paths no prefix claims, or
+ *   undefined to answer 404. `cookie()` returns the upstream session the daemon
+ *   holds on the browser's behalf, and `refresh()` drops it after a rejection.
  * @param options.notFound - writes a response for an unroutable request.
  * @returns the listening port and a close function.
  */
-export function startEntry({ host, port, listProfiles, local, notFound }) {
+export function startEntry({ host, port, listProfiles, local, root, notFound }) {
   const server = createServer((req, res) => {
     const url = req.url ?? '/'
-    void handleHttp({ req, res, url, listProfiles, local, notFound }).catch((error) => {
+    void handleHttp({ req, res, url, listProfiles, local, root, notFound }).catch((error) => {
       if (!res.headersSent) {
         res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' })
         res.end(`daemon: request failed: ${error?.message ?? error}\n`)
@@ -110,13 +113,23 @@ export function startEntry({ host, port, listProfiles, local, notFound }) {
   })
 
   server.on('upgrade', (req, socket, head) => {
-    const routed = routeProfile(req.url ?? '/', listProfiles().map((entry) => entry.id))
+    const url = req.url ?? '/'
+    const routed = routeProfile(url, listProfiles().map((entry) => entry.id))
     const upstream = routed === undefined ? undefined : findPort(listProfiles(), routed.id)
-    if (routed === undefined || upstream === undefined) {
-      socket.destroy()
+    if (routed !== undefined && upstream !== undefined) {
+      proxyUpgrade({ req, socket, head, port: upstream, path: routed.path })
       return
     }
-    proxyUpgrade({ req, socket, head, port: upstream, path: routed.path })
+    // The root profile's client opens its mux socket against `document.baseURI`,
+    // which is the daemon's own origin; the handshake has to carry the session
+    // the daemon holds for it.
+    if (root !== undefined) {
+      void root.ensure().then(() => {
+        proxyUpgrade({ req, socket, head, port: root.port(), path: url, cookie: root.cookie() })
+      }).catch(() => socket.destroy())
+      return
+    }
+    socket.destroy()
   })
 
   return new Promise((resolveStarted, rejectStarted) => {
@@ -136,7 +149,7 @@ export function startEntry({ host, port, listProfiles, local, notFound }) {
   })
 }
 
-async function handleHttp({ req, res, url, listProfiles, local, notFound }) {
+async function handleHttp({ req, res, url, listProfiles, local, root, notFound }) {
   // Daemon-owned paths win: the portal, the login endpoints and `/admin` must
   // never be reachable through a profile whose id happens to look similar.
   let handled
@@ -159,6 +172,23 @@ async function handleHttp({ req, res, url, listProfiles, local, notFound }) {
     proxyRequest({ req, res, port, path: routed.path, prefix: `/${routed.id}` })
     return
   }
+  // No prefix claimed this path, so it belongs to the root profile. That profile
+  // is a stock `dsh web` listener gated on a cookie derived from *its own*
+  // authority, which a browser talking to the daemon can never present — the
+  // daemon holds that session itself and attaches it here.
+  if (root !== undefined) {
+    await root.ensure()
+    proxyRequest({
+      req,
+      res,
+      port: root.port(),
+      path: url,
+      prefix: '',
+      cookie: root.cookie(),
+      refresh: root.refresh,
+    })
+    return
+  }
   notFound(req, res, url)
 }
 
@@ -173,9 +203,14 @@ function findPort(profiles, id) {
  * `Host` and `Origin` are rewritten together: the profile's fence compares them,
  * and rewriting only one would answer 403.
  */
-function proxyRequest({ req, res, port, path, prefix }) {
+function proxyRequest({ req, res, port, path, prefix, cookie, refresh }) {
   const authority = `127.0.0.1:${port}`
   const headers = { ...req.headers }
+  if (cookie !== undefined) {
+    // Replace, never append: the browser's cookie names a different authority,
+    // so forwarding it would make the upstream look up an unknown session.
+    headers.cookie = cookie
+  }
   headers.host = authority
   if (headers.origin !== undefined) headers.origin = `http://${authority}`
   headers['x-forwarded-for'] = clientAddress(req)
@@ -191,6 +226,16 @@ function proxyRequest({ req, res, port, path, prefix }) {
         .map((value) => scopeCookiePath(value, prefix))
     }
     if (outHeaders.location !== undefined) outHeaders.location = scopeLocation(outHeaders.location, prefix)
+    // The upstream session outlives a core restart only until its first use. A
+    // single retry against a fresh exchange turns that into a transparent reload
+    // instead of a 401 the browser cannot explain.
+    if (answer.statusCode === 401 && refresh !== undefined) {
+      answer.resume()
+      refresh()
+      res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8', 'retry-after': '1' })
+      res.end('daemon: upstream session refreshed, retry\n')
+      return
+    }
     res.writeHead(answer.statusCode ?? 502, outHeaders)
     answer.pipe(res)
   })
@@ -208,7 +253,7 @@ function proxyRequest({ req, res, port, path, prefix }) {
  * The handshake is replayed byte-for-byte so the profile sees the same headers
  * it would have seen directly, except for the loopback `Host`/`Origin` pair.
  */
-function proxyUpgrade({ req, socket, head, port, path }) {
+function proxyUpgrade({ req, socket, head, port, path, cookie }) {
   const authority = `127.0.0.1:${port}`
   const target = connect(port, '127.0.0.1', () => {
     const lines = [`GET ${path} HTTP/1.1`]
@@ -222,6 +267,10 @@ function proxyUpgrade({ req, socket, head, port, path }) {
       }
       if (lower === 'origin') {
         lines.push(`${name}: http://${authority}`)
+        continue
+      }
+      if (lower === 'cookie' && cookie !== undefined) {
+        lines.push(`${name}: ${cookie}`)
         continue
       }
       lines.push(`${name}: ${value}`)

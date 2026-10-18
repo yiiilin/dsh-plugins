@@ -25,6 +25,9 @@
           - '@deepseek-ai/dsh-web-app'
           - '@local/yiln-agent-preset'
         harnessVersion: 0.2.1-rc.2
+        # A profile id here makes that profile answer paths no prefix claims, so
+        # the existing origin keeps working unchanged. Empty owns `/` (portal).
+        rootProfile: ''
         # Start enabled profiles when the daemon boots.
         autostart: true
         # Seconds a profile has to answer its port after spawn.

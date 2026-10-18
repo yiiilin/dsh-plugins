@@ -334,3 +334,88 @@ test('adoption is a registry operation that leaves the profile untouched', async
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test('the root profile answers a path no prefix claims', async () => {
+  // This is what keeps an existing origin working: `/` and `/api` must reach the
+  // root profile, while a registered prefix still wins over it.
+  const { startEntry } = await import('../lib/entry.js')
+  const { createServer } = await import('node:http')
+
+  const rootServer = createServer((req, res) => {
+    // The upstream only answers when the daemon attaches the session it holds.
+    if (req.headers.cookie !== 'dsh-auth-x=session') {
+      res.writeHead(401)
+      res.end('no session')
+      return
+    }
+    res.writeHead(200, { 'content-type': 'text/plain' })
+    res.end(`root:${req.url}`)
+  })
+  const profile = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/plain' })
+    res.end(`profile:${req.url}`)
+  })
+  await new Promise((done) => rootServer.listen(0, '127.0.0.1', done))
+  await new Promise((done) => profile.listen(0, '127.0.0.1', done))
+
+  const entry = await startEntry({
+    host: '127.0.0.1',
+    port: 0,
+    listProfiles: () => [{ id: 'box1', port: profile.address().port }],
+    local: async () => false,
+    root: {
+      port: () => rootServer.address().port,
+      cookie: () => 'dsh-auth-x=session',
+      ensure: async () => {},
+      refresh: () => {},
+    },
+    notFound: (req, res) => {
+      res.writeHead(404)
+      res.end('none')
+    },
+  })
+  try {
+    const base = `http://127.0.0.1:${entry.port}`
+    assert.equal(await (await fetch(`${base}/`)).text(), 'root:/')
+    assert.equal(await (await fetch(`${base}/api/x`)).text(), 'root:/api/x')
+    assert.equal(await (await fetch(`${base}/box1/deep`)).text(), 'profile:/deep')
+  } finally {
+    await entry.close()
+    await new Promise((done) => rootServer.close(done))
+    await new Promise((done) => profile.close(done))
+  }
+})
+
+test('a rejected root session asks the browser to retry once', async () => {
+  const { startEntry } = await import('../lib/entry.js')
+  const { createServer } = await import('node:http')
+  let refreshed = 0
+  const rootServer = createServer((req, res) => {
+    res.writeHead(401)
+    res.end('no session')
+  })
+  await new Promise((done) => rootServer.listen(0, '127.0.0.1', done))
+  const entry = await startEntry({
+    host: '127.0.0.1',
+    port: 0,
+    listProfiles: () => [],
+    local: async () => false,
+    root: {
+      port: () => rootServer.address().port,
+      cookie: () => 'stale=1',
+      ensure: async () => {},
+      refresh: () => { refreshed += 1 },
+    },
+    notFound: (req, res) => { res.writeHead(404); res.end('none') },
+  })
+  try {
+    const answer = await fetch(`http://127.0.0.1:${entry.port}/`)
+    // 503 + retry, not a bare 401: the daemon dropped its cookie and the next
+    // request re-exchanges instead of leaving the browser stuck.
+    assert.equal(answer.status, 503)
+    assert.equal(refreshed, 1)
+  } finally {
+    await entry.close()
+    await new Promise((done) => rootServer.close(done))
+  }
+})

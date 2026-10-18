@@ -79,6 +79,15 @@ export const Config = z.object({
    * fragment means swapping a provider never needs a code change here.
    */
   profilePatchPath: z.string().default(''),
+  /**
+   * Id of the profile that answers paths no prefix claims, so the existing origin
+   * keeps working unchanged. Empty means the daemon owns `/` and shows its portal.
+   *
+   * The daemon spawns this profile itself, which is what makes the arrangement
+   * possible: `dsh web` prints a launch token that rotates on every start, and
+   * the daemon has to read the current one from the child it supervises.
+   */
+  rootProfile: z.string().default(''),
   /** Start enabled profiles when the daemon boots. */
   autostart: z.boolean().default(true),
   /** Seconds a profile may take to answer its port after spawn. */
@@ -320,7 +329,8 @@ export function apply(ctx, config) {
     if (path === '/admin' || path.startsWith('/admin/')) {
       return await admin(req, res, url)
     }
-    if (path === '/' || path === '/portal' || path === '/index.html') {
+    const ownsRoot = config.rootProfile === ''
+    if (path === '/portal' || (ownsRoot && (path === '/' || path === '/index.html'))) {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
       res.end(
         renderPortal({
@@ -333,6 +343,55 @@ export function apply(ctx, config) {
       return true
     }
     return false
+  }
+
+  /**
+   * The browser-facing session for the root profile.
+   *
+   * The root profile gates `/` and `/api` on a cookie derived from its own
+   * authority, which a browser reaching the daemon can never present. The daemon
+   * exchanges the launch token its child printed, caches the cookie, and attaches
+   * it upstream. The token is re-read on every child start, so a profile restart
+   * cannot leave a stale cookie behind.
+   */
+  const rootBridge = {
+    cookie: undefined,
+    /** Launch URL the cached cookie was minted from. */
+    mintedFrom: undefined,
+    pending: undefined,
+    port() {
+      const profile = registry.find(config.rootProfile)
+      if (profile === undefined) throw new Error(`daemon: root profile "${config.rootProfile}" is not registered`)
+      return profile.port
+    },
+    refresh() {
+      rootBridge.cookie = undefined
+      rootBridge.mintedFrom = undefined
+    },
+    async ensure() {
+      const url = supervisor.url(config.rootProfile)
+      if (url === undefined) throw new Error('daemon: root profile is not running')
+      // A restart replaces the token, so a cookie minted from the old one is void.
+      if (rootBridge.cookie !== undefined && rootBridge.mintedFrom === url) return
+      if (rootBridge.pending !== undefined) return rootBridge.pending
+      rootBridge.pending = (async () => {
+        try {
+          const answer = await fetch(url, { redirect: 'manual' })
+          const raw = answer.headers.getSetCookie?.() ?? []
+          const found = raw
+            .map((value) => /^(dsh-auth-[A-Za-z0-9_-]+=[^;]+)/u.exec(value)?.[1])
+            .find(Boolean)
+          rootBridge.cookie = found
+          rootBridge.mintedFrom = url
+          if (found === undefined) logger.warn('daemon: root profile answered no session cookie')
+        } catch (error) {
+          logger.warn(`daemon: root session exchange failed: ${error.message}`)
+        } finally {
+          rootBridge.pending = undefined
+        }
+      })()
+      return rootBridge.pending
+    },
   }
 
   const notFound = (req, res, url) => {
@@ -358,6 +417,9 @@ export function apply(ctx, config) {
         port: config.port,
         listProfiles: () => supervisor.ids().map((id) => ({ id, port: registry.find(id)?.port ?? 0 })).filter((row) => row.port !== 0),
         local,
+        root: config.rootProfile === ''
+          ? undefined
+          : { port: rootBridge.port, cookie: () => rootBridge.cookie, ensure: rootBridge.ensure, refresh: rootBridge.refresh },
         notFound,
       })
       logger.info(`daemon: listening on ${config.host}:${entry.port}`)
