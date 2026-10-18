@@ -201,6 +201,11 @@ export function apply(ctx, config) {
       return true
     }
     const path = url.split('?')[0]
+    // An environment prefix is not a daemon-owned path: route it instead of gating it.
+    // The edge has its own login, and this node has already authenticated whoever is
+    // asking before the request got here.
+    const routed = path.slice(1).split('/')[0]
+    if (routed !== '' && registry.find(routed) !== undefined) return false
     if (sessionRequired(path)) {
       const record = auth.session(req, secure)
       if (record === undefined) {
@@ -297,6 +302,18 @@ export function apply(ctx, config) {
       mainUrl: config.mainUrl,
       token: config.token,
       harnessPort: () => embeddedRoot.port(),
+      // The edge's own harness session, minted the same way the main node mints one for
+      // its root profile.
+      harnessCookie: async () => {
+        try {
+          await embeddedRoot.ensure()
+        } catch (error) {
+          logger.warn(`daemon: could not mint the harness session: ${error.message}`)
+          return undefined
+        }
+        logger.info(`daemon: harness cookie state: ${embeddedRoot.cookie === undefined ? 'absent' : 'present'}`)
+        return embeddedRoot.cookie
+      },
       logger,
     })
     : undefined

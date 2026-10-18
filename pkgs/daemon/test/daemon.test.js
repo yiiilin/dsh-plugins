@@ -11,6 +11,7 @@ import { mkdtemp, readFile, rm, writeFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { request as httpRequest } from 'node:http'
 import yaml from 'js-yaml'
 import { routeEnvironment, scopeCookiePath, scopeLocation } from '../lib/entry.js'
 import {
@@ -250,4 +251,90 @@ test('the patch defaults to the main role with no prefix', async () => {
   assert.equal(config.mainUrl, '')
   assert.equal(config.token, '')
   assert.equal(config.rootPrefix, '')
+})
+
+// --- end-to-end over a real socket -------------------------------------------
+
+test('a request and its response cross a real tunnel', async () => {
+  // The unit tests above cover each half; this one wires two hubs together over a
+  // loopback WebSocket, because a frame format that both halves agree on is not the same
+  // claim as a request that actually comes back.
+  const { createServer } = await import('node:http')
+  const { WebSocketServer } = await import('ws')
+  const { createTunnelHub, tokenOf, TUNNEL_PATH } = await import('../lib/federation/hub.js')
+  const { createTunnelAgent } = await import('../lib/federation/agent.js')
+
+  const token = 'e'.repeat(43)
+  const environment = { id: 'edge1', label: 'edge1', token, enabled: true }
+
+  // The edge's "harness": answers everything with a fixed body.
+  const harness = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/plain', 'x-seen-host': String(req.headers.host) })
+    res.end(`harness saw ${req.url} cookie=${req.headers.cookie ?? 'none'}`)
+  })
+  await new Promise((done) => harness.listen(0, '127.0.0.1', done))
+  const harnessPort = harness.address().port
+
+  // The main node's listener, which also accepts the tunnel.
+  const hub = createTunnelHub({
+    logger: { info() {}, warn() {} },
+    verifyToken: (value) => (value === token ? environment : undefined),
+  })
+  const tunnelServer = new WebSocketServer({ noServer: true })
+  const main = createServer((req, res) => {
+    // `entry.js` strips the prefix before handing the path over; the test does the same
+    // rather than expecting the hub to know about routing.
+    const routed = routeEnvironment(req.url ?? '/', ['edge1'])
+    if (routed === undefined || !hub.proxy(routed.id, req, res, routed.path)) {
+      res.writeHead(503)
+      res.end('offline')
+    }
+  })
+  main.on('upgrade', (req, socket, head) => {
+    if ((req.url ?? '').split('?')[0] !== TUNNEL_PATH) { socket.destroy(); return }
+    const found = hub.verify(tokenOf(req))
+    if (found === undefined) { socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n'); return }
+    tunnelServer.handleUpgrade(req, socket, head, (ws) => hub.accept(found, ws))
+  })
+  await new Promise((done) => main.listen(0, '127.0.0.1', done))
+  const mainPort = main.address().port
+
+  const agent = createTunnelAgent({
+    mainUrl: `http://127.0.0.1:${mainPort}`,
+    token,
+    harnessPort: () => harnessPort,
+    harnessCookie: async () => 'dsh-auth-test=1',
+    logger: { info() {}, warn() {} },
+  })
+  agent.start()
+
+  try {
+    // Wait for the tunnel to come up rather than guessing a delay.
+    for (let i = 0; i < 100 && !hub.isOnline('edge1'); i += 1) {
+      await new Promise((done) => setTimeout(done, 50))
+    }
+    assert.ok(hub.isOnline('edge1'), 'the edge should be online')
+
+    const answer = await new Promise((done, fail) => {
+      const req = httpRequest({ host: '127.0.0.1', port: mainPort, path: '/edge1/api/x', method: 'GET' }, (res) => {
+        let body = ''
+        res.on('data', (chunk) => { body += chunk })
+        res.on('end', () => done({ status: res.statusCode, headers: res.headers, body }))
+      })
+      req.on('error', fail)
+      req.end()
+    })
+
+    assert.equal(answer.status, 200)
+    // The harness must see its own authority and the daemon's cookie, not the browser's.
+    assert.match(answer.body, /harness saw \/api\/x/u)
+    assert.match(answer.body, /cookie=dsh-auth-test=1/u)
+    assert.match(String(answer.headers['x-seen-host']), /^127\.0\.0\.1:\d+$/u)
+  } finally {
+    agent.stop()
+    hub.close()
+    await new Promise((done) => main.close(done))
+    await new Promise((done) => harness.close(done))
+    tunnelServer.close()
+  }
 })

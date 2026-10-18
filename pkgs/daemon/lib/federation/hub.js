@@ -117,7 +117,11 @@ export function createTunnelHub({ verifyToken, logger }) {
    */
   function proxy(envId, req, res, upstreamPath) {
     const record = connections.get(envId)
-    if (record === undefined) return false
+    if (record === undefined) {
+      logger.warn(`federation: ${envId} has no tunnel; answering 503`)
+      return false
+    }
+    logger.info(`federation: ${envId} ${req.method} ${upstreamPath}`)
 
     const id = newRequestId()
     const key = id.toString('hex')
@@ -147,9 +151,10 @@ export function createTunnelHub({ verifyToken, logger }) {
     }))
     req.on('data', (chunk) => record.socket.send(encodeFrame(FRAME.requestBody, id, chunk)))
     req.on('end', () => record.socket.send(encodeFrame(FRAME.requestEnd, id)))
-    req.on('close', () => {
-      // The browser went away before the edge answered. Say so, or the edge keeps
-      // working on a response nobody will read.
+    // The response's `close` means the browser is gone; the request's `close` also fires
+    // when the body finishes, which is the normal case and must not cancel anything.
+    res.on('close', () => {
+      if (res.writableEnded) return
       if (record.pending.has(key)) {
         record.pending.delete(key)
         record.socket.send(encodeFrame(FRAME.cancel, id))
@@ -174,7 +179,11 @@ export function createTunnelHub({ verifyToken, logger }) {
    */
   function proxyUpgrade(envId, req, socket, head, upstreamPath) {
     const record = connections.get(envId)
-    if (record === undefined) return false
+    if (record === undefined) {
+      logger.warn(`federation: ${envId} has no tunnel; answering 503`)
+      return false
+    }
+    logger.info(`federation: ${envId} ${req.method} ${upstreamPath}`)
 
     const id = newRequestId()
     const key = id.toString('hex')
@@ -183,15 +192,21 @@ export function createTunnelHub({ verifyToken, logger }) {
     record.pending.set(key, {
       onHead(head2) {
         if (head2.status !== 101) {
-          socket.end(`HTTP/1.1 ${head2.status} ${head2.statusText}\r\n\r\n`)
+          socket.end(`HTTP/1.1 ${head2.status} ${head2.statusText}\r\nconnection: close\r\n\r\n`)
           return
         }
         upgraded = true
-        const lines = [`HTTP/1.1 101 ${head2.statusText || 'Switching Protocols'}`]
-        for (const [name, value] of Object.entries(head2.headers)) {
-          lines.push(`${name}: ${value}`)
+        // `rawHeaders` is the harness's own block, so `Sec-WebSocket-Accept` is the value
+        // it computed rather than one this proxy would have to invent.
+        if (Array.isArray(head2.rawHeaders)) {
+          const lines = [`HTTP/1.1 101 ${head2.statusText || 'Switching Protocols'}`]
+          for (let i = 0; i + 1 < head2.rawHeaders.length; i += 2) {
+            lines.push(`${head2.rawHeaders[i]}: ${head2.rawHeaders[i + 1]}`)
+          }
+          socket.write(`${lines.join('\r\n')}\r\n\r\n`)
+          return
         }
-        socket.write(`${lines.join('\r\n')}\r\n\r\n`)
+        socket.end('HTTP/1.1 502 Bad Gateway\r\nconnection: close\r\n\r\n')
       },
       onBody(payload) {
         if (upgraded) socket.write(payload)

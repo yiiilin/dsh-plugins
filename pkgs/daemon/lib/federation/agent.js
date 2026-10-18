@@ -25,10 +25,15 @@ const BACKOFF_MS = [1000, 2000, 5000, 10_000, 20_000, 30_000, 60_000]
  * @param options.mainUrl - base URL of the main node, e.g. `https://dsh.yiln.de`.
  * @param options.token - this environment's token.
  * @param options.harnessPort - `() => number`, the local harness listener.
+ * @param options.harnessCookie - `() => Promise<string|undefined>`, the cookie this
+ *   process holds for its own harness. The harness gates every path on a cookie derived
+ *   from its own authority, which the main node's browser can never present — so the
+ *   daemon attaches the session it minted for itself, exactly as it does when proxying
+ *   its own root profile.
  * @param options.logger - logger.
  * @returns `{ start, stop, connected }`.
  */
-export function createTunnelAgent({ mainUrl, token, harnessPort, logger }) {
+export function createTunnelAgent({ mainUrl, token, harnessPort, harnessCookie, logger }) {
   let socket
   let reader
   let stopped = false
@@ -77,11 +82,12 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, logger }) {
         socket.close()
         return
       }
+      logger.info(`federation: received ${frames.length} frame(s)`)
       for (const frame of frames) handle(frame)
     })
 
     socket.on('close', () => {
-      for (const [, cleanup] of inFlight) cleanup()
+      closeInFlight()
       inFlight.clear()
       socket = undefined
       schedule()
@@ -96,9 +102,9 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, logger }) {
     const key = frame.id.toString('hex')
     if (frame.type === FRAME.heartbeat) return
     if (frame.type === FRAME.cancel) {
-      const cleanup = inFlight.get(key)
+      const entry = inFlight.get(key)
       inFlight.delete(key)
-      cleanup?.()
+      entry?.close?.()
       return
     }
     if (frame.type !== FRAME.requestHead) {
@@ -109,8 +115,18 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, logger }) {
       return
     }
     const head = JSON.parse(frame.payload.toString('utf8'))
-    if (head.upgrade === true) startUpgrade(frame.id, key, head)
-    else startHttp(frame.id, key, head)
+    const start = head.upgrade === true ? startUpgrade : startHttp
+    start(frame.id, key, head).catch((error) => {
+      logger.warn(`federation: ${head.upgrade === true ? 'upgrade' : 'request'} failed: ${error.message}`)
+      inFlight.delete(key)
+      sendOrClose(encodeJsonFrame(FRAME.responseHead, frame.id, {
+        status: 502,
+        statusText: 'Bad Gateway',
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
+      }))
+      sendOrClose(encodeFrame(FRAME.responseBody, frame.id, Buffer.from(`federation: ${error.message}\n`)))
+      sendOrClose(encodeFrame(FRAME.responseEnd, frame.id))
+    })
   }
 
   /** Authority the harness expects: its own loopback listener. */
@@ -118,10 +134,25 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, logger }) {
     return `127.0.0.1:${harnessPort()}`
   }
 
-  function rewriteHeaders(headers) {
+  /**
+   * Headers the harness will accept.
+   *
+   * Host and Origin are rewritten because the harness fences on them and a browser
+   * arriving through the main node presents the main node's authority. The cookie is
+   * replaced rather than forwarded: the main node's session cookie is for the main node,
+   * and only this process can mint one its own harness accepts.
+   */
+  async function rewriteHeaders(headers) {
     const next = { ...headers }
     next.host = authority()
     if (next.origin !== undefined) next.origin = `http://${authority()}`
+    const cookie = await harnessCookie?.()
+    if (cookie !== undefined) logger.info(`federation: attaching harness cookie ${String(cookie).slice(0, 24)}…`)
+    if (cookie !== undefined && cookie !== '') next.cookie = cookie
+    else {
+      logger.warn('federation: no harness cookie available; the harness will answer the login page')
+      delete next.cookie
+    }
     return next
   }
 
@@ -133,14 +164,24 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, logger }) {
     return false
   }
 
-  function startHttp(id, key, head) {
+  async function startHttp(id, key, head) {
+    // Reserve the slot before the first await: body and end frames can arrive while the
+    // cookie is still being minted, and a missing entry silently drops them.
+    const queued = { body: [], ended: false }
+    const slot = {
+      onRequestBody(chunk) { queued.body.push(chunk) },
+      onRequestEnd() { queued.ended = true },
+    }
+    inFlight.set(key, slot)
+
+    const prepared = await rewriteHeaders(head.headers)
     let response
     const check = httpRequest({
       host: '127.0.0.1',
       port: harnessPort(),
       method: head.method,
       path: head.path,
-      headers: rewriteHeaders(head.headers),
+      headers: prepared,
     }, (answer) => {
       response = answer
       sendOrClose(encodeJsonFrame(FRAME.responseHead, id, {
@@ -166,62 +207,96 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, logger }) {
       sendOrClose(encodeFrame(FRAME.responseEnd, id))
     })
 
-    inFlight.set(key, {
+    // Buffered frames arrive before this point only if the socket was faster than the
+    // cookie exchange; the queue in `pending` below hands them over now.
+    Object.assign(slot, {
       onRequestBody(chunk) {
         check.write(chunk)
       },
       onRequestEnd() {
         check.end()
       },
+      close() {
+        check.destroy()
+      },
     })
+    for (const chunk of queued.body.splice(0)) check.write(chunk)
+    if (queued.ended) check.end()
     check.on('close', () => inFlight.delete(key))
     void response
   }
 
-  function startUpgrade(id, key, head) {
-    // The real handshake happens here, against the harness: it keeps the harness's own
-    // origin and cookie checks in force, and this side only reports the outcome.
-    const upstream = new WebSocket(`ws://${authority()}${head.path}`, {
-      headers: rewriteHeaders(head.headers),
-      handshakeTimeout: 20_000,
+  async function startUpgrade(id, key, head) {
+    // A transparent upgrade: send the browser's own handshake to the harness and relay
+    // the harness's 101 verbatim. Reconstructing the response with `ws` would have to
+    // recompute `Sec-WebSocket-Accept`, and getting that wrong is exactly what a proxy
+    // must not do.
+    const prepared = await rewriteHeaders(head.headers)
+    prepared.connection = 'Upgrade'
+    prepared.upgrade = 'websocket'
+
+    const slot = { onRequestBody() {}, onRequestEnd() {}, close() {} }
+    inFlight.set(key, slot)
+
+    const upgrade = httpRequest({
+      host: '127.0.0.1',
+      port: harnessPort(),
+      method: head.method,
+      path: head.path,
+      headers: prepared,
     })
-    let settled = false
-    upstream.on('open', () => {
-      settled = true
+    upgrade.on('upgrade', (answer, upstreamSocket, upstreamHead) => {
+      // Raw header block, so the main node relays the harness's own value for
+      // `Sec-WebSocket-Accept` instead of inventing one.
       sendOrClose(encodeJsonFrame(FRAME.responseHead, id, {
         status: 101,
         statusText: 'Switching Protocols',
-        headers: {
-          upgrade: 'websocket',
-          connection: 'Upgrade',
-          'sec-websocket-accept': upstream.handshakeResponse?.headers['sec-websocket-accept'] ?? '',
-        },
+        rawHeaders: answer.rawHeaders,
       }))
+      if (upstreamHead.length > 0) sendOrClose(encodeFrame(FRAME.responseBody, id, upstreamHead))
+      upstreamSocket.on('data', (chunk) => sendOrClose(encodeFrame(FRAME.responseBody, id, chunk)))
+      upstreamSocket.on('close', () => {
+        inFlight.delete(key)
+        sendOrClose(encodeFrame(FRAME.responseEnd, id))
+      })
+      upstreamSocket.on('error', () => inFlight.delete(key))
+      Object.assign(slot, {
+        onRequestBody(chunk) {
+          if (!upstreamSocket.destroyed) upstreamSocket.write(chunk)
+        },
+        close() {
+          upstreamSocket.destroy()
+        },
+      })
     })
-    upstream.on('message', (data) => {
-      sendOrClose(encodeFrame(FRAME.responseBody, id, Buffer.isBuffer(data) ? data : Buffer.from(data)))
-    })
-    upstream.on('close', () => {
+    upgrade.on('response', (answer) => {
+      // The harness refused the upgrade: relay its status so the browser reports the
+      // real reason (usually 401 or 403) instead of a generic failure.
       inFlight.delete(key)
+      sendOrClose(encodeJsonFrame(FRAME.responseHead, id, {
+        status: answer.statusCode ?? 400,
+        statusText: answer.statusMessage ?? '',
+        headers: answer.headers,
+      }))
       sendOrClose(encodeFrame(FRAME.responseEnd, id))
+      answer.resume()
     })
-    upstream.on('error', (error) => {
+    upgrade.on('error', (error) => {
       inFlight.delete(key)
-      if (settled) return
+      logger.warn(`federation: upgrade failed: ${error.message}`)
       sendOrClose(encodeJsonFrame(FRAME.responseHead, id, {
         status: 502,
         statusText: 'Bad Gateway',
         headers: { 'content-type': 'text/plain; charset=utf-8' },
       }))
-      sendOrClose(encodeFrame(FRAME.responseBody, id, Buffer.from(`federation: ${error.message}\n`)))
       sendOrClose(encodeFrame(FRAME.responseEnd, id))
     })
+    upgrade.end()
+  }
 
-    inFlight.set(key, {
-      onRequestBody(chunk) {
-        if (upstream.readyState === WebSocket.OPEN) upstream.send(chunk)
-      },
-    })
+  /** Release every in-flight request, whatever shape its handlers have. */
+  function closeInFlight() {
+    for (const [, entry] of inFlight) entry.close?.()
   }
 
   function start() {
@@ -233,7 +308,7 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, logger }) {
     stopped = true
     clearTimeout(timer)
     socket?.close()
-    for (const [, cleanup] of inFlight) cleanup()
+    closeInFlight()
     inFlight.clear()
   }
 
