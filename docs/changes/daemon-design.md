@@ -465,6 +465,23 @@ profile 原样注册为 `main`，不动它的 manifest、bundle 和已持久化�
 已实测：收养后 `package.json` 与 patch 未被改写，profile 在分配的端口上启动，
 经 `/main/` 可访问，cookie 作用域为 `/main/`。
 
-代价：生产 URL 从 `https://dsh.yiln.de/` 变为 `https://dsh.yiln.de/main/`。
-若必须保持根路径，需要另做一次 cookie 桥接（未实现）。
+### 14.4 根路径保持（第 3 轮已实现）
+
+放弃的只是「daemon 前置到**自己**进程」；改为**根 profile**后同一目标成立：
+
+```yaml
+rootProfile: main     # 这个 profile 接管所有无前缀的路径
+```
+
+成立的关键在于**由 daemon 自己 spawn 根 profile**——它能从子进程的启动行读到
+当前的 launch token，换出浏览器永远拿不到的会话 cookie，并在转发时附上。
+
+- token 轮换不再是问题：cookie 记录它由哪个启动 URL 铸出，profile 重启即重换
+- cookie 被拒时丢弃并回 503 retry，而不是把 401 抛给浏览器
+- `/portal` 与 `/admin` 仍归 daemon，根 profile 只接管 `/` 与 `/api`
+
+实测（真实 profile）：未登录 `/` 返回登录页；同一 URL 登录后是 harness UI；
+`/api` 透传 200；控制台零错误。
+
+于是生产迁移不再改 URL：`https://dsh.yiln.de/` 保持不变。
 
