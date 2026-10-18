@@ -1,8 +1,12 @@
 # git-graph
 
-Internal module of `@yiln-dsh/dsh-plugins`. Install and release the root package;
-this module has no separate npm package or version. Loader row: `dsh-git-graph`.
-See the [root README](../../README.md) for installation, migration and testing.
+Standalone package [`@yiln-dsh/dsh-git-graph`](../../pkgs/git-graph). Loader row: `dsh-git-graph`.
+
+```bash
+dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/git-graph"
+```
+
+See the [root README](../../README.md) for the workspace layout, migration and testing.
 
 A DSH `dsh.bundle` that contributes the **Git Graph** page tab to the DSH Web
 right Sidebar (`@deepseek-ai/dsh-client-ui-sidebar-right`, shipped with DSH
@@ -18,7 +22,7 @@ registers only the Git page kind.
   `/_dsh/git-graph/vendor/markdown-it.mjs` — served verbatim from the
   `monaco-editor` and `markdown-it` dependencies, with no CDN and no bundler
   step. Installing this plugin installs everything its pages need; it never
-  requires `@yiln-dsh/dsh-plugin-file-explorer` to be present.
+  requires `@yiln-dsh/dsh-file-explorer` to be present.
 - **Git Graph**: a vscode/le-git-graph style commit graph rendered from the
   repository containing the current directory —
   - colored lane graph with commit dots and merge curves (all branches or the

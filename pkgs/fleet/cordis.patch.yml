@@ -16,7 +16,17 @@
         # --trusted-host；不填则箱只接受 loopback authority，经网关的 /api 会 403。
         publicAuthority: ''
         # 生成的箱 profile 使用的 bundle 层。换掉 web 插件时改这里，无需改代码。
+        # Box profiles mount the deployment preset too, so a box is the same
+        # development environment as the fleet host rather than a bare harness.
         profileBundles:
           - '@deepseek-ai/dsh-base'
           - '@deepseek-ai/dsh-web-app'
+          - '@local/yiln-agent-preset'
+        # Pin the harness modules that exist only in the dsh install tree.
+        harnessVersion: 0.2.1-rc.2
+        # Install a box's dependencies on first launch.
+        bootstrap: true
+        pnpmPath: pnpm
+        # 模型路由、preset 默认值等部署事实放在这个片段里，不写进插件代码。
+        boxPatchPath: !!js dshHomePath('fleet/box-patch.yml')
 

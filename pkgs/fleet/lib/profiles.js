@@ -34,6 +34,62 @@ import { join } from 'node:path'
  */
 export const DEFAULT_PROFILE_BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']
 
+/**
+ * Bundle layers a box profile mounts by default.
+ *
+ * A box that carries only `dsh-base` + `dsh-web-app` is a bare harness: no
+ * deployment preset, no deployment tuning. Including the agent-preset bundle
+ * gives the box the same preset roster the fleet host has, which is what makes
+ * a box feel like "the same development environment on another machine".
+ *
+ * The deployment's own plugin packages are deliberately *not* here: several of
+ * them (the authenticated gateway, the daemon manager) own host-wide resources a
+ * box must not duplicate.
+ */
+export const DEFAULT_BOX_BUNDLES = [
+  '@deepseek-ai/dsh-base',
+  '@deepseek-ai/dsh-web-app',
+  '@local/yiln-agent-preset',
+]
+
+/**
+ * Harness modules a box profile must install explicitly.
+ *
+ * They exist in the dsh install tree but not in the profile's node_modules, so a
+ * preset that mounts them breaks if dsh is ever installed in a trimmed or
+ * self-contained form. Declaring them pins the box to resolvable packages.
+ */
+export const BOX_HARNESS_MODULES = [
+  'dsh-tool-schedule',
+  'dsh-plugin-manager',
+  'dsh-workflow-ptc',
+  'dsh-tool-terminal',
+  'dsh-experimental-worktree',
+  'dsh-experimental-tool-worktree',
+]
+
+/**
+ * Dependencies a box profile declares for its bundle layers.
+ *
+ * @param bundles - the box's bundle layers.
+ * @param options.agentPresetsDir - `$DSH_HOME/.agent-presets`, when one exists.
+ * @param options.harnessVersion - version to pin the harness modules to.
+ * @returns the dependency map written into the box manifest.
+ */
+export function boxDependencies(bundles, { agentPresetsDir, harnessVersion }) {
+  const dependencies = {}
+  if (agentPresetsDir !== undefined && bundles.includes('@local/yiln-agent-preset')) {
+    // A link keeps the box on the deployment's live preset rather than a copy.
+    dependencies['@local/yiln-agent-preset'] = `link:${join(agentPresetsDir, 'yiln', 'bundle')}`
+  }
+  if (harnessVersion !== undefined) {
+    for (const module of BOX_HARNESS_MODULES) {
+      dependencies[`@deepseek-ai/${module}`] = harnessVersion
+    }
+  }
+  return dependencies
+}
+
 /** The provider packages an SSH box profile depends on. */
 export const SSH_PROVIDER_PACKAGES = [
   '@deepseek-ai/dsh-ssh',
@@ -110,6 +166,31 @@ export function renderSshPatch(box) {
 `
 }
 
+
+/**
+ * Merge an operator fragment into a patch file's single YAML sequence.
+ *
+ * A patch file is one top-level sequence, so a fragment cannot be appended as
+ * text: after an empty `[]` document, a following `- id:` line is a parse error.
+ * The fragment's leading marker is dropped and its rows are inserted before the
+ * end of the sequence.
+ *
+ * @param rows - the box's own patch text, ending with a top-level sequence.
+ * @param fragment - the operator's YAML rows, or an empty string.
+ * @returns the merged patch text without a trailing newline.
+ */
+export function mergeFragment(rows, fragment) {
+  const extra = fragment.trim()
+  if (extra === '') return rows.trimEnd()
+  const body = rows.trimEnd()
+  // An empty sequence carries no content of its own to keep.
+  if (body.endsWith('[]')) {
+    const head = body.slice(0, -2).trimEnd()
+    return `${head}${head === '' ? '' : '\n'}\n${extra}`
+  }
+  return `${body}\n${extra}`
+}
+
 /**
  * Render the patch layer for a local box.
  *
@@ -130,22 +211,35 @@ export function renderLocalPatch() {
  * @param bundles - bundle layers for the generated profile.
  * @returns the written paths.
  */
-export async function writeProfile(profileDir, box, bundles = DEFAULT_PROFILE_BUNDLES) {
+export async function writeProfile(
+  profileDir,
+  box,
+  bundles = DEFAULT_PROFILE_BUNDLES,
+  dependencies = {},
+  extraPatch = '',
+) {
   await mkdir(profileDir, { recursive: true })
   const packagePath = join(profileDir, 'package.json')
   const manifest = {
     name: `dsh-profile-${box.profile}`,
     private: true,
-    dependencies: {},
+    dependencies,
     dsh: { profile: { bundles: [...bundles], patchReload: 'startup' } },
   }
   await writeFile(packagePath, `${JSON.stringify(manifest, null, 2)}\n`)
+  // pnpm treats a directory without this as part of a parent workspace; a box
+  // profile must install into its own tree.
+  await writeFile(join(profileDir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n')
   // A profile root is an empty entry list; the tree is composed from bundles
   // and the patch layer beside it.
   await writeFile(join(profileDir, 'cordis.yml'), '[]\n')
+  // A box carries no deployment knowledge of its own: whatever the operator
+  // needs — model routing, preset defaults, local tuning — is merged in as an
+  // opaque fragment, so this package never learns a deployment's providers.
+  const rows = box.kind === 'ssh' ? renderSshPatch(box) : renderLocalPatch()
   await writeFile(
     join(profileDir, 'cordis.patch.yml'),
-    box.kind === 'ssh' ? renderSshPatch(box) : renderLocalPatch(),
+    `${mergeFragment(rows, extraPatch)}\n`,
   )
   return {
     packagePath,

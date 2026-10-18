@@ -1,7 +1,11 @@
 # fleet
 
-One origin, many development boxes. Internal module of `@yiln-dsh/dsh-plugins`;
-install and release the root package. Loader row: `fleet`.
+One origin, many development boxes. Standalone package
+[`@yiln-dsh/dsh-fleet`](../../docs/modules/fleet.md). Loader row: `fleet`.
+
+```bash
+dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/fleet"
+```
 
 ## Why a process per box
 

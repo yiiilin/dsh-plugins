@@ -5,15 +5,19 @@
   "type": "module",
   "license": "MIT",
   "files": [
+    "browser.js",
+    "capture.js",
+    "client.js",
     "index.js",
+    "novnc",
+    "ws.js",
+    "x11vnc.js",
     "cordis.patch.yml",
     "README.md",
-    "client.js",
-    "lib/",
     "!**/test/"
   ],
   "exports": {
-    "package.json": "./package.json",
+    "./package.json": "./package.json",
     ".": "./index.js",
     "./client": "./client.js"
   },

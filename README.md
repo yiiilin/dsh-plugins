@@ -1,91 +1,98 @@
-# @yiln-dsh/dsh-plugins
+# @yiln-dsh/dsh-plugins (workspace)
 
-One DSH Web plugin package containing eight internal feature modules. This
-workspace is the project root; dependencies, versioning, build, tests and
-publication are managed here, not in individual feature directories.
+A pnpm workspace of **independently installable** DSH Web plugins. Each plugin
+lives under `pkgs/<name>/` as its own package (`@yiln-dsh/dsh-<name>`) with its
+own `dsh.bundle` layer, Loader row, and Client module. A profile installs only
+the plugins it actually runs.
 
-Current version: `0.1.3`. Verified targets: DSH `0.2.0-rc.2` (reference; 482/482
-tests) and `0.2.1-alpha.2` (all eight modules verified, boots live, and driven in
-a real browser against the running GUI). The DSH peer window is
-`>=0.2.0-rc.2 <0.2.1`, so the installer admits the `0.2.1-alpha` line and no
-version exemption is needed. See [compatibility notes](COMPATIBILITY.md) for the
-exact scope.
+The workspace root is private and holds no plugin code: no `dsh.bundle`, no
+`cordis.patch.yml`, no aggregate Client bundle.
 
-`0.1.3` also fixes a safety defect: Web Daemon re-derives its systemd unit on
-every boot, and before this release a boot from a different `DSH_HOME` (a
-rehearsal or second profile) could overwrite the host unit to point at that other
-installation. The write is now refused when the existing unit belongs to a
-different `DSH_HOME`; the refusal is non-fatal and logged.
+Current version: `0.2.1`. Verified target: DSH `0.2.1-rc.2`. See
+[compatibility notes](COMPATIBILITY.md) for the exact scope.
 
-## Features
+## Breaking change in `0.2.0`
 
-| Module | Loader row ID | Purpose |
+Two modules were removed along with their dependencies
+(`@huggingface/transformers`, `sqlite-vec`):
+
+- **Mentor** (`dsh-mentor`). Superseded by the `mentor` **Agent Preset**
+  (`subagent({ agent_preset: 'mentor' })`), which reaches the same goal through
+  DSH's own continuable subagents.
+- **Work Journal** (`dsh-work-journal`). The `work_journal` tool, `/journal`
+  command, `POST /api/work-journal` route, and the report scheduler are gone.
+
+Stored data is **not** touched: reports under `<DSH_HOME>/work-journal/` remain
+on disk until deleted deliberately.
+
+## Breaking change in `0.2.1`: one package became nine
+
+The single aggregate package `@yiln-dsh/dsh-plugins` was split into standalone
+packages. Nothing is published to npm any more; a profile installs a package
+directly from this repository by path.
+
+| Before | After |
+| --- | --- |
+| `@yiln-dsh/dsh-plugins` (one package) | nine packages under `pkgs/` |
+| root `cordis.patch.yml` | one `cordis.patch.yml` per package |
+| generated 292 KB `client.js` | each package ships its own Client module |
+| `exports["./fleet"]` subpaths | one package per plugin, no subpaths |
+
+Loader row IDs, HTTP paths, locale/slot IDs, cookie names and state directories
+are unchanged, so an existing profile only needs new package addresses — see
+[Migration](#migration-from-the-aggregate-package).
+
+## Packages
+
+| Package | Loader row ID | Purpose |
 | --- | --- | --- |
-| Auth Webserver | `webserver-auth` | Authenticated LAN gateway, TOTP/Passkeys, PWA, mobile layout and configuration editor. |
-| Delete Session | `dsh-delete-session` | Confirmed single/batch deletion with subagent cascade and guarded persistence paths. |
-| Git Graph | `dsh-git-graph` | Right-sidebar Git history, working-tree changes and file diffs. |
-| Mentor | `dsh-mentor` | Isolated tool-less consultations, per-session serial queue, durable replay and global settings. |
-| Session List Cache | `session-list-cache` | Coalesces and caches concurrent session enumeration. |
-| Web Daemon | `web-daemon` | Systemd management, server metrics and interrupted-session recovery. |
-| Session Mode | `session-mode` | Per-session `normal` / `delegate-writes` permissions: the restricted main agent gets a pruned tool catalog plus an execution guard, with separate system prompts. |
-| Work Journal | `dsh-work-journal` | Daily/weekly/monthly reports of what this harness was used for, read from the durable session store: a `work_journal` tool, a `/journal` command, and a left-rail 工作日志 panel over scheduled, searchable reports. |
-
-A single installed bundle owns these modules. Their separate Cordis rows retain
-independent Config schemas and the existing settings namespaces. Auth sessions,
-Passkeys, Mentor journals, recovery records, HTTP routes and Git tab identities
-keep their original names and locations.
+| [`pkgs/auth-webserver`](pkgs/auth-webserver) | `webserver-auth` | Authenticated LAN gateway, TOTP/Passkeys, PWA, mobile layout and configuration editor. |
+| [`pkgs/delete-session`](pkgs/delete-session) | `dsh-delete-session` | Confirmed single/batch deletion with subagent cascade and guarded persistence paths. |
+| [`pkgs/git-graph`](pkgs/git-graph) | `dsh-git-graph` | Right-sidebar Git history, working-tree changes and file diffs. |
+| [`pkgs/session-list-cache`](pkgs/session-list-cache) | `session-list-cache` | Coalesces and caches concurrent session enumeration. |
+| [`pkgs/web-daemon`](pkgs/web-daemon) | `web-daemon` | Systemd management, server metrics and interrupted-session recovery. |
+| [`pkgs/session-mode`](pkgs/session-mode) | `session-mode` | Per-session `normal` / `delegate-writes` permissions with pruned catalogs and separate system prompts. |
+| [`pkgs/tool-restrict-presets`](pkgs/tool-restrict-presets) | `tool-restrict-presets` | Applies `agent.ctx.tools.restrict({ allow: [] })` to every Agent running a listed Agent Preset. |
+| [`pkgs/desktop-vnc`](pkgs/desktop-vnc) | `dsh-desktop-vnc` | Right-sidebar tab showing a Chromium browser inside a nested Xephyr display. |
+| [`pkgs/fleet`](pkgs/fleet) | `fleet` | One origin, many development boxes: path-prefix gateway, dynamic profiles and process supervision for remote machines. |
 
 ## Install
 
-Install the published package (`0.1.3` is the current npm `latest`):
+Install one plugin straight from this repository:
 
 ```bash
-dsh plugin --profile web add @yiln-dsh/dsh-plugins@0.1.3
+dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/session-mode"
 ```
 
-The declared DSH peer window is `>=0.2.0-rc.2 <0.2.1`. Within it the installer's
-peer gate admits both the `0.2.0` line and the `0.2.1` prerelease line, so no
-`dsh plugin allow-version` exemption is required for `0.2.1-alpha.2`. A future
-`0.2.1` final release or a later line is deliberately outside the window and
-needs a fresh compatibility pass.
-
-Or install the current workspace build:
+Install several by repeating the path form:
 
 ```bash
-npm install
-npm run build
-dsh plugin --profile web add file:/path/to/dsh-plugin
+dsh plugin --profile web add \
+  "github:<owner>/dsh-plugin#path:/pkgs/git-graph" \
+  "github:<owner>/dsh-plugin#path:/pkgs/session-mode"
 ```
 
-Refresh the local `file:` installation after source changes. Restart the daemon
-for Host changes and refresh the browser for Client changes; a running process
-must not be assumed to pick up copied files automatically.
-
-A `file:` directory dependency is resolved from the lockfile, so pnpm may report
-`Already up to date` and project nothing even when the package gained files.
-Remove the projected package before re-adding it, or the new module will be
-missing from the composed profile:
+Or install a local checkout by path:
 
 ```bash
-rm -rf "$DSH_HOME/profiles/web/node_modules/@yiln-dsh/dsh-plugins"
-dsh plugin --profile web add file:/path/to/dsh-plugin
+dsh plugin --profile web add "file:/path/to/dsh-plugin/pkgs/session-mode"
 ```
 
-Confirm the composed tree carries the row before restarting:
+Refresh a local `file:` installation after source changes, then restart the
+daemon for Host changes and refresh the browser for Client changes.
+
+A package missing `dsh.bundle.patch` installs as an inert dependency and mounts
+nothing. Confirm the composed tree carries the row before restarting:
 
 ```bash
 dsh --profile web --dump-config | grep -c session-mode
 ```
 
-## Migration From Six Packages
+## Migration from the aggregate package
 
-Do not activate the suite alongside the six old bundles: their row IDs, routes
-and registrations would overlap. Back up the Web profile and plugin state,
-stop the worker from an independent process, remove the old six packages, install
-the suite and migrate explicit old `name` overrides in the user patch. Preserve
-all Config values, row IDs and state directories. Restart and refresh the GUI.
-
-The migration helper is dry-run by default through an explicit mode:
+A profile written against the old aggregate package names either
+`@yiln-dsh/dsh-plugins/<feature>` or `@yiln-dsh/dsh-plugin-<feature>`. Back up
+the profile, then rewrite those addresses with the structured helper:
 
 ```bash
 node scripts/migrate-profile.mjs --check /absolute/profile/cordis.patch.yml
@@ -94,88 +101,69 @@ node scripts/migrate-profile.mjs --write /absolute/profile/cordis.patch.yml
 
 It changes only known Loader module addresses, preserves comments and `!!js`,
 never evaluates expressions, and verifies that other configuration values stay
-identical. It does not uninstall/install packages or remove persisted state.
+identical. It does not uninstall or install packages, and does not remove
+persisted state.
+
+Then uninstall the aggregate package and install the packages that profile
+actually used:
+
+```bash
+dsh plugin --profile web remove @yiln-dsh/dsh-plugins
+dsh plugin --profile web add "file:/path/to/dsh-plugin/pkgs/auth-webserver" ...
+```
+
+Do not run both the aggregate package and the split packages at once: their row
+IDs overlap.
 
 ## Session Modes
 
 Use the switch to the right of the permission control in the composer toolbar,
 or `/agent-mode on` and `/agent-mode off`. Turning delegated writes on makes the
-main agent read-only while workers perform edits and command execution: unaudited
-tools leave the main agent's model-facing catalog, and a monotonic guard still
-refuses them if a call arrives anyway. Agent Teams coordination tools stay
-available to the coordinating main agent. The
+main agent read-only while workers perform edits and command execution. The
 switch label and both state words are localized through the Client locale
 dictionary. The two modes have independent `normalPrompt` and
 `delegateWritesPrompt` Config fields. Selections survive restart; worker
 permissions and prompts use the mode captured at creation.
 See [Session Mode](<docs/modules/session-mode.md>) for configuration and boundaries.
 
-## Work Journal
-
-Ask the harness what you did, without preparing anything in advance. The journal
-reads the same session logs the conversations are replayed from, so it covers
-history from before it was installed and cannot disagree with what happened.
-
-- In a conversation: ask "我昨天做了什么" / "总结一下这周" and the agent calls
-  `work_journal`.
-- Without the model: `/journal week`, `/journal 2026-09-13`, `/journal status`,
-  `/journal rebuild`.
-- In the GUI: the "工作日志" button on the left rail, beside 插件 and 自动化任务
-  and below 新建会话, listing generated reports newest-first with the time span
-  each one covers, plus a search box over them.
-
-With `schedule: true` the module also writes reports on its own: yesterday's
-report every midnight, the completed Saturday–Friday week each Saturday, and the
-previous calendar month on the 1st. Each one is a Markdown file plus a metadata
-record under `<DSH_HOME>/work-journal/`, kept permanently and indexed in SQLite
-for keyword and semantic search. Scheduled generation spends model tokens
-unattended, so it is off by default.
-
-The first query after a restart builds the whole index; later passes read only
-what changed. A report that could not be built from the whole store says so
-instead of quietly under-counting. Reports count your own prompts, tool calls, files
-written, commands run, per-day active windows, and per-project totals. See
-[Work Journal](<docs/modules/work-journal.md>) for the projection rules, the
-incremental index, and configuration.
-
 ## Development
 
 ```bash
-npm run build
-npm run check
-npm test
+npm run check                       # validate every package as a mountable plugin
+npm test                            # workspace + per-package suites
 DSH_EDITOR_QA_URL=http://isolated-test-host:3095/ npm run test:editor
 DSH_MODE_QA_URL=http://127.0.0.1:<isolated-port>/ npm run test:modes:browser
-npm pack
 ```
 
-The browser test uses the synthetic fixture in the Auth module and refuses the
+There is no build step: a package's Client source is already its own
+`window.__ModuleLoader__.load({ id, factory })` module, and its `id` must equal
+the package name. `npm run check` enforces that.
+
+The browser tests use the synthetic fixture in the Auth package and refuse the
 production port. Do not point mutating test journeys at production.
 
 ## Layout
 
-- `package.json`: the only plugin package manifest and version.
-- `cordis.patch.yml`: root discovery anchor and eight feature rows.
-- `index.js`: no-op Host discovery anchor.
-- `src/<feature>/`: internal Host/Client implementations and feature tests.
-- `src/features.js`: canonical identities for composition and migration checks.
-- `client.js`: generated single Client entry; edit feature sources instead.
-- `scripts/`: client generation, verification and profile migration.
-- `test/`: root-package and migration contracts.
-- `docs/`: feature notes, compatibility research and verification evidence.
-- `skills/`: repository skill material, not a second plugin package.
+- `package.json`: private workspace root — scripts only, no plugin surface.
+- `pnpm-workspace.yaml`: `pkgs/*` is the package glob.
+- `pkgs/<name>/package.json`: the plugin manifest (`dsh.bundle`, `dsh.client`, `exports`).
+- `pkgs/<name>/cordis.patch.yml`: exactly one Loader row naming this package.
+- `pkgs/<name>/index.js`: Host half.
+- `pkgs/<name>/client.js`: Client half, self-registering.
+- `pkgs/<name>/test/`: package tests.
+- `scripts/check.mjs`: per-package mounting validation.
+- `scripts/migration.mjs`: legacy address migration.
+- `test/`: workspace-level contracts.
+- `docs/`: module notes, compatibility research and verification evidence.
 
-The [doc-driven-development source](skills/doc-driven-development/SKILL.md) keeps
-human-readable domain/module contracts in a small, uniform documentation layout.
-Its [module example](skills/doc-driven-development/examples/module-boundaries.md)
-shows public entry points, state ownership and scoped document maintenance.
-Run `node skills/doc-driven-development/scripts/check.mjs` for the skill's
-isolated package regressions; these materials are not installed or published
-by the plugin build, and existing project documents are not migrated automatically.
+The [doc-driven-development source](.agents/skills/doc-driven-development/SKILL.md)
+keeps human-readable domain/module contracts in a small, uniform documentation
+layout.
 
 ## Release
 
-Bump the root version and update this README and compatibility notes together.
-Run the build, syntax checks, tests and a packed-install smoke test. Commit and
-push only when requested; publish with `npm publish --access public` only after
-an explicit release request. Internal modules do not have independent versions.
+Each package carries its own version: bump only the packages that changed, plus
+the workspace root when the layout changes. Run `npm run check`, `npm test`, and a
+smoke test that installs a package from a clean profile. Commit and push only
+when requested. This repository has **no npm publication target** — installing
+from GitHub is the supported path.

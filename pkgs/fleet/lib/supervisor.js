@@ -123,6 +123,8 @@ export function createSupervisor({
   const running = new Map()
   /** Bounded recent output per box, kept after exit for diagnostics. */
   const logs = new Map()
+  /** Launch URL per box, cleared when the box stops so a stale token is never shown. */
+  const urls = new Map()
   const LOG_LIMIT = 32_000
 
   const stop = (id) =>
@@ -133,6 +135,7 @@ export function createSupervisor({
         return
       }
       running.delete(id)
+      urls.delete(id)
       const child = entry.child
       if (child.exitCode !== null || child.signalCode !== null) {
         done()
@@ -203,6 +206,7 @@ export function createSupervisor({
         exited = resolveExit
         child.once('exit', (code, signal) => {
           const wasRunning = running.delete(box.id)
+          urls.delete(box.id)
           resolveExit()
           if (wasRunning) onExit?.(box.id, code, signal)
         })
@@ -220,6 +224,9 @@ export function createSupervisor({
       // our pipe, so give the announcement a bounded grace period rather than
       // reading the log at the instant the port opens.
       const url = await waitForStartupLine(() => log)
+      // The launch URL carries the box's one-time token; the fleet host owns it
+      // so an operator can open the box without shell access to this machine.
+      urls.set(box.id, url)
       return { port: box.port, url, log: () => log, exited }
     },
 
@@ -229,6 +236,11 @@ export function createSupervisor({
     /** Recent child output for one box; empty once the process has exited. */
     log(id) {
       return logs.get(id) ?? ''
+    },
+
+    /** The launch URL a box printed, or undefined while it is not running. */
+    url(id) {
+      return urls.get(id)
     },
 
     /** Stop every box and wait for each process to exit. */

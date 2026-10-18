@@ -6,7 +6,7 @@ Revision: 2
 Status: accepted
 Baseline: unknown
 Owns: —
-Affects: skills/doc-driven-development/**
+Affects: .agents/skills/doc-driven-development/**
 Implementation: complete
 Verification: partial
 Approval: 本轮用户明确认可此前简化建议，并要求 skill 提供 example 供 AI 参考；授权修改本仓库 skill 源码，不包含部署、提交、发布或现有项目文档迁移。
@@ -47,8 +47,12 @@ Approved revision: 2
 
 ## 合入结果
 
-已落实 [统一精简布局](../../skills/doc-driven-development/LAYOUT.md)、[模块划分依据](../../skills/doc-driven-development/DESIGN.md)、[事实归属/更新触发/腐化处理](../../skills/doc-driven-development/REFERENCE.md) 和模块/功能/架构模板；同步执行/接管/安装入口。默认索引由同一正文来源生成，保留人工区与受管块。
+已落实统一精简布局（现 [FORMATS.md 第 4 节](../../.agents/skills/doc-driven-development/FORMATS.md#4-文档落点与布局)）、模块划分依据（现 [WORKFLOW.md](../../.agents/skills/doc-driven-development/WORKFLOW.md)）、事实归属/更新触发/腐化处理（现 [FORMATS.md](../../.agents/skills/doc-driven-development/FORMATS.md) 与 [WORKFLOW.md](../../.agents/skills/doc-driven-development/WORKFLOW.md)）和模块/功能/架构模板；同步执行/接管/安装入口。默认索引由同一正文来源生成，保留人工区与受管块。
 
-新增 [AI 可读示例](../../skills/doc-driven-development/examples/module-boundaries.md)、[隔离运行示例](../../skills/doc-driven-development/examples/module-boundaries.mjs) 与八项行为回归，默认 check 已纳入。实际完整 skill 自检 612 通过；根项目 build/check 与 271 项测试通过，均无失败或跳过。独立只读复核报告本范围无阻塞。
+> 本条目写于 v0.3.1 之后、v0.4.0/v0.5.0 之前：当时被引用的是 `LAYOUT.md`、`DESIGN.md`、`REFERENCE.md` 三篇独立文档。v0.5.0 把 35 篇合并为 12 个文件，上述正文已并入 FORMATS.md 与 WORKFLOW.md，原路径不再存在；此处链接已改指合并后的落点，正文未改。
 
-[验证记录](../../skills/doc-driven-development/TESTING.md) 保存命令、结果与限制。Verification 为 partial：本次源码/示例回归已完成，尚未进行正式项目 runner 验收或真实 agent 长期效果试点；不据此宣称业务耦合已降低。没有部署、迁移现有正文、提交或发布。
+新增 AI 可读示例（现 [examples/feature.md](../../.agents/skills/doc-driven-development/examples/feature.md)）与八项行为回归，默认 check 已纳入。实际完整 skill 自检 612 通过；根项目 build/check 与 271 项测试通过，均无失败或跳过。独立只读复核报告本范围无阻塞。
+
+> 同一说明：原 `examples/module-boundaries.md` 与配套的可运行示例 `examples/module-boundaries.mjs` 已随 v0.4.0「skill 不再附带任何脚本」一并删除，八项回归与默认 check 同批移除。上段的测试数字是当时的事实，不是当前可复现的命令，保留以如实记录当时证据。
+
+[验证记录](../../.agents/skills/doc-driven-development/README.md#5-验证-skill-自身) 保存命令、结果与限制。Verification 为 partial：本次源码/示例回归已完成，尚未进行正式项目 runner 验收或真实 agent 长期效果试点；不据此宣称业务耦合已降低。没有部署、迁移现有正文、提交或发布。

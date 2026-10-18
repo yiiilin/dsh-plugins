@@ -1,8 +1,12 @@
 # auth-webserver
 
-Internal module of `@yiln-dsh/dsh-plugins`. Install and release the root package;
-this module has no separate npm package or version. Loader row: `webserver-auth`.
-See the [root README](../../README.md) for installation, migration and testing.
+Standalone package [`@yiln-dsh/dsh-auth-webserver`](../../pkgs/auth-webserver). Loader row: `webserver-auth`.
+
+```bash
+dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/auth-webserver"
+```
+
+See the [root README](../../README.md) for the workspace layout, migration and testing.
 
 A DSH `dsh.bundle` that keeps the stock webserver untouched and adds an
 **auth-gated reverse proxy** for LAN or explicitly configured public access:

@@ -1,8 +1,12 @@
 # session-list-cache
 
-Internal module of `@yiln-dsh/dsh-plugins`. Install and release the root package;
-this module has no separate npm package or version. Loader row: `session-list-cache`.
-See the [root README](../../README.md) for installation, migration and testing.
+Standalone package [`@yiln-dsh/dsh-session-list-cache`](../../pkgs/session-list-cache). Loader row: `session-list-cache`.
+
+```bash
+dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/session-list-cache"
+```
+
+See the [root README](../../README.md) for the workspace layout, migration and testing.
 
 Collapses the repeated full-store session enumerations that the DSH Web GUI
 fires concurrently.
@@ -64,7 +68,7 @@ latency for a trivial list.
 
 ```yaml
 - id: session-list-cache
-  name: '@yiln-dsh/dsh-plugins/session-list-cache'
+  name: '@yiln-dsh/dsh-session-list-cache'
   inject:
     - sessionQuery
   config:

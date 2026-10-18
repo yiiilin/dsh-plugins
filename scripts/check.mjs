@@ -61,6 +61,18 @@ for (const name of names) {
     assert.deepEqual(missing, [], `${name}: Loader row "${row.id}" must inject every service of its module`)
   }
 
+  // Node rejects an exports object that mixes subpath keys with condition names,
+  // which is exactly what a bare "package.json" key does. Such a package cannot
+  // be imported at all, so this is a mounting requirement, not a style rule.
+  const exportKeys = Object.keys(manifest.exports ?? {})
+  const subpaths = exportKeys.filter((key) => key.startsWith('.'))
+  assert.equal(
+    subpaths.length,
+    exportKeys.length,
+    `${name}: every exports key must be a subpath starting with "." (found ${exportKeys.filter((k) => !k.startsWith('.')).join(', ')})`,
+  )
+  assert.equal(manifest.exports?.['./package.json'], './package.json', `${name}: exports["./package.json"] must be self-referential`)
+
   // --- client half ------------------------------------------------------------
   const clientPath = manifest.exports?.['./client']
   if (clientPath === undefined) {
@@ -73,6 +85,16 @@ for (const name of names) {
     const declaredId = /__ModuleLoader__\.load\(\s*\{\s*\n?\s*id:\s*['"]([^'"]+)['"]/u.exec(clientSource)?.[1]
     assert.equal(declaredId, manifest.name, `${name}: client module id must equal the package name`)
     assert.ok(/factory:\s*\(?require\)?\s*=>/u.test(clientSource), `${name}: client source must export a factory`)
+  }
+
+  // A package ships exactly what its directory holds: a source file left out of
+  // `files` still exists locally, so the import only fails after installation.
+  const shipped = new Set(manifest.files ?? [])
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const isSource = entry.isFile() && /\.(?:js|mjs|d\.ts)$/u.test(entry.name)
+    const isDir = entry.isDirectory() && !['test', 'node_modules'].includes(entry.name)
+    if (!isSource && !isDir) continue
+    assert.ok(shipped.has(entry.name), `${name}: "${entry.name}" is not listed in package.json files`)
   }
 
   // --- syntax ----------------------------------------------------------------

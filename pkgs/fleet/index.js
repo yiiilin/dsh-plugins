@@ -24,6 +24,7 @@
  * @module @yiln-dsh/dsh-fleet
  */
 
+import { spawn } from 'node:child_process'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
@@ -37,6 +38,8 @@ import {
 import { startGateway } from './lib/gateway.js'
 import { renderPortal } from './lib/portal.js'
 import {
+  boxDependencies,
+  DEFAULT_BOX_BUNDLES,
   DEFAULT_PROFILE_BUNDLES,
   readProfilePatch,
   SSH_PROVIDER_PACKAGES,
@@ -91,7 +94,21 @@ export const Config = z.object({
    * its web plugin points this at its own bundle list, so swapping the web
    * plugin never requires a change here.
    */
-  profileBundles: z.array(z.string()).default([...DEFAULT_PROFILE_BUNDLES]),
+  profileBundles: z.array(z.string()).default([...DEFAULT_BOX_BUNDLES]),
+  /** Harness version pinned into a generated box profile, or empty to skip. */
+  harnessVersion: z.string().default('0.2.1-rc.2'),
+  /** Install a box's dependencies before its first launch. */
+  bootstrap: z.boolean().default(true),
+  /** Absolute `pnpm` executable used by the bootstrap. */
+  pnpmPath: z.string().default('pnpm'),
+  /**
+   * Absolute path to a YAML fragment appended to every generated box patch.
+   *
+   * Model routing, preset defaults and local tuning are deployment facts. They
+   * live in this fragment rather than in this package, so swapping a provider or
+   * a web plugin never needs a code change here.
+   */
+  boxPatchPath: z.string().default(''),
 })
 
 
@@ -136,6 +153,19 @@ export function apply(ctx, config) {
   const homeDir = resolve(config.homeDir)
   const profileDir = (profile) => join(homeDir, 'profiles', profile)
 
+  /** Read the operator's box patch fragment, or an empty string when unset. */
+  const readBoxPatch = async () => {
+    if (config.boxPatchPath === '') return ''
+    try {
+      return await readFile(config.boxPatchPath, 'utf8')
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        throw new Error(`fleet: boxPatchPath ${config.boxPatchPath} does not exist`)
+      }
+      throw error
+    }
+  }
+
   /** Last known boxes; refreshed on every mutation. */
   let boxes = []
   /** Whether the initial registry read has completed. */
@@ -165,6 +195,8 @@ export function apply(ctx, config) {
         const body = renderPortal({
           boxes: boxes.filter((box) => box.enabled),
           running: new Set(supervisor.ids()),
+          // A running box's launch URL lets the portal link straight into it.
+          urls: new Map(supervisor.ids().map((id) => [id, supervisor.url(id)])),
           gatewayPort: config.gatewayPort,
           acceptLanguage: req.headers['accept-language'],
         })
@@ -184,8 +216,49 @@ export function apply(ctx, config) {
    * @param box - the normalized box.
    * @returns the readiness result.
    */
+  /**
+   * Materialize a box profile and install its dependencies.
+   *
+   * A box that carries a preset cannot start without its packages, and the
+   * failure mode is a listener that comes up with every preset marked broken —
+   * so the install is part of launching, not an operator follow-up.
+   */
+  const install = async (box) => {
+    const dir = profileDir(box.profile)
+    await writeProfile(
+      dir,
+      box,
+      config.profileBundles,
+      boxDependencies(config.profileBundles, {
+        agentPresetsDir: config.bootstrap ? join(homeDir, '.agent-presets') : undefined,
+        harnessVersion: config.harnessVersion === '' ? undefined : config.harnessVersion,
+      }),
+      await readBoxPatch(),
+    )
+    if (!config.bootstrap) return
+    await new Promise((done, fail) => {
+      const child = spawn(config.pnpmPath, ['install', '--ignore-scripts'], {
+        cwd: dir,
+        env: { ...process.env, DSH_HOME: homeDir },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      let output = ''
+      const collect = (chunk) => {
+        output += chunk.toString()
+        if (output.length > 16_000) output = output.slice(-8_000)
+      }
+      child.stdout.on('data', collect)
+      child.stderr.on('data', collect)
+      child.once('error', fail)
+      child.once('exit', (code) => {
+        if (code === 0) done()
+        else fail(new Error(`fleet: pnpm install failed in ${dir} (exit ${code})\n${output.trim()}`))
+      })
+    })
+  }
+
   const launch = async (box) => {
-    await writeProfile(profileDir(box.profile), box, config.profileBundles)
+    await install(box)
     return supervisor.start(box)
   }
 
@@ -225,6 +298,8 @@ export function apply(ctx, config) {
             workspace: box.workspace,
             enabled: box.enabled,
             running: supervisor.isRunning(box.id),
+            // Present only while running: the token belongs to that process.
+            url: supervisor.url(box.id),
           })),
         })
       },
@@ -239,7 +314,7 @@ export function apply(ctx, config) {
         if (box === undefined) return json(res, 404, { error: `unknown box "${body.id}"` })
         try {
           const result = await launch(box)
-          json(res, 200, { id: box.id, port: result.port })
+          json(res, 200, { id: box.id, port: result.port, url: result.url })
         } catch (error) {
           json(res, 500, { error: error.message })
         }
@@ -268,7 +343,16 @@ export function apply(ctx, config) {
             return json(res, 409, { error: `box "${box.id}" already exists` })
           }
           await save([...boxes, box])
-          await writeProfile(profileDir(box.profile), box, config.profileBundles)
+          await writeProfile(
+            profileDir(box.profile),
+            box,
+            config.profileBundles,
+            boxDependencies(config.profileBundles, {
+              agentPresetsDir: join(homeDir, '.agent-presets'),
+              harnessVersion: config.harnessVersion === '' ? undefined : config.harnessVersion,
+            }),
+            await readBoxPatch(),
+          )
           json(res, 201, { id: box.id, port: box.port, profile: box.profile })
         } catch (error) {
           json(res, 400, { error: error.message })

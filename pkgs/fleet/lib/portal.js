@@ -59,18 +59,24 @@ export function selectCopy(acceptLanguage) {
  * @param options - fleet state to display.
  * @param options.boxes - enabled boxes, in registry order.
  * @param options.running - ids of boxes with a live process.
+ * @param options.urls - launch URL per running box, carrying its one-time token.
  * @param options.gatewayPort - the listener port, shown when no box exists.
  * @param options.acceptLanguage - the request's `Accept-Language` value.
  * @returns the HTML document.
  */
-export function renderPortal({ boxes, running, gatewayPort, acceptLanguage }) {
+export function renderPortal({ boxes, running, urls, gatewayPort, acceptLanguage }) {
   const copy = selectCopy(acceptLanguage)
   const rows = boxes
     .map((box) => {
       const up = running.has(box.id)
       const status = up ? copy.running : copy.stopped
+      // Prefer the box's own launch URL: `/id/` alone lands on the box's auth
+      // challenge, because the token lives in the query string dsh printed.
+      const direct = urls?.get(box.id)
+      const query = launchQuery(direct)
+      const href = `/${escapeHtml(box.id)}/${query}`
       const action = up
-        ? `<a class="open" href="/${escapeHtml(box.id)}/">${escapeHtml(copy.open)}</a>`
+        ? `<a class="open" href="${href}">${escapeHtml(copy.open)}</a>`
         : `<span class="offline">${escapeHtml(copy.offline)}</span>`
       return `<tr>
       <td class="name">${escapeHtml(box.label ?? box.id)}<span class="id">/${escapeHtml(box.id)}/</span></td>
@@ -132,4 +138,21 @@ function escapeHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;')
+}
+
+/**
+ * The query string a box's launch URL carries, prefixed with `?`.
+ *
+ * dsh prints `http://host:port/?token=…`; the portal links through the gateway
+ * prefix, so only the query survives. An unparseable value yields an empty
+ * string rather than a broken link.
+ *
+ * @param launchUrl - the URL the box printed, or undefined.
+ * @returns `?token=…` or an empty string.
+ */
+function launchQuery(launchUrl) {
+  if (typeof launchUrl !== 'string' || launchUrl === '') return ''
+  const at = launchUrl.indexOf('?')
+  if (at === -1 || at === launchUrl.length - 1) return ''
+  return escapeHtml(launchUrl.slice(at))
 }

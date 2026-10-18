@@ -14,5 +14,9 @@
     "test:editor": "node --test pkgs/auth-webserver/test/e2e/settings-editor.test.js",
     "test:modes:browser": "node --test pkgs/session-mode/test/e2e/modes.test.js",
     "migrate": "node scripts/migrate-profile.mjs"
+  },
+  "devDependencies": {
+    "js-yaml": "4.3.2",
+    "yaml": "^2.8.1"
   }
 }

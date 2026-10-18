@@ -5,14 +5,14 @@
   "type": "module",
   "license": "MIT",
   "files": [
+    "client.js",
     "index.js",
     "cordis.patch.yml",
     "README.md",
-    "client.js",
     "!**/test/"
   ],
   "exports": {
-    "package.json": "./package.json",
+    "./package.json": "./package.json",
     ".": "./index.js",
     "./client": "./client.js"
   },

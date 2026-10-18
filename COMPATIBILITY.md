@@ -6,14 +6,15 @@ plugin injects and the Cordis services/Slots used by its Host and Client halves.
 
 ## Unified Package
 
-The workspace root defines `@yiln-dsh/dsh-plugins@0.1.3`, with eight internal Host
+The workspace root defines `@yiln-dsh/dsh-plugins@0.2.1`, with seven internal Host
 modules and one composed Client entry. Its current peer window is
 `>=0.2.0-rc.2 <0.2.1`; the older standalone package windows below are historical,
-not a certification of the new suite. `0.1.3` is the latest published artifact
-(npm public, `latest` tag, published 2026-10-13). The 0.1.1 baseline root
+not a certification of the new suite. `0.1.3` was the last published artifact
+(npm public, `latest` tag, published 2026-10-13); `0.2.0` is a local, unpublished
+breaking change (see below). The 0.1.1 baseline root
 contract and migration suite passed 271 tests; its packed-install evidence is
 retained below.
-The 0.1.2 suite passed 364 tests; the current `0.1.3` suite passes 484 (2 skipped
+The 0.1.2 suite passed 364 tests; the `0.1.3` suite passes 484 (2 skipped
 without a local model cache); the
 added Work Journal and Mentor serial-queue scope is recorded below.
 
@@ -350,6 +351,278 @@ Consequences for the `web` profile on this machine:
   file legitimately differs from the backup, and that difference should be
   expected rather than mistaken for corruption.
 
+### `0.2.1` — sidebar-foot layout fix (2026-10-16)
+
+The Web Daemon server-status card overlapped DS Bot's **连接插件** entry in the
+sidebar foot.
+
+**Cause.** `sidebar.footer.action` is a single **non-wrapping** flex row
+(`flex-wrap: nowrap`), shared by every plugin that registers there. This
+deployment has two co-registered occupants — DS Bot's `bt-connect` button
+(`order: -300`, from the separate `ds-bot` bundle) and this suite's
+`web-daemon-server-status` card (`order: -10`). The card is `width: 100%` and
+reports `flex-basis: auto`, so as a flex item it absorbed the whole 203px row and
+pinned the button to **1px**, wrapping its label one character per line. Measured
+before the fix: button `14×36`, card `201×128`, both starting at `x=59`.
+
+**Fix.** Let the row wrap, scoped to a row that actually holds this card:
+`:has(> [data-slot="sidebar.footer.action"] > .dwd-serverStatus){flex-wrap:wrap}`.
+The card then takes its own line below the button. The scope matters: the
+collapsed rail renders `.dwd-serverStatusRail` instead of `.dwd-serverStatus`, and
+a footer without the card keeps its original single-line layout. Measured after:
+button `203×36`, card below it at `y=485`, container `172` tall.
+
+`:has()` is not new here — `src/delete-session/client.js` already uses
+container-level `:has()` for the same "restyle the row that holds my cell"
+problem.
+
+**Verified.** `src/web-daemon/test/client.test.js` gains a regression test that
+fails without the fix (red-green confirmed) and also asserts the wrap is scoped
+rather than applied to a bare row class. Suite `build` / `check` / `test` pass —
+`249` tests, `249` pass, `0` fail.
+
+### `0.2.0` — Mentor and Work Journal removed (2026-10-16)
+
+A deliberate breaking change on the local `web` profile. Two modules, their Loader
+rows, `exports` subpaths and Client contributions were removed, and two
+now-orphaned dependencies (`@huggingface/transformers`, `sqlite-vec`) were dropped
+with them.
+
+**Why Mentor went.** Its replacement already exists and is strictly better. The
+`mentor` **Agent Preset** reaches the same goal through DSH's own continuable
+subagents, so the child carries a `cwd`, appears in the GUI session list, can be
+opened and resumed by a human, and survives cold restart. The plugin's own path
+went through the API `session.prompt`, which rejects `origin: 'subagent'`
+(`hasApiSessionSubagentOwner`) and passed no `cwd`, so its sessions landed in
+`_no-cwd/` and could not be opened from the interface — 23 such
+`mentor-journal-*` directories had accumulated. The one thing the plugin still
+uniquely did was enforce "no tools"; that is now enforced by
+`tool-restrict-presets`, which measures **0** tools on the preset child against
+the **40** it used to inherit.
+
+**Why Work Journal went.** The user removed it. The `work_journal` tool,
+`/journal` command, `POST /api/work-journal` route, 工作日志 left-rail panel and
+the calendar report scheduler are gone, and the 32 MB report store under
+`<DSH_HOME>/work-journal/` was deleted at the user's instruction after being
+archived to the backup directory.
+
+**What was preserved** per `AGENTS.md`: every surviving row keeps its Loader row
+ID, HTTP path, locale/slot ID, Git tab identity, cookie name, and Auth/Daemon
+state directory. Nothing was globally string-replaced.
+
+**Verified after the removal.** Suite `build` / `check` / `test` pass — `248`
+tests, `248` pass, `0` fail, `0` skipped (`248` is lower than `511` because the
+two removed modules took their own tests with them). The composed profile holds
+`219` entries with **0** rows for `dsh-mentor` or `dsh-work-journal`, `0` refused
+rows and `0` import failures after an out-of-cgroup restart that loaded the new
+module generation (pid `1664884`). All seven surviving rows are enabled, the GUI
+serves `401` unauthenticated, and the `mentor` preset child still runs with `0`
+tools.
+
+**One stale-literal class was fixed while here.** `test/package.test.js` and
+`scripts/check.mjs` hardcoded the feature list (including a literal `7` for the
+Client factory count). Both now derive from `src/features.js`, so the next
+add/remove cannot leave a stale count behind — which is exactly how the `7` broke.
+
+**Retained on disk after this change** (not touched, because nothing asked for
+them): the 23 orphaned `_no-cwd/mentor-journal-*` directories, and the packed
+`0.1.3` artifact at
+`/root/.dsh/artifacts/settings-anchor-20261016-082248/yiln-dsh-dsh-plugins-0.1.3.tgz`
+for rollback.
+
+### Live runtime `0.2.1-alpha.4` certification (2026-10-16)
+
+The host runtime on this machine moved `0.2.1-alpha.3` → `0.2.1-alpha.4`
+(the npm `alpha` dist-tag; `latest` is still `0.2.0-rc.2`, which is older and is
+**not** the upgrade target). The suite version is unchanged at `0.1.3`; the peer
+window `>=0.2.0-rc.2 <0.2.1` still admits the new prerelease under the installer's
+semver `{ includePrerelease: true }` evaluation, so **no `allow-version`
+exemption** was needed or granted (`dsh plugin --profile web version-exemptions`
+answers `{}`, and no `compatibility.json` exists).
+
+**What the suite depends on did not change.** Of the fourteen `@deepseek-ai/dsh*`
+packages this suite imports or resolves, the seven it imports directly
+(`dsh-tools`, `dsh-session`, `dsh-atomic-write`, `dsh-system-prompt`, `dsh-llm`,
+`dsh-scope`, `dsh-subagent`) have **byte-identical** `lib/` trees between
+`alpha.3` and `alpha.4`. Of the rest, `dsh-experimental-tool-agent-team` differs
+only in its model-facing Agent Teams prose (the guidance string no longer tells
+the model to wait for an explicit request), and `dsh-client-modules` gains a boot
+`release` decode. Neither changes an API this suite calls.
+
+**Two structural facts decided the upgrade and are worth keeping.**
+
+1. `$DSH_HOME/profiles/node_modules/@deepseek-ai/` is a **symlink farm into the
+   global launcher's own `node_modules`** (227 entries; one non-launcher link,
+   `dsh` → the launcher root). Upgrading the global package therefore retargets
+   the farm automatically; no separate farm update is required. 17 farm links were
+   already dangling before the upgrade and the same 17 after, so the upgrade
+   neither created nor repaired them.
+2. `profiles/web/cordis.patch.yml` composes `yiln.cordis.yml` through an
+   **absolute** `cordis:include` path (`/root/.dsh/profiles/web/yiln.cordis.yml`).
+   A rehearsal under a throwaway `DSH_HOME` therefore still reads the *real*
+   home's include and resolves its rows through the *real* farm.
+
+**Admission gate behavior, confirmed the hard way.** `alpha.4` evaluates a
+package's declared DSH requirement (`engines.dsh`, else `peerDependencies`) and
+refuses a mismatch. A rehearsal that ran the `alpha.4` launcher while the global
+launcher — and hence the farm and the absolute include — was still `alpha.3`
+produced 30 `disabling profile plugin row` refusals. That is the gate working
+correctly on a genuinely mixed install, and it is **fail-closed but non-fatal**:
+the daemon still booted and answered HTTP 401, it simply ran without those rows.
+The rehearsal artifact is an argument for upgrading the launcher and letting the
+farm retarget in one step, not a defect. After the real upgrade the journal shows
+**0** refused rows and **0** skipped bundles.
+
+**Verified after the upgrade** (10/10 checks in
+`/root/.dsh/logs/upgrade-0.2.1-alpha.4.result`, plus independent re-checks). This
+table records the state **as of that pass**, when the suite was `0.1.3` with eight
+rows; the later `0.2.0` removal above supersedes the row count and test numbers:
+
+| Check | Result |
+| --- | --- |
+| Launcher / `dsh-base` / `dsh-tool-subagent` | all `0.2.1-alpha.4` |
+| Suite version | `0.1.3`, unchanged |
+| Daemon unit + HTTP | active, `401` unauthenticated, `303` → session cookie on token login |
+| Journal refusals / skipped bundles | `0` / `0` |
+| Composed profile | **byte-identical** to `alpha.3`: 217 entries, empty structural diff |
+| All eight suite rows | present **and enabled** (`webserver-auth`, `dsh-delete-session`, `dsh-git-graph`, `dsh-mentor`, `session-list-cache`, `web-daemon`, `session-mode`, `dsh-work-journal`) |
+| Repo `npm run build` / `check` / `test` | pass — `493` tests, `491` pass, `0` fail, `2` skipped |
+| Real-browser GUI | boot manifest reports release `0.2.1-alpha.4` (commit `cc6a8f5`), 72 entries; suite client bundle serves `200` (292 KB) with its own rev, and the batch containing it serves `200`; **zero console errors** |
+| Work Journal in the live GUI | rail button clicked, panel rendered its real 日报/周报/月报 list |
+
+Scope note: the repository's own test run resolves its `@deepseek-ai/dsh-*`
+imports from the workspace `node_modules`, which is pinned at `0.2.0-rc.2` and is
+independent of the host runtime. It therefore certifies the suite's own code, not
+its behavior against `alpha.4`. The `alpha.4` evidence is the live composition,
+daemon journal, served bundles and the real-browser GUI session above.
+
+The upgrade ran as its own transient systemd unit
+(`dsh-upgrade-alpha4.service`) so the restart it triggers could not kill it, with
+a profile/version backup at
+`/root/.dsh/backups/upgrade-0.2.1-alpha.4-20261016-002526/` and an automatic
+rollback path that reinstalls `0.2.1-alpha.3` and restores the profile files if
+the new launcher, HTTP, refusals, `--dump-config` or any suite row fails.
+
+#### Does the suite need source changes for `alpha.4`? Yes — one defect found (2026-10-16)
+
+The `alpha.3 → alpha.4` delta itself breaks nothing. But re-checking the whole
+consumed surface on the live runtime found a **pre-existing defect inherited from
+`alpha.2 → alpha.3`** that was live on `alpha.4` and is fixed in this tree. An
+earlier revision of this section claimed "no adaptation needed"; that claim was
+wrong because it checked `dsh-client-ui-settings-general` and never the base
+`dsh-client-ui-settings`, which the suite **rewrites in place**.
+
+**The defect.** `src/auth-webserver/settings-client-patch.js` byte-patches the
+shipped Settings client so that a page served by this auth gateway keeps
+Host-backed settings on a non-loopback origin. Its anchor was the literal
+`const persistence = ctx.remote.$host.isLoopback ? "host" : "memory";`. Upstream
+removed that gate file-wide in `0.2.1-alpha.3`:
+
+| Shipped client | `persistence` occurrences |
+| --- | --- |
+| `0.2.0-rc.2` (reference; also what this repo's own tests resolve) | gate present |
+| `0.2.1-alpha.2` | gate present |
+| `0.2.1-alpha.3` | **0 — gate removed** |
+| `0.2.1-alpha.4` | **0 — gate removed** |
+
+Confirmed by execution, not inspection: `patchSettingsClient()` returned `null`
+against the real `alpha.4` bundle while patching the `rc.2` bundle normally; the
+served index carried the tap's polyfill/PWA/mobile frame but **no**
+`dsh-auth-remote-settings` marker, proving `remoteSettingsClientPatched=false`;
+and the served Settings bundle reported itself unpatched in a real browser. In
+`alpha.4` the client instead derives writability from the Host describe mirror
+(`derive()` reads `mirrored.view.writable`, and `dsh-settings`' `get writable()`
+returns `true`), so there is **no client-side gate left to rewrite**.
+
+**Severity.** On `alpha.4` this produced a *false* `logger.error` on every boot
+("Host-backed settings are NOT enabled for remote origins") and a misreported
+patch state. It did **not** leave a functional gap on `alpha.4`, because upstream
+made Host-backed settings unconditional once it deleted the gate. The `rc.2` /
+`alpha.2` end of the declared peer window still needs the rewrite, so the patch
+could not simply be retired.
+
+**The fix** (`src/auth-webserver/settings-client-patch.js`): three shipped shapes
+are now distinguished explicitly.
+
+1. Gate present and matching the anchor → rewrite it (unchanged behaviour for
+   `rc.2` / `alpha.2`).
+2. Gate absent entirely → return the source **unchanged** and treat it as
+   success; the caller skips the write/restore and logs nothing.
+3. The bundle names `persistence` but not in the anchored shape → still `null`,
+   so the caller keeps failing loudly on a genuinely unknown shape.
+
+New tests cover the retired shape, the unknown shape, and the write/no-write
+distinction. Red-green was checked: the retired-gate assertions **fail against
+the previous code**. `npm run build` / `check` / `test` pass with
+**496 tests, 494 pass, 0 fail, 2 skipped** (`+3` new).
+
+Note for future runs: the repo's own test run resolves its DSH imports from the
+workspace `node_modules`, pinned at `0.2.0-rc.2`, where the gate still exists.
+A regression test against *that* bundle therefore cannot detect this class of
+drift; the assertions that catch it are the explicit retired-gate fixtures.
+
+#### New module: `tool-restrict-presets` (2026-10-16)
+
+The suite gained a ninth Host module, so a preset that promises a tool-less child
+actually gets one.
+
+**The gap.** An Agent Preset contributes only **its own layer**, and
+`agent-preset-registry` binds each Agent's scope as a **child** of its preset's
+scope. Host-plane rows — the shipped bundles, this deployment's patch layer,
+optional bundles such as free search and Agent Teams — contribute their tools to
+the ancestor layers, and a preset cannot mask them. The `mentor` preset is the
+recorded case: its persona says "You do not have tools…", while the spawned child
+received **40** host-plane tools including `create_bot`, `stop_bot`, `remember`
+and `work_journal`.
+
+**The fix.** The module applies `agent.ctx.tools.restrict({ allow: [] })` to each
+Agent whose preset id is listed — the same lever `session-mode` already uses to
+prune the restricted Lead's catalog. `tools.restrict()` masks what a scope
+**inherits** (the global layer plus every ancestor) and never what the scope's own
+layer registers, so a delegation runtime's own capabilities such as
+`structured_output` stay exempt by design. An unscoped Agent cannot be
+restricted (`restrict()` throws); it is reported at warn level and keeps its
+tools instead of failing the composition.
+
+The row defaults `presets: []` and therefore mounts inert: a preset id is a
+deployment fact and does not belong in a published package. This deployment's
+`cordis.patch.yml` enables `mentor`.
+
+**Verified on the live runtime.** Spawning `agent_preset: mentor` returned a
+child whose `request/header` carries **0** tools, down from **40**; the control
+side is unchanged (`yiln` 56/23, `implement` 38/31). `npm run build` / `check` /
+`test` pass with **511 tests, 509 pass, 0 fail, 2 skipped** (13 of them new).
+
+One operational note worth keeping: the row reached the live composition only
+after a daemon restart. Installing a **replacement** suite package registers the
+new bundle, but the running process keeps serving the previous JavaScript module
+generation, so the row read as present on disk and absent from the live tree
+until `dsh-web.service` restarted. Presence on disk is not evidence that a
+module is live.
+
+**Everything else checked out (unchanged from the earlier pass):**
+
+- **Host side.** The suite imports six DSH packages directly
+  (`dsh-atomic-write`, `dsh-llm`, `dsh-scope`, `dsh-session`, `dsh-subagent`,
+  `dsh-tools`). All six have byte-identical `lib/` trees between `alpha.3` and
+  `alpha.4`. The one other relevant change, in
+  `dsh-experimental-tool-agent-team`, is a model-facing prose string that the
+  suite's `src/session-mode/test/agent-team.test.js` consumes only as a plugin
+  under test — it asserts on tool results, never on that string.
+- **Client side.** The suite's client halves do not import the changed client
+  packages (`dsh-client-modules`, `dsh-api-remotes`, `dsh-client-ui-conversation`,
+  `dsh-client-ui-settings-general`, `dsh-client-ui-sidebar`). Its `dsh.client.inject`
+  list is a resolution guarantee, not an import list; at runtime the client
+  halves bind to **Slots** and to their own locale dictionary.
+- **Slot contract holds.** The three Slots the suite registers into
+  (`conversation.input.left`, `conversation.session.header.actions`,
+  `sidebar.footer.action`) plus `sidebar.panellist` and `settings.plugins.tab` are
+  all present in the live `alpha.4` Slot tree (verified with the Cordis Slot
+  inspector against the running profile). The `git.*` / `unit.*` strings in the
+  client sources are locale keys, not Slots.
+- The eight module rows compose and are enabled on the live runtime with `0`
+  refusals.
+
 ### 0.1.2 — Work Journal and serial Mentor consultations (2026-10-10)
 
 - Adds the `dsh-work-journal` Host row and one Client contribution. It reads the
@@ -364,8 +637,9 @@ Consequences for the `web` profile on this machine:
   recovers an existing complete reply and never silently re-dispatches an
   indeterminate request.
 - Compatibility assumptions, privacy boundaries, persistence revision semantics,
-  fork-inherited event cuts and failed-delivery behavior are documented in
-  [Work Journal](docs/modules/work-journal.md) and [Mentor](docs/modules/mentor.md).
+  fork-inherited event cuts and failed-delivery behavior are documented in the
+  Work Journal and Mentor module docs, both removed from this repository in
+  `0.2.0` (recoverable from the `0.1.3` artifact or the backup noted above).
 - Verification: root `npm test` passed 364/364; `npm run build` and
   `npm run check` passed. The Mentor isolated deployment evidence and limitations
   are recorded in [its verification report](docs/verifications/mentor-serial-20261009.md).

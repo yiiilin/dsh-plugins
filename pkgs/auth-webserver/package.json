@@ -5,14 +5,26 @@
   "type": "module",
   "license": "MIT",
   "files": [
+    "client.js",
+    "core-session.js",
+    "index.d.ts",
     "index.js",
+    "login-page.js",
+    "mobile.js",
+    "passkey-store.js",
+    "policy.js",
+    "pwa",
+    "pwa.js",
+    "session-store.js",
+    "settings-client-patch.js",
+    "settings-editor.js",
+    "totp.js",
     "cordis.patch.yml",
     "README.md",
-    "client.js",
     "!**/test/"
   ],
   "exports": {
-    "package.json": "./package.json",
+    "./package.json": "./package.json",
     ".": "./index.js",
     "./client": "./client.js"
   },
@@ -38,5 +50,9 @@
       ]
     }
   },
-  "main": "index.js"
+  "main": "index.js",
+  "dependencies": {
+    "@simplewebauthn/server": "13.3.3",
+    "js-yaml": "4.3.2"
+  }
 }

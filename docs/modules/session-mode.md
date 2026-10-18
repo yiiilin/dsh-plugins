@@ -1,5 +1,13 @@
 # Session Mode
 
+Standalone package [`@yiln-dsh/dsh-session-mode`](../../pkgs/session-mode). Loader row: `session-mode`.
+
+```bash
+dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/session-mode"
+```
+
+See the [root README](../../README.md) for the workspace layout, migration and testing.
+
 The Host row `session-mode` provides two policies for each session:
 
 | Mode | Main agent | Delegated worker |
@@ -149,14 +157,14 @@ sessions whose delegation-only workflow must remain enforced.
 ## Verification
 
 ```bash
-node --test src/session-mode/test/*.test.js
+node --test pkgs/session-mode/test/*.test.js
 npm run build
 npm run check
 npm test
 DSH_MODE_QA_URL=http://127.0.0.1:<isolated-port>/?token=<fixture-token> npm run test:modes:browser
 ```
 
-The browser fixture overlay is `src/session-mode/test/fixtures/web.patch.yml`.
+The browser fixture overlay is `pkgs/session-mode/test/fixtures/web.patch.yml`.
 Use a fresh `DSH_HOME`, install a packed artifact into its `web` profile, and
 launch with that overlay, `DSH_MODE_TEST_API_KEY=mode-qa-only`, and
 `DSH_TELEMETRY_DISABLED=1`. The fixture routes the model to an unused loopback

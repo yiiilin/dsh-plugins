@@ -1,8 +1,12 @@
 # web-daemon
 
-Internal module of `@yiln-dsh/dsh-plugins`. Install and release the root package;
-this module has no separate npm package or version. Loader row: `web-daemon`.
-See the [root README](../../README.md) for installation, migration and testing.
+Standalone package [`@yiln-dsh/dsh-web-daemon`](../../pkgs/web-daemon). Loader row: `web-daemon`.
+
+```bash
+dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/web-daemon"
+```
+
+See the [root README](../../README.md) for the workspace layout, migration and testing.
 
 A DSH plugin that manages the `dsh web` worker as a **real systemd unit** and adds a compact server-health monitor to the sidebar footer, above the Settings action. The plugin generates the unit file, maps the GUI buttons onto
 `systemctl start/stop/restart/reset-failed`, and lets the Settings page edit
@@ -51,7 +55,7 @@ A record is only discarded when its session is genuinely gone: if the persistenc
 - Registers the `web-daemon` settings namespace in the Host settings service
   (the card is keyed by that namespace on both the legacy `settings.plugin.item` slot and the newer `plugins.item` slot).
 - The worker runs `dsh web --profile <profile> --no-open --port <port>` bound
-  to loopback; LAN exposure is the job of `@yiln-dsh/dsh-plugin-auth-webserver`.
+  to loopback; LAN exposure is the job of `@yiln-dsh/dsh-auth-webserver`.
   Writing `startCommand` replaces that whole line, so the unit runs exactly the
   command the operator wrote.
 - The unit gets `DSH_WEB_DAEMON_WORKER=1`; a daemonized GUI detects this and

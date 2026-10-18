@@ -12,7 +12,17 @@ import {
   scopeLocation,
 } from '../lib/gateway.js'
 import { COPY, renderPortal, selectCopy } from '../lib/portal.js'
-import { DEFAULT_PROFILE_BUNDLES, readProfilePatch, renderLocalPatch, renderSshPatch, writeProfile } from '../lib/profiles.js'
+import {
+  BOX_HARNESS_MODULES,
+  boxDependencies,
+  mergeFragment,
+  DEFAULT_BOX_BUNDLES,
+  DEFAULT_PROFILE_BUNDLES,
+  readProfilePatch,
+  renderLocalPatch,
+  renderSshPatch,
+  writeProfile,
+} from '../lib/profiles.js'
 import { trustedArgs } from '../lib/supervisor.js'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -243,4 +253,146 @@ test('renderSshPatch pairs danger-full-access with approval never', () => {
   const patch = renderSshPatch(sshBox())
   assert.match(patch, /mode: danger-full-access/u)
   assert.match(patch, /- id: approval\n  config:\n    policy: never/u)
+})
+
+test('a box bundles the deployment preset, not only the bare harness', () => {
+  // A box with only dsh-base + dsh-web-app has no preset roster, which is the
+  // difference between "the same environment elsewhere" and a bare harness.
+  assert.ok(DEFAULT_BOX_BUNDLES.includes('@deepseek-ai/dsh-base'))
+  assert.ok(DEFAULT_BOX_BUNDLES.includes('@deepseek-ai/dsh-web-app'))
+  assert.ok(DEFAULT_BOX_BUNDLES.includes('@local/yiln-agent-preset'))
+})
+
+test('boxDependencies links the preset and pins the harness modules', () => {
+  const deps = boxDependencies(DEFAULT_BOX_BUNDLES, {
+    agentPresetsDir: '/root/.dsh/.agent-presets',
+    harnessVersion: '0.2.1-rc.2',
+  })
+  // A link keeps the box on the deployment's live preset rather than a copy.
+  assert.equal(deps['@local/yiln-agent-preset'], 'link:/root/.dsh/.agent-presets/yiln/bundle')
+  for (const module of BOX_HARNESS_MODULES) {
+    assert.equal(deps[`@deepseek-ai/${module}`], '0.2.1-rc.2')
+  }
+})
+
+test('boxDependencies omits what the manifest cannot resolve', () => {
+  // Without an agent-presets directory the link would be dangling.
+  const noPresets = boxDependencies(DEFAULT_BOX_BUNDLES, { harnessVersion: '0.2.1-rc.2' })
+  assert.equal(noPresets['@local/yiln-agent-preset'], undefined)
+  // Without a version the pins are skipped rather than guessed.
+  const noVersion = boxDependencies(DEFAULT_BOX_BUNDLES, { agentPresetsDir: '/a/.agent-presets' })
+  assert.equal(noVersion['@deepseek-ai/dsh-tool-schedule'], undefined)
+})
+
+test('the preset link is skipped when the bundle list omits the preset', () => {
+  const deps = boxDependencies(DEFAULT_PROFILE_BUNDLES, {
+    agentPresetsDir: '/a/.agent-presets',
+    harnessVersion: '0.2.1-rc.2',
+  })
+  assert.equal(deps['@local/yiln-agent-preset'], undefined)
+})
+
+test('writeProfile records dependencies and a self-contained workspace file', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'fleet-deps-'))
+  try {
+    const box = normalizeBox({ id: 'dep', port: 3196, workspace: '/srv' })
+    const deps = { '@local/yiln-agent-preset': 'link:/a/.agent-presets/yiln/bundle' }
+    await writeProfile(dir, box, DEFAULT_BOX_BUNDLES, deps)
+    const fs = await import('node:fs/promises')
+    const manifest = JSON.parse(await fs.readFile(join(dir, 'package.json'), 'utf8'))
+    assert.deepEqual(manifest.dependencies, deps)
+    assert.deepEqual(manifest.dsh.profile.bundles, DEFAULT_BOX_BUNDLES)
+    // pnpm would otherwise treat the profile as part of a parent workspace.
+    assert.match(await fs.readFile(join(dir, 'pnpm-workspace.yaml'), 'utf8'), /packages:/u)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('writeProfile appends the operator fragment verbatim', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'fleet-extra-'))
+  try {
+    const box = normalizeBox({ id: 'ex', port: 3197, workspace: '/srv' })
+    const fragment = `- id: agent-default-model\n  config:\n    provider: example\n`
+    await writeProfile(dir, box, DEFAULT_BOX_BUNDLES, {}, fragment)
+    const fs = await import('node:fs/promises')
+    const patch = await fs.readFile(join(dir, 'cordis.patch.yml'), 'utf8')
+    // The box's own rows stay first; the deployment fragment is appended, so a
+    // box never has to know which provider its host uses.
+    assert.ok(patch.indexOf('operator patch fragment') < patch.indexOf('agent-default-model'))
+    assert.ok(patch.includes('provider: example'))
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('writeProfile omits the fragment marker when there is no fragment', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'fleet-nofrag-'))
+  try {
+    const box = normalizeBox({ id: 'nf', port: 3198, workspace: '/srv' })
+    await writeProfile(dir, box, DEFAULT_BOX_BUNDLES, {}, '   ')
+    const fs = await import('node:fs/promises')
+    const patch = await fs.readFile(join(dir, 'cordis.patch.yml'), 'utf8')
+    assert.ok(!patch.includes('operator patch fragment'))
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('mergeFragment keeps the patch a single YAML sequence', async () => {
+  // A patch file is one top-level sequence: appending `- id:` after an empty
+  // `[]` document is a parse error, and a broken patch kills the box on boot.
+  const yaml = (await import('js-yaml')).default
+  const fragment = '- id: llm-pi-ai\n  name: "@deepseek-ai/dsh-llm-pi-ai"'
+  const merged = mergeFragment(renderLocalPatch(), fragment)
+  const rows = yaml.load(merged, { schema: yaml.DEFAULT_SCHEMA })
+  assert.deepEqual(rows.map((row) => row.id), ['llm-pi-ai'])
+})
+
+test('mergeFragment preserves a populated patch and appends the fragment', async () => {
+  const yaml = (await import('js-yaml')).default
+  const base = renderLocalPatch().replace('[]', '- id: approval\n  config:\n    policy: never')
+  const merged = mergeFragment(base, '- id: agent-default-model\n  name: x')
+  const rows = yaml.load(merged, { schema: yaml.DEFAULT_SCHEMA })
+  assert.deepEqual(rows.map((row) => row.id), ['approval', 'agent-default-model'])
+})
+
+test('mergeFragment leaves an empty fragment out entirely', () => {
+  const merged = mergeFragment(renderLocalPatch(), '   ')
+  assert.ok(!merged.includes('operator patch fragment'))
+  assert.ok(merged.trimEnd().endsWith('[]') || merged.includes('- id:'))
+})
+
+test('the portal links a running box with its launch token', () => {
+  const html = renderPortal({
+    boxes: [{ id: 'box1', kind: 'local', workspace: '/w' }],
+    running: new Set(['box1']),
+    urls: new Map([['box1', 'http://127.0.0.1:3101/?token=abc123']]),
+    gatewayPort: 8090,
+    acceptLanguage: 'en',
+  })
+  // `/box1/` alone lands on the box's auth challenge; the token opens it.
+  assert.ok(html.includes('href="/box1/?token=abc123"'))
+})
+
+test('the portal falls back to a bare prefix without a launch URL', () => {
+  const html = renderPortal({
+    boxes: [{ id: 'box1', kind: 'local', workspace: '/w' }],
+    running: new Set(['box1']),
+    urls: new Map(),
+    gatewayPort: 8090,
+    acceptLanguage: 'en',
+  })
+  assert.ok(html.includes('href="/box1/"'))
+})
+
+test('a stopped box offers no link', () => {
+  const html = renderPortal({
+    boxes: [{ id: 'box1', kind: 'local', workspace: '/w' }],
+    running: new Set(),
+    urls: new Map(),
+    gatewayPort: 8090,
+    acceptLanguage: 'en',
+  })
+  assert.ok(!html.includes('href="/box1/"'))
 })

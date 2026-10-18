@@ -1,8 +1,12 @@
 # delete-session
 
-Internal module of `@yiln-dsh/dsh-plugins`. Install and release the root package;
-this module has no separate npm package or version. Loader row: `dsh-delete-session`.
-See the [root README](../../README.md) for installation, migration and testing.
+Standalone package [`@yiln-dsh/dsh-delete-session`](../../pkgs/delete-session). Loader row: `dsh-delete-session`.
+
+```bash
+dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/delete-session"
+```
+
+See the [root README](../../README.md) for the workspace layout, migration and testing.
 
 Adds permanent-delete actions to the current session and session rows in the DSH Web
 GUI.

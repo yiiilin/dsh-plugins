@@ -11,7 +11,7 @@
     "!**/test/"
   ],
   "exports": {
-    "package.json": "./package.json",
+    "./package.json": "./package.json",
     ".": "./index.js"
   },
   "dsh": {
