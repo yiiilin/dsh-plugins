@@ -522,3 +522,44 @@ const passwordValid = Boolean(pass) && safeEqual(submittedUser, user) && safeEqu
 因此迁移前必须先设定一个密码（`config.password` 或 `DSH_AUTH_PASS`）。
 daemon 已在启动时对空密码发出显式告警。
 
+
+## 生产迁移（2026-10-18）
+
+从两进程形态切到内嵌形态：
+
+```
+旧：dsh --profile edge --no-open --port 39281
+      ├─ daemon 0.0.0.0:3080
+      └─ 收养的子进程 web 127.0.0.1:57900
+
+新：dsh --profile main --no-open --port 56789
+      ├─ harness  127.0.0.1:56789
+      └─ daemon   0.0.0.0:3080   →  / 重定向到 /main/
+```
+
+迁移脚本 `/root/migrate-to-main.sh` 经 `systemd-run` 独立单元执行：从自身 cgroup 内
+重启 dsh-web 会把脚本一起杀掉，这正是上次迁移两个方向都失败的原因。
+
+关键前提：`web-daemon` 每次启动会用自身配置重写单元文件。它原本指向
+`edge:39281`，不改就会被下一次重启改回去。脚本第一步先改 home layer。
+
+验证结果（脚本输出 + 迁移后独立复查）：
+
+| 项 | 结果 |
+| --- | --- |
+| 单元 ExecStart | `--profile main --no-open --port 56789` |
+| 监听 | 只剩 3080 与 56789（39281、57900 消失） |
+| NRestarts | 0 |
+| 未登录 `/admin/state` | 返回登录页，`"ok":true` 计数 0 |
+| 已登录 `/` | 302 → `/main/` |
+| 面板主环境行 | 本机(当前) 0.0.0.0:3080 dsh-web.service 331 插件 |
+| 会话 | 40 个可读 |
+| 控制台错误 | 0 |
+| 公网 | https://dsh.yiln.de/ → 200 |
+| 内存 | 973 MB（两进程时 1345 MB，省 372 MB） |
+
+回滚：`cp /root/migration-backup-20261018-192206/dsh-web.service
+/etc/systemd/system/ && systemctl daemon-reload && systemctl restart dsh-web`。
+脚本在任一检查失败时会自动执行同样的回滚。
+
+`edge` 与 `web` 两个 profile 保留作回滚依据，未删除。
