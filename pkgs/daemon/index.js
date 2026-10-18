@@ -113,6 +113,14 @@ export const Config = z.object({
    * the daemon has to read the current one from the child it supervises.
    */
   rootProfile: z.string().default(''),
+  /**
+   * systemd unit that runs this process, used by the main environment's restart
+   * button. Empty hides the button: a daemon cannot restart a process it cannot name.
+   *
+   * Deliberately not defaulted to a plausible name. A test instance that guessed
+   * `dsh-web.service` would restart the live service instead of itself.
+   */
+  selfUnit: z.string().default(''),
   /** Start enabled profiles when the daemon boots. */
   autostart: z.boolean().default(true),
   /** Seconds a profile may take to answer its port after spawn. */
@@ -152,6 +160,9 @@ export const Config = z.object({
  * @param config - resolved configuration.
  */
 export function apply(ctx, config) {
+  // Captured once: the panel shows how long this process has been up, and a value
+  // recomputed per request would always read zero.
+  const processStartMs = Date.now() - Math.round(process.uptime() * 1000)
   const homeDir = resolve(config.homeDir === '' ? process.env.DSH_HOME ?? '/root/.dsh' : config.homeDir)
   const registryPath = resolve(
     config.registryPath === '' ? join(homeDir, 'daemon', 'profiles.json') : config.registryPath,
@@ -198,7 +209,10 @@ export function apply(ctx, config) {
       loaded = true
     },
     async save() {
-      await writeRegistry(registryPath, profiles)
+      // Re-validated on write: a caller that forgot to check the identity rule cannot
+      // persist a registry that violates it.
+      const validated = parseRegistry({ profiles })
+      await writeRegistry(registryPath, validated)
     },
   }
 
@@ -377,9 +391,15 @@ export function apply(ctx, config) {
       const id = prepared.id
       const resolved = await resolveHost(sshHost, sshPort)
 
-      const clash = profiles.find((entry) => entry.sshHost === sshHost && entry.sshHelper === sshHelper)
+      // Compared against the resolved address: the registry stores the address, while the
+      // operator may have typed an alias, and a raw comparison would never match.
+      const clash = profiles.find(
+        (entry) => entry.sshHost === resolved.host && entry.sshHelper === sshHelper,
+      )
       if (clash !== undefined) {
-        throw new Error(`daemon: helper ${sshHelper} on ${sshHost} is already used by environment "${clash.id}"`)
+        throw new Error(
+          `daemon: helper ${sshHelper} on ${resolved.host} is already used by environment "${clash.id}"`,
+        )
       }
 
       await ensureSshInclude({ configPath: sshConfigPath, includeDir: sshConfigDir })
@@ -495,11 +515,61 @@ export function apply(ctx, config) {
   const sshConfigPath = config.sshConfigPath === ''
     ? join(process.env.HOME ?? '/root', '.ssh', 'config')
     : config.sshConfigPath
+  /** Facts about the main environment: this process. */
+  const selfInfo = () => {
+    let plugins
+    try {
+      plugins = ctx.registry?.size ?? ctx.root?.registry?.size
+    } catch {
+      plugins = undefined
+    }
+    return {
+      host: config.host,
+      port: config.port,
+      // A count is a cheap honest signal of how much this deployment carries; the
+      // panel shows it beside the address.
+      plugins,
+      startedAt: processStartMs,
+      restartable: config.selfUnit !== '',
+      unit: config.selfUnit === '' ? undefined : config.selfUnit,
+      uptimeMs: Date.now() - processStartMs,
+    }
+  }
+
+  /**
+   * Restart this process.
+   *
+   * The request must be answered before the restart begins, and the shell that asks
+   * systemd must survive the restart. `nohup` inside a transient unit does both: the
+   * job is queued over D-Bus before the cgroup is torn down, so it is never lost
+   * halfway (verified against a disposable unit).
+   */
+  const restartSelf = async () => {
+    if (config.selfUnit === '') throw new Error('daemon: selfUnit is empty, so this process cannot restart itself')
+    const { spawn } = await import('node:child_process')
+    const child = spawn('systemd-run', [
+      '--unit', `dsh-daemon-selfrestart-${Date.now()}`,
+      '--collect',
+      '--property', 'WorkingDirectory=/',
+      '/bin/sh', '-c', `sleep 2; systemctl restart ${config.selfUnit}`,
+    ], { detached: true, stdio: 'ignore' })
+    child.unref()
+    return { unit: config.selfUnit, scheduled: true }
+  }
+
   const ssh = createSshOps({
     config: { ...config, cacheDir, helperVersion: config.helperVersion },
     logger,
   })
-  const admin = createAdmin({ registry, supervisor, provision, ssh, config: { ...config, cacheDir } })
+  const admin = createAdmin({
+    registry,
+    supervisor,
+    provision,
+    ssh,
+    config: { ...config, cacheDir },
+    profileSelf: selfInfo,
+    restartSelf,
+  })
 
   const password = config.password !== ''
     ? config.password

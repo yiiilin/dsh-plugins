@@ -29,6 +29,7 @@
         # the existing origin keeps working unchanged. Empty owns `/` (portal).
         rootProfile: ''
         # Start enabled profiles when the daemon boots.
+        selfUnit: ''
         autostart: true
         # Seconds a profile has to answer its port after spawn.
         readyMs: 90000

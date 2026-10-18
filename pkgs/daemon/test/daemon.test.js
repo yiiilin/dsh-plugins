@@ -771,3 +771,25 @@ test('the key-removal helper exists on the ssh ops object', async () => {
     assert.equal(typeof ops[method], 'function', method)
   }
 })
+
+test('the helper identity rule compares the resolved address', async () => {
+  // The registry stores the address, while an operator may type an ssh_config alias. A
+  // raw comparison never matched, so a second record sharing one helper slipped through
+  // — exactly what ADR 0002 forbids.
+  const one = normalizeProfile({
+    id: 'a', port: 1, workspace: '/w',
+    sshHost: '192.168.44.84', sshUser: 'root',
+    sshHelper: '/opt/h', sshHelperHash: 'a'.repeat(64),
+  })
+  assert.throws(
+    () => parseRegistry({ profiles: [one, { ...one, id: 'b', port: 2 }] }),
+    /already used by environment a/u,
+  )
+})
+
+test('saving a registry re-validates the identity rule', async () => {
+  // Every write path must uphold the rule, not only the one that remembered to check.
+  const source = await (await import('node:fs/promises')).readFile(new URL('../index.js', import.meta.url), 'utf8')
+  const save = source.slice(source.indexOf('async save() {'), source.indexOf('async save() {') + 300)
+  assert.match(save, /parseRegistry/u, 'save must validate before writing')
+})

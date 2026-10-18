@@ -21,6 +21,13 @@ window.__ModuleLoader__.load({
       stHelperBad: 'helper 异常',
       stOk: '正常',
       stUnknown: '检查中…',
+      selfLabel: '本机',
+      selfCurrent: '当前',
+      selfNoUnit: '未托管',
+      minutesShort: '分钟',
+      colHost: '主机',
+      confirmSelfRestart: '重启主环境会重启整个 dsh 进程（{unit}），当前页面会断开，稍后自动恢复。继续？',
+      selfRestarting: '已请求重启 {unit}，页面将在几秒后重连。',
       fixDeploy: '部署 helper',
       fixRetest: '重试',
       fixStart: '启动',
@@ -30,7 +37,7 @@ window.__ModuleLoader__.load({
       enableLabel: '开机自启',
       enabledOn: '自启',
       enabledOff: '不自启',
-      askRemoveHelper: '同时删除远端机器上的 helper？\n\n{path}\n\n默认会删除；取消则只移除本地环境，并生成卸载脚本供你以后手动执行。',
+      askRemoveHelper: '同时删除远端机器上的 helper？\n\n主机：{host}\n路径：{path}\n\n默认会删除；取消则只移除本地环境，并生成卸载脚本供你以后手动执行。',
       uninstallAt: '卸载脚本：{path}',
       deployingNow: '正在部署 helper…',
       preparing: '正在探测远端…',
@@ -91,6 +98,13 @@ window.__ModuleLoader__.load({
       stHelperBad: 'helper unhealthy',
       stOk: 'healthy',
       stUnknown: 'checking…',
+      selfLabel: 'This host',
+      selfCurrent: 'current',
+      selfNoUnit: 'unmanaged',
+      minutesShort: 'min',
+      colHost: 'Host',
+      confirmSelfRestart: 'Restarting the main environment restarts the whole dsh process ({unit}). This page will disconnect and reconnect shortly. Continue?',
+      selfRestarting: 'Restart of {unit} requested; the page will reconnect in a few seconds.',
       fixDeploy: 'Deploy helper',
       fixRetest: 'Retry',
       fixStart: 'Start',
@@ -100,7 +114,7 @@ window.__ModuleLoader__.load({
       enableLabel: 'Start on boot',
       enabledOn: 'autostart',
       enabledOff: 'manual',
-      askRemoveHelper: 'Also delete the helper on the remote host?\n\n{path}\n\nOK deletes it; Cancel removes only the local environment and writes an uninstall script for later.',
+      askRemoveHelper: 'Also delete the helper on the remote host?\n\nHost: {host}\nPath: {path}\n\nOK deletes it; Cancel removes only the local environment and writes an uninstall script for later.',
       uninstallAt: 'Uninstall script: {path}',
       deployingNow: 'Deploying helper…',
       preparing: 'Probing the remote…',
@@ -179,7 +193,7 @@ window.__ModuleLoader__.load({
     }
 
     const makeCard = (t) => function DaemonCard() {
-      const [state, setState] = useState({ phase: 'loading', environments: [] })
+      const [state, setState] = useState({ phase: 'loading', environments: [], self: undefined })
       const [flash, setFlash] = useState('')
       const [busy, setBusy] = useState('')
       const [form, setForm] = useState({
@@ -196,10 +210,10 @@ window.__ModuleLoader__.load({
           // `fresh` skips the daemon's health cache, which a retry button must do or it
           // would report the same stale verdict.
           const result = await call(fresh ? '/admin/state?fresh=1' : '/admin/state')
-          if (result.ok) setState({ phase: 'ready', environments: result.environments })
-          else setState({ phase: 'failed', environments: [], error: result.error })
+          if (result.ok) setState({ phase: 'ready', environments: result.environments, self: result.self })
+          else setState({ phase: 'failed', environments: [], self: undefined, error: result.error })
         } catch (error) {
-          setState({ phase: 'failed', environments: [], error: String(error) })
+          setState({ phase: 'failed', environments: [], self: undefined, error: String(error) })
         }
       }, [])
 
@@ -228,6 +242,17 @@ window.__ModuleLoader__.load({
         }
       }, [load, t])
 
+      const restartMain = useCallback(async () => {
+        if (!confirm(t('confirmSelfRestart').replace('{unit}', state.self?.unit ?? ''))) return
+        setBusy('self')
+        try {
+          const result = await call('/admin/self/restart', { method: 'POST' })
+          setFlash(result.ok ? t('selfRestarting').replace('{unit}', state.self?.unit ?? '') : t('actionFailed').replace('{message}', result.error ?? ''))
+        } finally {
+          setBusy('')
+        }
+      }, [state.self, t])
+
       const toggleEnabled = useCallback(async (entry) => {
         await run('toggle', `/admin/profiles/${entry.id}`, {
           method: 'PATCH',
@@ -237,7 +262,9 @@ window.__ModuleLoader__.load({
       }, [run])
 
       const removeEnvironment = useCallback(async (entry) => {
-        const deleteHelper = confirm(t('askRemoveHelper').replace('{path}', entry.sshHelper))
+        const deleteHelper = confirm(
+          t('askRemoveHelper').replace('{host}', entry.sshHost).replace('{path}', entry.sshHelper),
+        )
         const result = await run('remove', `/admin/profiles/${entry.id}?remoteHelper=${deleteHelper}`, { method: 'DELETE' }, t('removedMsg').replace('{id}', entry.id))
         if (result.ok && typeof result.uninstallScript === 'string') {
           setFlash(`${t('removedMsg').replace('{id}', entry.id)} ${t('uninstallAt').replace('{path}', result.uninstallScript)}`)
@@ -372,10 +399,31 @@ window.__ModuleLoader__.load({
         return [main, panel]
       }
 
+      /** The main environment, shown first: this process. */
+      const renderSelfRow = () => {
+        const self = state.self
+        if (self === undefined) return null
+        const uptime = Math.max(0, Math.round((self.uptimeMs ?? 0) / 60000))
+        return h('tr', { key: '__self' },
+          h('td', { style: styles.cell },
+            h('div', null, h('strong', null, t('selfLabel')), ' ', h('span', { style: styles.detail }, `(${t('selfCurrent')})`)),
+            h('div', { style: styles.mono }, `${self.host}:${self.port}`)),
+          h('td', { style: styles.cell },
+            self.unit === undefined ? t('selfNoUnit') : h('div', { style: styles.mono }, self.unit)),
+          h('td', { style: styles.cell }, String(self.plugins ?? '–')),
+          h('td', { style: styles.cell }, `${uptime} ${t('minutesShort')}`),
+          h('td', { style: styles.cell }, ''),
+          h('td', { style: styles.cell },
+            h('button', { key: 'open', style: styles.button, onClick: () => window.open('/', '_blank') }, t('open')),
+            self.restartable
+              ? h('button', { key: 'restart', style: styles.button, disabled: busy !== '', onClick: restartMain }, t('restart'))
+              : null))
+      }
+
       const table = h('table', { style: styles.table },
         h('thead', null, h('tr', null,
-          ['colName', 'colKind', 'colPort', 'colWorkspace', 'colState', 'colActions'].map((key) => h('th', { key, style: styles.cell }, t(key))))),
-        h('tbody', null, state.environments.flatMap(renderRow)))
+          ['colName', 'colHost', 'colPort', 'colWorkspace', 'colState', 'colActions'].map((key) => h('th', { key, style: styles.cell }, t(key))))),
+        h('tbody', null, [renderSelfRow(), ...state.environments.flatMap(renderRow)].filter(Boolean)))
 
       const children = [h('p', { key: 'hint', style: styles.hint }, t('hint'))]
       if (flash !== '') children.push(h('div', { key: 'flash', style: styles.ok }, flash))

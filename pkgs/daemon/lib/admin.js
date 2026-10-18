@@ -25,7 +25,7 @@ import { escapeHtml } from './portal.js'
 /** How long a health result stays usable. One probe costs ~500 ms of SSH. */
 const HEALTH_TTL_MS = 60_000
 
-export function createAdmin({ registry, supervisor, provision, ssh, config }) {
+export function createAdmin({ registry, supervisor, provision, ssh, config, profileSelf, restartSelf }) {
   /** id -> `{ at, value }`, so a panel refresh does not re-scan the fleet. */
   const healthCache = new Map()
   return async function handleAdmin(req, res, url) {
@@ -63,6 +63,7 @@ export function createAdmin({ registry, supervisor, provision, ssh, config }) {
         portBase: config.portBase,
         cacheDir: config.cacheDir,
         helperVersion: config.helperVersion,
+        self: profileSelf === undefined ? undefined : profileSelf(),
         environments: entries.map((entry) => describe(entry, supervisor, health.get(entry.id))),
       })
       return true
@@ -141,6 +142,16 @@ export function createAdmin({ registry, supervisor, provision, ssh, config }) {
         return true
       }
       json(res, 405, { ok: false, error: `${method} is not supported on ${pathname}` })
+      return true
+    }
+
+    if (pathname === '/admin/self/restart' && method === 'POST') {
+      if (restartSelf === undefined) {
+        json(res, 501, { ok: false, error: 'this daemon cannot restart itself' })
+        return true
+      }
+      const scheduled = await restartSelf()
+      json(res, 202, { ok: true, ...scheduled })
       return true
     }
 
