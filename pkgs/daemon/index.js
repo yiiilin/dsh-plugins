@@ -237,6 +237,11 @@ export function apply(ctx, config) {
   const embeddedRoot = {
     cookie: undefined,
     pending: undefined,
+    /** The harness port if the listener is mounted yet, otherwise 0. */
+    portOrZero() {
+      const carrier = ctx.get('webServer')
+      return carrier?.port ?? 0
+    },
     /** Loopback port of the harness listener this process runs. */
     port() {
       const carrier = ctx.get('webServer')
@@ -301,7 +306,7 @@ export function apply(ctx, config) {
     ? createTunnelAgent({
       mainUrl: config.mainUrl,
       token: config.token,
-      harnessPort: () => embeddedRoot.port(),
+      harnessPort: () => embeddedRoot.portOrZero(),
       // The edge's own harness session, minted the same way the main node mints one for
       // its root profile.
       harnessCookie: async () => {

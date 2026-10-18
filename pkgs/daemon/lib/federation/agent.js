@@ -66,6 +66,13 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, harnessCookie, 
     socket.on('open', () => {
       attempts = 0
       const port = harnessPort()
+      if (port === 0) {
+        // The harness listener is not mounted yet. Close and retry: forwarding to port 0
+        // would send every request into nothing.
+        logger.warn('federation: harness listener not ready yet; reconnecting shortly')
+        socket.close()
+        return
+      }
       logger.info(`federation: connected to the main node; forwarding to 127.0.0.1:${port}`)
       socket.send(encodeJsonFrame(FRAME.heartbeat, Buffer.alloc(16), {
         hostname: process.env.HOSTNAME ?? '',
