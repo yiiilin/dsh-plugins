@@ -452,5 +452,19 @@ arm64 是否需要？若需要，建议在真实 arm64 主机上先跑一次端�
 |---|---|
 | ~~helper 自动部署~~ | ✅ **已验证**（第 2 轮）：daemon 构建 → 部署到远端全新路径 → 校验 sha256 → profile 启动 → 远端 bash 执行成功 |
 | arm64 | 交叉构建产物形态正确，无 arm64 主机可运行验证 |
-| 生产切换 | 尚未执行 |
+| 生产切换 | 尚未执行；`adopt` 已验证，是迁移要用的入口 |
+
+### 14.3 生产迁移的形态（`adopt`）
+
+放弃了「daemon 前置到自己进程」的方案：core 的 launch token 每次启动轮换，
+写进配置的 token 第一次重启就失效，只在门口失败。
+
+改用**收养**：daemon 在自己的 profile 里监听 `0.0.0.0:3080`，把现有 `web`
+profile 原样注册为 `main`，不动它的 manifest、bundle 和已持久化的设置。
+
+已实测：收养后 `package.json` 与 patch 未被改写，profile 在分配的端口上启动，
+经 `/main/` 可访问，cookie 作用域为 `/main/`。
+
+代价：生产 URL 从 `https://dsh.yiln.de/` 变为 `https://dsh.yiln.de/main/`。
+若必须保持根路径，需要另做一次 cookie 桥接（未实现）。
 
