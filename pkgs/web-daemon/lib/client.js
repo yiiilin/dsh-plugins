@@ -674,28 +674,12 @@ window.__ModuleLoader__.load({
 				order: -10,
 				inject: () => ({}),
 			}, ServerStatus));
-			const WebDaemonCard = createWebDaemonCard(t);
-			const profileForms = ctx.get("configForms");
-			// Only the official `settings.plugins.tab` page is registered: the
-			// collapsible `settings.plugin.item` / `plugins.item` cards are gone, so a
-			// click opens the page instead of unfolding a row.
-			const registerSettingsCard = (name) => slots.inject(name, () => slots.register(
-				name === "settings.plugins.tab"
-					? {
-						name,
-						id: "web-daemon",
-						order: 110,
-						label: () => t("daemon.title"),
-						inject: () => ({ timer }),
-					}
-					: {
-						name,
-						key: "web-daemon",
-						inject: () => ({ timer }),
-					},
-				WebDaemonCard,
-			));
-			if (profileForms !== undefined) registerSettingsCard("settings.plugins.tab");
+			// No settings tab. Profile lifecycle moved to the daemon's own panel, and a
+			// second surface for the same concern only invites editing the wrong one.
+			// The Host half keeps generating the systemd unit and driving session
+			// recovery; those have no user-facing configuration worth a page.
+			void createWebDaemonCard;
+			void ctx.get("configForms");
 		}
 
 		exports.apply = apply;
