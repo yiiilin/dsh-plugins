@@ -8,13 +8,12 @@ window.__ModuleLoader__.load({
 
     const ZH = {
       title: '开发守护',
-      hint: '一个入口，多个 profile。每个 profile 是一个独立的 dsh 进程，各自拥有自己的文件系统与进程。',
+      hint: '一个入口，多个环境。每个环境是一个独立的 dsh 进程，文件与命令落在它自己的机器上。',
       refresh: '刷新',
       loading: '正在读取…',
       unreachable: '无法读取守护状态（管理接口只接受已登录的请求）。',
-      empty: '还没有配置任何 profile。',
+      empty: '还没有配置任何远程环境。',
       colName: '名称', colKind: '类型', colPort: '端口', colWorkspace: '工作区', colState: '状态', colActions: '操作',
-      kindLocal: '本地', kindSsh: 'SSH',
       running: '运行中', stopped: '已停止',
       stNotRunning: '未运行',
       stUnreachable: '远端不可达',
@@ -49,7 +48,7 @@ window.__ModuleLoader__.load({
       probeAction: '探测远端',
       factTitle: '探测结果',
       start: '启动', stop: '停止', remove: '移除', open: '打开',
-      createTitle: '添加 profile',
+      createTitle: '添加环境',
       idLabel: '标识（留空自动生成）', workspaceLabel: '工作区绝对路径',
       sshHostLabel: 'SSH 主机（别名或 host:port）', sshUserLabel: 'SSH 用户',
       sshHelperLabel: '远端 helper 路径', sshHelperHashLabel: 'helper 的 SHA-256',
@@ -58,14 +57,8 @@ window.__ModuleLoader__.load({
       errWorkspace: '工作区必须是绝对路径。',
       errSsh: 'SSH 类型必须填写主机、用户和 helper 的 hash。',
       actionFailed: '操作失败：{message}',
-      deployNote: 'SSH profile 需要先部署 helper：填好连接信息并确认后才会写入远端，远端不需要 Node。',
-      kindLabel: '类型',
+      deployNote: '远程环境需要先部署 helper：填好连接信息并确认后才会写入远端，远端不需要 Node。',
       modeLabel: '模式',
-      modeCreate: '新建',
-      modeAdopt: '接管已有',
-      adoptSubmit: '接管',
-      adoptLabel: '已有 profile 名（目录名）',
-      adoptHint: '接管只登记坐标，不改动该 profile 的任何文件。',
       sshHostLabel: 'SSH 主机（别名或 host:port）会用于建连',
       sshPortLabel: 'SSH 端口（留空跟随 ssh_config）',
       sshHelperHashLabel: 'helper 的 SHA-256（部署后自动填入）',
@@ -73,8 +66,6 @@ window.__ModuleLoader__.load({
       deploying: '部署中…',
       create: '创建',
       creating: '创建中…',
-      errAdopt: '请填写已有 profile 的目录名。',
-      errHelperHash: '新建 SSH profile 需要 helper 的 SHA-256；若远端还没有 helper，先填一个占位值再用「部署 helper」覆盖。',
       created: '已创建 {id}。',
       adopted: '已接管 {id}。',
       deployed: 'helper 已部署到 {host}。',
@@ -85,13 +76,12 @@ window.__ModuleLoader__.load({
     }
     const EN = {
       title: 'Development daemon',
-      hint: 'One entry, many profiles. Each profile is its own dsh process with its own filesystem and processes.',
+      hint: 'One entry, many environments. Each is its own dsh process whose files and commands run on its own machine.',
       refresh: 'Refresh',
       loading: 'Loading…',
       unreachable: 'Cannot read daemon state (the admin endpoints require an authenticated request).',
-      empty: 'No profiles configured yet.',
+      empty: 'No remote environments configured yet.',
       colName: 'Name', colKind: 'Kind', colPort: 'Port', colWorkspace: 'Workspace', colState: 'State', colActions: 'Actions',
-      kindLocal: 'local', kindSsh: 'SSH',
       running: 'running', stopped: 'stopped',
       stNotRunning: 'not running',
       stUnreachable: 'remote unreachable',
@@ -126,7 +116,7 @@ window.__ModuleLoader__.load({
       probeAction: 'Probe the host',
       factTitle: 'Probe result',
       start: 'Start', stop: 'Stop', remove: 'Remove', open: 'Open',
-      createTitle: 'Add a profile',
+      createTitle: 'Add an environment',
       idLabel: 'Id (blank derives one)', workspaceLabel: 'Workspace absolute path',
       sshHostLabel: 'SSH host (alias or host:port)', sshUserLabel: 'SSH user',
       sshHelperLabel: 'Remote helper path', sshHelperHashLabel: "Helper's SHA-256",
@@ -135,14 +125,8 @@ window.__ModuleLoader__.load({
       errWorkspace: 'Workspace must be an absolute path.',
       errSsh: 'An SSH profile needs a host, a user and the helper hash.',
       actionFailed: 'Action failed: {message}',
-      deployNote: 'An SSH profile needs its helper deployed first: nothing is written to the host until you confirm, and the host needs no Node.',
-      kindLabel: 'Kind',
+      deployNote: 'A remote environment needs its helper deployed first: nothing is written to the host until you confirm, and the host needs no Node.',
       modeLabel: 'Mode',
-      modeCreate: 'New',
-      modeAdopt: 'Adopt',
-      adoptSubmit: 'Adopt',
-      adoptLabel: 'Existing profile directory name',
-      adoptHint: 'Adoption records coordinates only; no file in that profile is touched.',
       sshHostLabel: 'SSH host (alias or host:port) used to connect',
       sshPortLabel: 'SSH port (blank follows ssh_config)',
       sshHelperHashLabel: 'Helper SHA-256 (filled after deploy)',
@@ -150,8 +134,6 @@ window.__ModuleLoader__.load({
       deploying: 'Deploying…',
       create: 'Create',
       creating: 'Creating…',
-      errAdopt: 'Enter the directory name of the existing profile.',
-      errHelperHash: 'A new SSH profile needs the helper SHA-256; use a placeholder and let "Deploy helper" fill it.',
       created: 'Created {id}.',
       adopted: 'Adopted {id}.',
       deployed: 'Helper deployed to {host}.',
@@ -428,8 +410,11 @@ window.__ModuleLoader__.load({
       const children = [h('p', { key: 'hint', style: styles.hint }, t('hint'))]
       if (flash !== '') children.push(h('div', { key: 'flash', style: styles.ok }, flash))
       if (state.phase === 'failed') children.push(h('div', { key: 'error', style: styles.error }, t('unreachable')))
-      if (state.phase === 'ready' && state.environments.length === 0) children.push(h('p', { key: 'empty', style: styles.hint }, t('empty')))
-      if (state.phase === 'ready' && state.environments.length > 0) children.push(h('div', { key: 'table' }, table))
+      if (state.phase === 'ready') children.push(h('div', { key: 'table' }, table))
+      // The empty hint is about managed environments only: the main one is always listed.
+      if (state.phase === 'ready' && state.environments.length === 0) {
+        children.push(h('p', { key: 'empty', style: styles.hint }, t('empty')))
+      }
       children.push(h('div', { key: 'actions' },
         h('button', { style: styles.button, disabled: busy !== '', onClick: () => void load() }, t('refresh'))))
 
