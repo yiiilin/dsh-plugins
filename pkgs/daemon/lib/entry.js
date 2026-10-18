@@ -93,9 +93,11 @@ export function scopeLocation(location, prefix) {
  * @param options.listProfiles - returns `{ id, port }` for every running profile.
  * @param options.local - handles a daemon-owned request; returns true when it
  *   wrote the response. Everything it declines is matched against profiles.
- * @param options.root - the profile that owns paths no prefix claims, or
- *   undefined to answer 404. `cookie()` returns the upstream session the daemon
- *   holds on the browser's behalf, and `refresh()` drops it after a rejection.
+ * @param options.root - the upstream that owns paths no prefix claims, or
+ *   undefined to answer 404. It supplies the port, a cached `cookie()` for the
+ *   upstream session, `ensure()` to mint it, and `refresh()` to drop it after a
+ *   rejection. When `prefix` is set, the root is reached under that prefix and
+ *   every other path redirects there.
  * @param options.notFound - writes a response for an unroutable request.
  * @returns the listening port and a close function.
  */
@@ -124,8 +126,17 @@ export function startEntry({ host, port, listProfiles, local, root, notFound }) 
     // which is the daemon's own origin; the handshake has to carry the session
     // the daemon holds for it.
     if (root !== undefined) {
+      const mount = root.prefix === undefined || root.prefix === '' ? '' : `/${root.prefix.replace(/^\/+|\/+$/gu, '')}`
+      const path = url.split('?')[0]
+      const search = url.includes('?') ? url.slice(url.indexOf('?')) : ''
+      const inside = mount === '' || path === mount || path.startsWith(`${mount}/`)
+      if (!inside) {
+        socket.destroy()
+        return
+      }
+      const upstreamPath = mount === '' ? url : `${path.slice(mount.length) || '/'}${search}`
       void root.ensure().then(() => {
-        proxyUpgrade({ req, socket, head, port: root.port(), path: url, cookie: root.cookie() })
+        proxyUpgrade({ req, socket, head, port: root.port(), path: upstreamPath, cookie: root.cookie() })
       }).catch(() => socket.destroy())
       return
     }
@@ -166,6 +177,26 @@ async function handleHttp({ req, res, url, listProfiles, local, root, notFound }
   }
   if (handled) return
 
+  if (root?.prefix !== undefined && root.prefix !== '') {
+    const prefix = `/${root.prefix.replace(/^\/+|\/+$/gu, '')}`
+    const path = url.split('?')[0]
+    if (path === prefix || path.startsWith(`${prefix}/`)) {
+      await root.ensure()
+      const rest = path.slice(prefix.length)
+      const search = url.includes('?') ? url.slice(url.indexOf('?')) : ''
+      proxyRequest({
+        req,
+        res,
+        port: root.port(),
+        path: `${rest === '' ? '/' : rest}${search}`,
+        prefix,
+        cookie: root.cookie(),
+        refresh: root.refresh,
+      })
+      return
+    }
+  }
+
   const routed = routeProfile(url, listProfiles().map((entry) => entry.id))
   const port = routed === undefined ? undefined : findPort(listProfiles(), routed.id)
   if (routed !== undefined && port !== undefined) {
@@ -177,16 +208,17 @@ async function handleHttp({ req, res, url, listProfiles, local, root, notFound }
   // authority, which a browser talking to the daemon can never present — the
   // daemon holds that session itself and attaches it here.
   if (root !== undefined) {
+    const mount = root.prefix
+    if (mount !== undefined && mount !== '') {
+      // The harness is mounted under `mount`; bare `/` sends the browser there so
+      // its relative asset URLs resolve against the mount rather than the root.
+      const absolute = mount.startsWith('/') ? mount : `/${mount}`
+      res.writeHead(302, { location: `${absolute}/`, 'cache-control': 'no-store' })
+      res.end()
+      return
+    }
     await root.ensure()
-    proxyRequest({
-      req,
-      res,
-      port: root.port(),
-      path: url,
-      prefix: '',
-      cookie: root.cookie(),
-      refresh: root.refresh,
-    })
+    proxyRequest({ req, res, port: root.port(), path: url, prefix: '', cookie: root.cookie(), refresh: root.refresh })
     return
   }
   notFound(req, res, url)

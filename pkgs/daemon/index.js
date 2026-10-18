@@ -80,6 +80,15 @@ export const Config = z.object({
    */
   profilePatchPath: z.string().default(''),
   /**
+   * Serve the harness this process runs, mounted under this prefix, for paths no
+   * profile claims. The embedded root needs no child process: its session is
+   * minted from this process's own launch token through the documented
+   * `connection.authenticatedUrl()` API.
+   */
+  rootEmbedded: z.boolean().default(false),
+  /** Mount point of the embedded root, e.g. `main`. Empty serves it at `/`. */
+  rootPrefix: z.string().default(''),
+  /**
    * Id of the profile that answers paths no prefix claims, so the existing origin
    * keeps working unchanged. Empty means the daemon owns `/` and shows its portal.
    *
@@ -352,7 +361,7 @@ export function apply(ctx, config) {
     if (path === '/admin' || path.startsWith('/admin/')) {
       return await admin(req, res, url)
     }
-    const ownsRoot = config.rootProfile === ''
+    const ownsRoot = config.rootProfile === '' && !config.rootEmbedded
     if (path === '/portal' || (ownsRoot && (path === '/' || path === '/index.html'))) {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
       res.end(
@@ -377,6 +386,55 @@ export function apply(ctx, config) {
    * it upstream. The token is re-read on every child start, so a profile restart
    * cannot leave a stale cookie behind.
    */
+  const embeddedRoot = {
+    cookie: undefined,
+    pending: undefined,
+    /** Loopback port of the harness listener this process runs. */
+    port() {
+      const carrier = ctx.get('webServer')
+      if (carrier === undefined || carrier.port === undefined) {
+        throw new Error('daemon: no webServer port; the embedded root needs a mounted harness listener')
+      }
+      return carrier.port
+    },
+    /** Mount point the harness is served under, or empty for the origin root. */
+    prefix: config.rootPrefix,
+    refresh() {
+      embeddedRoot.cookie = undefined
+    },
+    /**
+     * Mint the upstream session from this process's own launch token.
+     *
+     * `connection.authenticatedUrl()` is the documented way to obtain a tokenized
+     * URL for a mount proxy; exchanging it once yields the cookie a browser could
+     * never present.
+     */
+    async ensure() {
+      if (embeddedRoot.cookie !== undefined) return
+      if (embeddedRoot.pending !== undefined) return embeddedRoot.pending
+      const connection = ctx.get('connection')
+      if (connection === undefined) throw new Error('daemon: no connection service for the embedded root')
+      embeddedRoot.pending = (async () => {
+        try {
+          const base = `http://127.0.0.1:${embeddedRoot.port()}/`
+          const tokenized = connection.authenticatedUrl(base)
+          const answer = await fetch(tokenized, { redirect: 'manual' })
+          const raw = answer.headers.getSetCookie?.() ?? []
+          const found = raw
+            .map((value) => /^(dsh-auth-[A-Za-z0-9_-]+=[^;]+)/u.exec(value)?.[1])
+            .find(Boolean)
+          embeddedRoot.cookie = found
+          if (found === undefined) logger.warn('daemon: embedded root answered no session cookie')
+        } catch (error) {
+          logger.warn(`daemon: embedded root session exchange failed: ${error.message}`)
+        } finally {
+          embeddedRoot.pending = undefined
+        }
+      })()
+      return embeddedRoot.pending
+    },
+  }
+
   const rootBridge = {
     cookie: undefined,
     /** Launch URL the cached cookie was minted from. */
@@ -440,9 +498,11 @@ export function apply(ctx, config) {
         port: config.port,
         listProfiles: () => supervisor.ids().map((id) => ({ id, port: registry.find(id)?.port ?? 0 })).filter((row) => row.port !== 0),
         local,
-        root: config.rootProfile === ''
-          ? undefined
-          : { port: rootBridge.port, cookie: () => rootBridge.cookie, ensure: rootBridge.ensure, refresh: rootBridge.refresh },
+        root: config.rootEmbedded
+          ? { port: embeddedRoot.port, prefix: embeddedRoot.prefix, cookie: () => embeddedRoot.cookie, ensure: embeddedRoot.ensure, refresh: embeddedRoot.refresh }
+          : config.rootProfile === ''
+            ? undefined
+            : { port: rootBridge.port, prefix: '', cookie: () => rootBridge.cookie, ensure: rootBridge.ensure, refresh: rootBridge.refresh },
         notFound,
       })
       logger.info(`daemon: listening on ${config.host}:${entry.port}`)

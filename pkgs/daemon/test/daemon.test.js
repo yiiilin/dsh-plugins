@@ -551,3 +551,91 @@ test('the credential chain honours the names the retired gateway used', () => {
   assert.equal(chain({ AUTH_PASS: 'b' }, 'AUTH_PASS'), 'b')
   assert.equal(chain({}, 'AUTH_PASS'), '')
 })
+
+test('a prefixed root redirects bare / and strips its prefix', async () => {
+  // The embedded harness is mounted under a prefix so its relative asset URLs
+  // resolve against that mount; bare `/` must send the browser there.
+  const { startEntry } = await import('../lib/entry.js')
+  const { createServer } = await import('node:http')
+  const upstream = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/plain' })
+    res.end(`up:${req.url}`)
+  })
+  await new Promise((done) => upstream.listen(0, '127.0.0.1', done))
+  const entry = await startEntry({
+    host: '127.0.0.1',
+    port: 0,
+    listProfiles: () => [],
+    local: async () => false,
+    root: {
+      port: () => upstream.address().port,
+      prefix: 'main',
+      cookie: () => 'c=1',
+      ensure: async () => {},
+      refresh: () => {},
+    },
+    notFound: (req, res) => { res.writeHead(404); res.end('none') },
+  })
+  try {
+    const base = `http://127.0.0.1:${entry.port}`
+    const bare = await fetch(`${base}/`, { redirect: 'manual' })
+    assert.equal(bare.status, 302)
+    assert.equal(bare.headers.get('location'), '/main/')
+    // The prefix is stripped before the upstream sees the path.
+    assert.equal(await (await fetch(`${base}/main/deep`)).text(), 'up:/deep')
+    assert.equal(await (await fetch(`${base}/main/`)).text(), 'up:/')
+  } finally {
+    await entry.close()
+    await new Promise((done) => upstream.close(done))
+  }
+})
+
+test('the embedded root mints its session from connection.authenticatedUrl', async () => {
+  // The documented way to obtain a tokenized URL for a mount proxy. Scraping a
+  // child's stdout was only necessary while the harness was a separate process.
+  const { createServer } = await import('node:http')
+  const cookies = []
+  const upstream = createServer((req, res) => {
+    // The token arrives as the sole query parameter; answering with the session
+    // cookie is what a real listener does on a valid launch token.
+    const url = new URL(req.url, 'http://x')
+    if (url.searchParams.get('token') === 'process-token') {
+      res.writeHead(303, {
+        'set-cookie': ['dsh-auth-hash=session-value; Path=/; HttpOnly'],
+        location: './',
+      })
+      res.end()
+      return
+    }
+    if ((req.headers.cookie ?? '').includes('dsh-auth-hash=session-value')) {
+      res.writeHead(200, { 'content-type': 'text/plain' })
+      res.end('mounted')
+      return
+    }
+    res.writeHead(401)
+    res.end('no session')
+  })
+  await new Promise((done) => upstream.listen(0, '127.0.0.1', done))
+  try {
+    // A faithful stand-in for the service the daemon reads.
+    const connection = {
+      authenticatedUrl(baseUrl) {
+        const url = new URL(baseUrl)
+        url.searchParams.set('token', 'process-token')
+        return url.href
+      },
+    }
+    const base = `http://127.0.0.1:${upstream.address().port}/`
+    const tokenized = connection.authenticatedUrl(base)
+    const answer = await fetch(tokenized, { redirect: 'manual' })
+    const raw = answer.headers.getSetCookie?.() ?? []
+    const found = raw.map((v) => /^(dsh-auth-[A-Za-z0-9_-]+=[^;]+)/u.exec(v)?.[1]).find(Boolean)
+    cookies.push(found)
+    assert.equal(found, 'dsh-auth-hash=session-value')
+    // The cookie is then reusable against the upstream without the token.
+    const replayed = await fetch(base, { headers: { cookie: found } })
+    assert.equal(await replayed.text(), 'mounted')
+  } finally {
+    await new Promise((done) => upstream.close(done))
+  }
+})
