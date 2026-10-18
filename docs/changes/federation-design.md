@@ -335,3 +335,58 @@ prepare/confirm 的 SSH 分支
   在两台机器上是同一个还是两个」变成无法回答的问题。
 - **多主节点**：一个边端只连一个主节点。
 - **主节点互备**：主节点挂了，边端仍独立可用，但无法被远程访问。
+
+## 16. 实施进度与已知问题（2026-10-19）
+
+### 已完成
+
+| 步 | 内容 | 证据 |
+| --- | --- | --- |
+| 0 | 删除 SSH 模式 | 2077 行移除，index.js 869→383 |
+| 1 | 反向隧道 | 两个实例间 HTTP 与 WebSocket 升级均通过，端到端测试在 `test/daemon.test.js` |
+| 2 | 6.13 作为边端接入 | `online: True`，`/env-6-13/` 返回 200，静态资源 200 |
+
+### 未解决：经隧道的会话事件流
+
+**症状**：`/env-6-13/` 页面能加载、24 个 HTTP API 全部成功、WebSocket 升级返回 101
+且边端确认收到 4190–6106 字节，但浏览器侧的 mux 收不到任何消息
+（`messages: 0`）。表现是界面停在初始状态：工作区能列出，会话列表为空，
+某些按钮点击无效。
+
+**已排除**：
+
+- 隧道本身（HTTP 全通，upgrade 返回 101）
+- 边端与 harness 之间的连接（日志显示字节确实从 harness 流出）
+- 帧格式（同一套帧在纯 HTTP 请求上工作正常）
+- 浏览器侧限制（页面内直接 new WebSocket 到 mux 能 open 并保持 OPEN）
+
+**已定位到主端的转发**：边端日志 `sent so far N frame(s)/N byte(s)` 证实它发出了
+帧，主端的 `upgrade relayed N byte(s)` 从未打印，说明 upgrading 请求的
+responseBody 帧没有进入 `entry.onBody`。
+
+**已尝试的修复**：`socket.resume()`（升级后的 socket 默认暂停）、在握手期间缓冲
+客户端帧、合并重复的 `responseEnd` 分支。前两项对 HTTP 路径有效，upgrade 路径
+仍未打通。
+
+**下一步应查**：`record.pending` 在 upgrade 生命周期中的存活时间——边端每次
+upgrade 会收到请求头帧后又收到其他帧，若 key 在某个 `responseEnd` 上被提前删除，
+后续帧就会因为 `entry === undefined` 被静默丢弃。建议在 `dispatch` 里对未知 key
+的帧计数并打印，而不是 `return`。
+
+### 部署细节（6.13）
+
+- pnpm 12 默认拦截生命周期脚本，必须 `--config.dangerously-allow-all-builds=true`
+- `dsh-web-app` 随 dsh 自带，从 `/usr/local/lib/node_modules/...` 安装
+- 装完要手工把 bundle 名加入 `package.json` 的 `dsh.profile.bundles`
+- settings 编辑器默认关闭，边端要能编辑模型配置需显式开 `allowRemoteSettings`
+
+### 模型配置同步（手工验证过，未固化为功能）
+
+三条链路缺一不可，文档 §14 说这是三层：
+
+1. `agent-default-model` 与 `llm-pi-ai` 两行写进 profile 的 `cordis.patch.yml`
+2. `SUB2API_API_KEY` 写进 `.credentials.yaml` 的 `refs`
+3. `webserver-auth` 开 `allowRemoteSettings`，否则编辑器改不动
+
+**一个教训**：这两行不能用 YAML 解析后再序列化往返——`off:` 会被写成 `false`，
+而 `reasoningEfforts` 的键名恰好是 `off`，导致 `ValidationError`。必须按原文复制。

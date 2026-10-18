@@ -97,10 +97,14 @@ export function createTunnelHub({ verifyToken, logger }) {
       return
     }
     if (frame.type === FRAME.responseBody) {
+      entry.bytes = (entry.bytes ?? 0) + frame.payload.length
       entry.onBody(frame.payload)
       return
     }
     if (frame.type === FRAME.responseEnd) {
+      if (entry.upgraded === true) {
+        logger.info(`federation: upgrade relayed ${entry.bytes ?? 0} byte(s) to the browser`)
+      }
       record.pending.delete(key)
       entry.onEnd()
     }
@@ -180,17 +184,18 @@ export function createTunnelHub({ verifyToken, logger }) {
   function proxyUpgrade(envId, req, socket, head, upstreamPath) {
     const record = connections.get(envId)
     if (record === undefined) {
-      logger.warn(`federation: ${envId} has no tunnel; answering 503`)
+      logger.warn(`federation: ${envId} has no tunnel for an upgrade; answering 503`)
       return false
     }
-    logger.info(`federation: ${envId} ${req.method} ${upstreamPath}`)
+    logger.info(`federation: ${envId} UPGRADE ${upstreamPath}`)
 
     const id = newRequestId()
     const key = id.toString('hex')
     let upgraded = false
 
-    record.pending.set(key, {
+    const entryRef = {
       onHead(head2) {
+        entryRef.upgraded = true
         if (head2.status !== 101) {
           socket.end(`HTTP/1.1 ${head2.status} ${head2.statusText}\r\nconnection: close\r\n\r\n`)
           return
@@ -217,7 +222,8 @@ export function createTunnelHub({ verifyToken, logger }) {
       onClose() {
         socket.destroy()
       },
-    })
+    }
+    record.pending.set(key, entryRef)
 
     record.socket.send(encodeJsonFrame(FRAME.requestHead, id, {
       method: req.method,
@@ -230,6 +236,8 @@ export function createTunnelHub({ verifyToken, logger }) {
     }
     // After the 101, everything the browser sends is opaque bytes for the harness.
     socket.on('data', (chunk) => record.socket.send(encodeFrame(FRAME.requestBody, id, chunk)))
+    // An upgraded socket arrives paused: attaching `data` alone never receives a byte.
+    socket.resume()
     socket.on('close', () => {
       if (record.pending.delete(key)) record.socket.send(encodeFrame(FRAME.cancel, id))
     })

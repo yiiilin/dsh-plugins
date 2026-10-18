@@ -163,11 +163,16 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, harnessCookie, 
     return next
   }
 
+  const sent = { frames: 0, bytes: 0, dropped: 0 }
   function sendOrClose(frame) {
     if (socket !== undefined && socket.readyState === WebSocket.OPEN) {
       socket.send(frame)
+      sent.frames += 1
+      sent.bytes += frame.length
       return true
     }
+    sent.dropped += 1
+    if (sent.dropped === 1) logger.warn('federation: a frame was dropped because the tunnel was not open')
     return false
   }
 
@@ -242,7 +247,12 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, harnessCookie, 
     prepared.connection = 'Upgrade'
     prepared.upgrade = 'websocket'
 
-    const slot = { onRequestBody() {}, onRequestEnd() {}, close() {} }
+    const queued = []
+    const slot = {
+      onRequestBody(chunk) { queued.push(chunk) },
+      onRequestEnd() {},
+      close() {},
+    }
     inFlight.set(key, slot)
 
     const upgrade = httpRequest({
@@ -252,7 +262,9 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, harnessCookie, 
       path: head.path,
       headers: prepared,
     })
+    logger.info(`federation: opening upgrade to ${authority()}${head.path}`)
     upgrade.on('upgrade', (answer, upstreamSocket, upstreamHead) => {
+      logger.info(`federation: harness accepted the upgrade (${answer.statusCode})`)
       // Raw header block, so the main node relays the harness's own value for
       // `Sec-WebSocket-Accept` instead of inventing one.
       sendOrClose(encodeJsonFrame(FRAME.responseHead, id, {
@@ -261,12 +273,19 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, harnessCookie, 
         rawHeaders: answer.rawHeaders,
       }))
       if (upstreamHead.length > 0) sendOrClose(encodeFrame(FRAME.responseBody, id, upstreamHead))
-      upstreamSocket.on('data', (chunk) => sendOrClose(encodeFrame(FRAME.responseBody, id, chunk)))
+      let up = 0
+      upstreamSocket.on('data', (chunk) => {
+        if (up === 0) logger.info('federation: first byte from the harness on the upgraded socket')
+        up += chunk.length
+        sendOrClose(encodeFrame(FRAME.responseBody, id, chunk))
+      })
       upstreamSocket.on('close', () => {
+        logger.info(`federation: upstream closed, ${up} byte(s) came back; sent so far ${sent.frames} frame(s)/${sent.bytes} byte(s), dropped ${sent.dropped}`)
         inFlight.delete(key)
         sendOrClose(encodeFrame(FRAME.responseEnd, id))
       })
       upstreamSocket.on('error', () => inFlight.delete(key))
+      upstreamSocket.resume()
       Object.assign(slot, {
         onRequestBody(chunk) {
           if (!upstreamSocket.destroyed) upstreamSocket.write(chunk)
@@ -275,6 +294,10 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, harnessCookie, 
           upstreamSocket.destroy()
         },
       })
+      // Frames that arrived during the handshake are delivered now, in order.
+      for (const chunk of queued.splice(0)) {
+        if (!upstreamSocket.destroyed) upstreamSocket.write(chunk)
+      }
     })
     upgrade.on('response', (answer) => {
       // The harness refused the upgrade: relay its status so the browser reports the
