@@ -73,7 +73,8 @@ export function sshExec(target, command, { password, identityFile, timeoutMs = 6
           done(stdout)
           return
         }
-        fail(new Error(`daemon: ssh ${target.sshUser}@${target.sshHost} failed: ${(stderr || error.message).trim().slice(-800)}`))
+        const where = target.alias !== undefined ? target.alias : `${target.sshUser}@${target.sshHost}`
+        fail(new Error(`daemon: ssh ${where} failed: ${(stderr || error.message).trim().slice(-800)}`))
       },
     )
   })
