@@ -5,9 +5,9 @@
   "type": "module",
   "license": "MIT",
   "files": [
-    "README.md",
-    "cordis.patch.yml",
     "index.js",
+    "cordis.patch.yml",
+    "README.md",
     "!**/test/"
   ],
   "exports": {
