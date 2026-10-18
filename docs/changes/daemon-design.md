@@ -563,3 +563,54 @@ daemon 已在启动时对空密码发出显式告警。
 脚本在任一检查失败时会自动执行同样的回滚。
 
 `edge` 与 `web` 两个 profile 保留作回滚依据，未删除。
+
+## 6.13 作为远程环境（2026-10-18）
+
+放弃了「把主节点迁到 6.13」的方案，改为主环境留在本机、6.13 作为远程环境。
+
+### 为什么反向
+
+迁移方案要停掉本机生产、传输 3.3 GB、在 6.13 重建主节点。反向方案不动本机，只加一台
+远程环境：本机 1189 个会话与生产服务全程未受影响。
+
+### 6.13 的处置
+
+6.13 上原有 `dsh-bot.service`（`@deepseek-ai/dsh@0.2.1-alpha.4`，运行 2 天 20 小时，
+`DSH_HOME=/root/.dshbot/.dsh`，3.5 MB 数据，7 个会话）。先完整备份再卸载：
+
+```
+备份  /root/dshbot-backup-20261018-203428  (3.5 MB)
+      ├─ dsh-home/          原 DSH_HOME
+      ├─ dsh-bot.service    原单元
+      ├─ nginx-dsh-bot      原反代配置
+      └─ npm-global.txt     原全局包清单
+卸载  停止并禁用单元 → 删除单元与 nginx 配置 → npm uninstall → 删除 /root/.dshbot
+```
+
+迁移中止后，把已经复制过去的 4.1 GB 数据删除（其中含 `.env` 与 `.credentials.yaml`，
+不应留在另一台机器上），并卸载为迁移装上的 dsh。6.13 现在只有 helper：
+`/opt/dsh-helper/dsh-ssh-helper`，73 MB。
+
+### 验证
+
+| 项 | 结果 |
+| --- | --- |
+| 探测 | `debian 13` / glibc 2.41 / x64 / helperSupported ✓ |
+| 环境创建 | id `p-192-168-6-13`，端口 56800，hash 已回写真实值 |
+| 启动 | running ✓，health `ok`，零激活失败 |
+| 实际执行 | 环境内跑 bash 读到 `ONLY_ON_6_13_1792327743`，该文件只存在于 6.13 |
+
+### 已知缺口：工作区路径是机器本地的
+
+工作区注册表 `/root/.dsh/storages/workspace.json` 由所有环境共享，但其中存的是**绝对
+路径**。在 6.13 环境里打开一个按本机路径 `/usr/local/src/project/dsh-plugin` 创建的会话，
+会得到：
+
+```
+working-directory: directory does not exist: "/usr/local/src/project/dsh-plugin"
+```
+
+这不是环境坏了，而是路径在 6.13 上不存在。当前验证方式是临时在 6.13 上建同名目录。
+
+**正确解法**（未实现）：每个环境维护自己的工作区列表，或会话绑定时校验路径属于该环境。
+在此之前，跨环境的会话必须使用两边都存在的路径，或逐次用「Edit path」指定。
