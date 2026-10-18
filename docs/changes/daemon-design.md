@@ -410,3 +410,47 @@ bundle 由 bun 产出 CJS，再注入 pkg。三处补丁缺一不可：
 arm64 是否需要？若需要，建议在真实 arm64 主机上先跑一次端到端
 （同 §9.2 的方法），确认 `--fallback-to-source` 产出的二进制可执行。
 本机只能验证到 `static-pie ARM aarch64` 这一层。
+
+## 14. 实现进度（第 1 轮）
+
+已落地并验证，`pkgs/daemon/`：
+
+| 能力 | 状态 | 证据 |
+|---|---|---|
+| 单入口 3080 + 登录 | ✅ | 未登录返回登录页；错误口令 401；正确口令下发会话 |
+| 前缀路由 + WS 隧道 | ✅ | `/t1/` 与 `/box1/` 的页面、资源、WebSocket 全部经前缀可用 |
+| cookie Path 作用域化 | ✅ | `dsh-auth-…; Path=/t1/`，profile 之间不串 |
+| portBase 56789+ 分配 | ✅ | 57000 起分配，注册表持久化 |
+| `/admin` 管理面 | ✅ | 状态、创建、启停、日志、SSH 探测、helper 预览 |
+| local profile 对话 | ✅ | 两轮对话 + 刷新恢复 |
+| **ssh profile 对话** | ✅ | 远端 bash 返回仅在远端存在的文件内容 |
+| helper 三级策略 | ✅ | `source: "build"`，daemon 自行构建 26 MB 静态二进制 |
+| 单元测试 | ✅ | 490 通过（daemon 28） |
+
+### 14.1 实现中发现的四个真实缺陷
+
+这些都只有真正运行才会暴露：
+
+1. **ssh profile 未声明 provider 包**
+   patch 里 `dsh-ssh` 等四行指向未安装的包 → 导入失败 → 依赖它的服务全部
+   `pending`。表现为 profile 起来了、能打开页面，但建不出会话。
+
+2. **省略的 ssh 端口被默认成 22**
+   命令行 `-p 22` 会覆盖 `ssh_config` 别名里的 `Port 2222`，报
+   `Permission denied (publickey,password)`——看起来像凭据问题，实际连错了端口。
+
+3. **admin 抛错会杀掉整个 daemon**
+   Node 对未处理的 promise rejection 默认终止进程。一个失败的部署会让所有
+   profile 一起不可达。现在统一答 500。
+
+4. **`working-directory` 用 insert 而非 override**
+   insert 新增了第二行，服务没被配置，presets 卡在 `waiting for workingDirectory`。
+
+### 14.2 仍未验证
+
+| 项 | 说明 |
+|---|---|
+| helper 自动部署到远端 | `deploy` 已实现但从 `/admin` 走完整流程未实测（远端已有 helper，走了跳过分支） |
+| arm64 | 交叉构建产物形态正确，无 arm64 主机可运行验证 |
+| 生产切换 | 尚未执行 |
+
