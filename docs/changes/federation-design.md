@@ -390,3 +390,37 @@ upgrade 会收到请求头帧后又收到其他帧，若 key 在某个 `response
 
 **一个教训**：这两行不能用 YAML 解析后再序列化往返——`off:` 会被写成 `false`，
 而 `reasoningEfforts` 的键名恰好是 `off`，导致 `ValidationError`。必须按原文复制。
+
+### 2026-10-19 追加：settings 写入为何失败
+
+**`dsh: profile reload requires the root Include entry` 与本设计无关。** 在**本机**用
+一个全新创建的最小 profile 复现了同一个错误，所以它不是联邦、不是 6.13、也不是
+pnpm 12 造成的。
+
+已确认的事实：
+
+- 精简 profile（`dsh-base` + `dsh-web-app`）在本机与 6.13 上都会报这个错
+- 生产 profile 能成功写入，说明差异在 profile 内容而非运行时
+- `settings/describe` 在两边都返回 `writable: true`、`hasDocument: true`、21 个命名空间
+- 报错来自 `dsh-app-boot/lib/index.js:3803` 的 `recompose()`：拿不到
+  `bootstrapIncludes.get(ctx)` 就抛错
+
+**绕过方式（已用于 6.13）**：UI 设置是写回 profile patch 的，所以直接把
+`ui-settings-general` 行预置进 `cordis.patch.yml`，避免应用内写入触发 reload：
+
+```yaml
+- id: ui-settings-general
+  name: "@deepseek-ai/dsh-client-ui-settings-general"
+  config:
+    welcomeNoticeVersion: 2026-09-28.1
+```
+
+预置后 6.13 的 `Preview Notice` 弹窗不再出现。
+
+### 一次造成生产不可用的操作（记录）
+
+在**生产**上用 RPC 直接调 `settings/mutate` 改 `welcomeNoticeVersion`，返回 `ok: true`，
+但随后 daemon 的 3080 监听消失、进程仍在、56789 正常。`systemctl restart dsh-web` 恢复。
+
+**教训**：settings 写入会触发 profile reload，而 reload 在本部署上不可靠。
+**不要在生产上用 RPC 直接触发它**，改配置就改文件 + 重启。
