@@ -309,7 +309,7 @@ export function apply(ctx, config) {
       const id = prepared.id
       const resolved = await resolveHost(sshHost, sshPort)
 
-      const clash = profiles.find((entry) => entry.sshHost === sshHost && entry.sshHelper === sshHelper && entry.id !== id)
+      const clash = profiles.find((entry) => entry.sshHost === sshHost && entry.sshHelper === sshHelper)
       if (clash !== undefined) {
         throw new Error(`daemon: helper ${sshHelper} on ${sshHost} is already used by environment "${clash.id}"`)
       }
@@ -333,40 +333,48 @@ export function apply(ctx, config) {
         publicKey: key.publicKey,
         id,
       })
-      const profile = await provision.createEnvironment({
+
+      // The ssh fragment must exist before the helper upload, because the upload goes
+      // through the alias and the alias is what carries the generated key.
+      const draftProfile = normalizeProfile({
         id,
         label: input.label ?? id,
-        // The resolved address: an alias written into HostName would be re-resolved by
-        // ssh as a hostname.
+        profile: `daemon-${id}`,
+        port: allocatePort(config.portBase, registry.usedPorts()),
+        workspace: input.workspace ?? '/root/workspace',
+        enabled: input.enabled === undefined ? true : input.enabled !== false,
         sshHost: resolved.host,
-        // The resolved port, not the operator's input: it may have come from an alias.
         sshPort: resolved.port,
         sshUser,
         sshHelper,
         sshHelperHash: input.sshHelperHash,
         sshKeyPath: key.keyPath,
+      })
+      await writeSshFragment({ sshConfigDir, alias, entry: draftProfile })
+
+      // Deploy before the profile is written: `dsh-ssh` verifies the digest it reads
+      // from the patch, so the patch must carry the real one. Writing a placeholder and
+      // patching it afterwards would leave a window where the environment starts against
+      // a digest that cannot match.
+      const deployed = await ssh.deploy({ ...draftProfile, sshHelperHash: input.sshHelperHash })
+      const realHash = deployed.sha256
+
+      const profile = await provision.createEnvironment({
+        id,
+        label: input.label ?? id,
+        sshHost: resolved.host,
+        sshPort: resolved.port,
+        sshUser,
+        sshHelper,
+        sshHelperHash: realHash,
+        sshKeyPath: key.keyPath,
         workspace: input.workspace,
         enabled: input.enabled,
         alias,
       })
-      // The helper upload runs over the alias just written, so it needs no password.
-      try {
-        const deployed = await ssh.deploy(profile)
-        if (deployed.sha256 !== profile.sshHelperHash) {
-          await registry.update(id, { sshHelperHash: deployed.sha256 })
-        }
-      } catch (error) {
-        // The environment exists and the operator can retry from the panel; failing the
-        // whole onboarding here would force re-entering the bootstrap credential.
-        logger.warn(`daemon: environment "${id}" created, helper deploy failed: ${error.message}`)
-      }
-      return registry.find(id) ?? profile
+      return profile
     },
 
-    /**
-     * Create one profile: allocate an id and port, write the directory, install
-     * its dependencies, and register it.
-     */
     async create(input) {
       return provision.confirm(input)
     },

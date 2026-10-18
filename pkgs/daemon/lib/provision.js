@@ -112,7 +112,9 @@ export function renderSshPatch(profile, { fragment = '' } = {}) {
             id: 'ssh',
             name: '@deepseek-ai/dsh-ssh',
             config: {
-              host: profile.sshHost,
+              // The ssh_config alias, not the address: only the alias carries the
+              // generated identity file and the port, and dsh-ssh passes no flags.
+              host: `dsh-${profile.id}`,
               ...(profile.sshNode === undefined
                 ? { launch: { kind: 'executable' } }
                 : { launch: { kind: 'node-script', node: profile.sshNode } }),
