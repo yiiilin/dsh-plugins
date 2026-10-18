@@ -497,3 +497,32 @@ function fakeRequest(payload) {
     },
   }
 }
+
+test('the passkey login endpoints are reachable without a session', async () => {
+  // The login page offers a passkey button; if these routes sat behind the
+  // session check the browser would loop on the login form instead.
+  const { createAuth } = await import('../lib/auth/gateway.js')
+  const { mkdtemp, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const dir = await mkdtemp(join(tmpdir(), 'daemon-pk-'))
+  try {
+    const auth = createAuth({ directory: dir, username: 'admin', password: 'pw', realm: 'x' })
+
+    // No passkey is registered yet, so options must say so rather than throw.
+    const missing = fakeResponse()
+    await auth.handle(fakeRequest('{}'), missing, '/api/auth.passkey.login.options', false)
+    assert.equal(missing.status, 404)
+
+    // An unknown challenge is refused, never accepted.
+    const verify = fakeResponse()
+    await auth.handle(
+      fakeRequest(JSON.stringify({ challenge: 'nope', response: { id: 'nope' } })),
+      verify,
+      '/api/auth.passkey.login.verify',
+      false,
+    )
+    assert.equal(verify.status, 401)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

@@ -102,6 +102,13 @@ export const Config = z.object({
   twoFactorEnabled: z.boolean().default(false),
   /** Base32 TOTP secret; required when two-factor is enabled. */
   totpSecret: z.string().default(''),
+  /**
+   * WebAuthn origin, e.g. `https://dsh.example.com`. Empty derives it from the
+   * request, which is wrong behind a TLS-terminating proxy.
+   */
+  passkeyOrigin: z.string().default(''),
+  /** WebAuthn RP ID. Empty follows the resolved origin's hostname. */
+  passkeyRpId: z.string().default(''),
   /** Absolute session lifetime. */
   sessionMaxAgeSeconds: z.natural().default(2_592_000),
   /** Idle timeout. */
@@ -300,6 +307,8 @@ export function apply(ctx, config) {
     totpSecret: config.totpSecret,
     sessionMaxAgeSeconds: config.sessionMaxAgeSeconds,
     sessionIdleSeconds: config.sessionIdleSeconds,
+    passkeyOrigin: config.passkeyOrigin,
+    passkeyRpId: config.passkeyRpId,
     logger,
   })
 

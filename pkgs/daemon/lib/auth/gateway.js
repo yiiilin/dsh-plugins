@@ -16,6 +16,10 @@
  */
 
 import { createHash, timingSafeEqual } from 'node:crypto'
+import {
+  generateAuthenticationOptions,
+  verifyAuthenticationResponse,
+} from '@simplewebauthn/server'
 import { loginErrorMessage, renderLoginPage, selectLoginLocale } from './login-page.js'
 import { PasskeyStore } from './passkey-store.js'
 import { SessionStore } from './session-store.js'
@@ -50,6 +54,8 @@ export function createAuth({
   totpSecret = '',
   sessionMaxAgeSeconds = 2_592_000,
   sessionIdleSeconds = 604_800,
+  passkeyOrigin = '',
+  passkeyRpId = '',
   logger,
 }) {
   const sessions = new SessionStore({
@@ -105,6 +111,14 @@ export function createAuth({
       res.end()
       return true
     }
+    if (path === '/api/auth.passkey.login.options') {
+      await passkeyOptions(req, res)
+      return true
+    }
+    if (path === '/api/auth.passkey.login.verify') {
+      await passkeyVerify(req, res, secure)
+      return true
+    }
     if (path === '/api/auth.state') {
       const record = session(req, secure)
       json(res, 200, {
@@ -117,6 +131,117 @@ export function createAuth({
       return true
     }
     return false
+  }
+
+  /**
+   * Resolve the WebAuthn origin and RP ID for a request.
+   *
+   * A passkey is bound to the origin the browser shows, so behind a proxy that
+   * terminates TLS the derived origin would be the wrong one. A configured
+   * `passkeyOrigin` therefore wins, and the RP ID follows it rather than the
+   * request's Host header.
+   */
+  function passkeyContext(req, secure) {
+    const host = String(req.headers.host ?? '')
+    if (host === '') throw new Error('a valid Host is required for passkeys')
+    const origin = passkeyOrigin !== ''
+      ? passkeyOrigin
+      : new URL(`${secure ? 'https' : 'http'}://${host}`).origin
+    const rpId = String(passkeyRpId === '' ? new URL(origin).hostname : passkeyRpId).trim()
+    if (rpId === '') throw new Error('passkey RP configuration is invalid')
+    return { origin, rpId }
+  }
+
+  async function passkeyOptions(req, res) {
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' }, { allow: 'POST' })
+      return
+    }
+    if (!passkeys.hasAny()) {
+      json(res, 404, { ok: false, error: 'No passkeys are registered' })
+      return
+    }
+    try {
+      const secure = isSecure(req)
+      const { origin, rpId } = passkeyContext(req, secure)
+      const options = await generateAuthenticationOptions({
+        rpID: rpId,
+        allowCredentials: passkeys.list().map((entry) => ({ id: entry.id, transports: entry.transports })),
+        userVerification: 'required',
+        timeout: 60_000,
+      })
+      passkeys.createChallenge({
+        purpose: 'login',
+        challenge: options.challenge,
+        rpId,
+        origin,
+        address: req.socket?.remoteAddress,
+      })
+      json(res, 200, { ok: true, challenge: options.challenge, options })
+    } catch (error) {
+      logger?.warn?.(`daemon: passkey options failed: ${error.message}`)
+      json(res, 400, { ok: false, error: error.message })
+    }
+  }
+
+  async function passkeyVerify(req, res, secure) {
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' }, { allow: 'POST' })
+      return
+    }
+    let body
+    try {
+      body = await readJson(req)
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid request body' })
+      return
+    }
+    const pending = passkeys.consumeChallenge(body.challenge, 'login', { address: req.socket?.remoteAddress })
+    const credentialId = body.response?.id
+    const credential = typeof credentialId === 'string' && pending !== null
+      ? passkeys.credential(credentialId)
+      : null
+    if (pending === null || credential === null) {
+      json(res, 401, { ok: false, error: 'Passkey verification failed' })
+      return
+    }
+    let verification
+    try {
+      verification = await verifyAuthenticationResponse({
+        response: body.response,
+        expectedChallenge: pending.challenge,
+        expectedOrigin: pending.origin,
+        expectedRPID: pending.rpId,
+        credential,
+        requireUserVerification: true,
+      })
+    } catch (error) {
+      // The browser only learns "failed"; the reason belongs in the log, because
+      // a mismatched origin and a stale counter are fixed in different places.
+      logger?.warn?.(`daemon: passkey verify threw for ${credentialId.slice(0, 12)} (origin=${pending.origin}): ${error.message}`)
+      json(res, 401, { ok: false, error: 'Passkey verification failed' })
+      return
+    }
+    if (!verification.verified) {
+      logger?.warn?.(`daemon: passkey refused for ${credentialId.slice(0, 12)} (origin=${pending.origin} rpId=${pending.rpId})`)
+      json(res, 401, { ok: false, error: 'Passkey verification failed' })
+      return
+    }
+    const info = verification.authenticationInfo
+    if (!passkeys.updateAuthentication(credentialId, info.newCounter, info.credentialDeviceType, info.credentialBackedUp)) {
+      json(res, 503, { ok: false, error: 'Passkey state could not be persisted' })
+      return
+    }
+    // A passkey proves identity on its own, so it mints a session without the
+    // password — which is what makes it the recovery path when the password is
+    // unusable.
+    const record = sessions.create({
+      username,
+      address: req.socket?.remoteAddress,
+      userAgent: req.headers['user-agent'],
+      secure,
+    })
+    json(res, 200, { ok: true, username }, { 'set-cookie': [sessionCookie(record, secure)] })
   }
 
   async function login(req, res, url, secure) {
@@ -188,6 +313,12 @@ export function createAuth({
       return renderLoginPage(realm, twoFactorEnabled, selectLoginLocale(req), req.url ?? '/', passkeys.hasAny())
     },
   }
+}
+
+function isSecure(req) {
+  if (req.socket?.encrypted === true) return true
+  const forwarded = req.headers['x-forwarded-proto']
+  return typeof forwarded === 'string' && forwarded.split(',')[0].trim() === 'https'
 }
 
 function json(res, status, body, headers = {}) {
