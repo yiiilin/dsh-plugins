@@ -338,3 +338,59 @@ test('a request and its response cross a real tunnel', async () => {
     tunnelServer.close()
   }
 })
+
+// --- inventory ---------------------------------------------------------------
+
+test('a skill description comes out of the frontmatter', async () => {
+  const { frontmatterDescription } = await import('../lib/inventory.js')
+  assert.equal(frontmatterDescription('---\ndescription: does a thing\n---\nbody'), 'does a thing')
+  assert.equal(frontmatterDescription('---\ndescription: "quoted"\n---\n'), 'quoted')
+  // No frontmatter, or no description in it, is not an error — the skill simply has none.
+  assert.equal(frontmatterDescription('# heading\n'), '')
+  assert.equal(frontmatterDescription('---\nname: x\n---\n'), '')
+})
+
+test('inventory reads a profile and its skills from disk', async () => {
+  // The edge answers this over the tunnel, so the shape has to be right before it is
+  // ever sent.
+  const { readInventory } = await import('../lib/inventory.js')
+  const home = await mkdtemp(join(tmpdir(), 'daemon-inv-'))
+  try {
+    const profileDir = join(home, 'profiles', 'demo')
+    await rm(profileDir, { recursive: true, force: true })
+    await (await import('node:fs/promises')).mkdir(profileDir, { recursive: true })
+    await writeFile(join(profileDir, 'package.json'), JSON.stringify({
+      dependencies: { '@deepseek-ai/dsh-base': '1.0.0', 'ws': '8.0.0' },
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] } },
+    }))
+    const skills = join(home, 'skills')
+    await (await import('node:fs/promises')).mkdir(join(skills, 'alpha'), { recursive: true })
+    await writeFile(join(skills, 'alpha', 'SKILL.md'), '---\ndescription: first\n---\n')
+    // A directory with no SKILL.md is not a skill and must not be listed.
+    await (await import('node:fs/promises')).mkdir(join(skills, 'notaskill'), { recursive: true })
+
+    const inventory = await readInventory({ homeDir: home, profile: 'demo', skillsRoot: skills, plugins: ['p1'] })
+    assert.equal(inventory.profile, 'demo')
+    assert.deepEqual(inventory.bundles, ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'])
+    assert.deepEqual(inventory.packages, ['@deepseek-ai/dsh-base', 'ws'])
+    assert.deepEqual(inventory.skills, [{ name: 'alpha', description: 'first' }])
+    assert.deepEqual(inventory.plugins, ['p1'])
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test('a missing profile reports empty lists rather than throwing', async () => {
+  // An inventory request must always answer: the caller is a remote node that cannot
+  // inspect this filesystem to find out why.
+  const { readInventory } = await import('../lib/inventory.js')
+  const inventory = await readInventory({
+    homeDir: '/nonexistent-daemon-test',
+    profile: 'absent',
+    skillsRoot: '/nonexistent-daemon-test/skills',
+    plugins: [],
+  })
+  assert.deepEqual(inventory.bundles, [])
+  assert.deepEqual(inventory.packages, [])
+  assert.deepEqual(inventory.skills, [])
+})

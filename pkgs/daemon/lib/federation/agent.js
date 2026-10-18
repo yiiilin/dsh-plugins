@@ -25,6 +25,7 @@ const BACKOFF_MS = [1000, 2000, 5000, 10_000, 20_000, 30_000, 60_000]
  * @param options.mainUrl - base URL of the main node, e.g. `https://dsh.yiln.de`.
  * @param options.token - this environment's token.
  * @param options.harnessPort - `() => number`, the local harness listener.
+ * @param options.daemonPort - `() => number`, this daemon's own listener.
  * @param options.harnessCookie - `() => Promise<string|undefined>`, the cookie this
  *   process holds for its own harness. The harness gates every path on a cookie derived
  *   from its own authority, which the main node's browser can never present — so the
@@ -33,7 +34,7 @@ const BACKOFF_MS = [1000, 2000, 5000, 10_000, 20_000, 30_000, 60_000]
  * @param options.logger - logger.
  * @returns `{ start, stop, connected }`.
  */
-export function createTunnelAgent({ mainUrl, token, harnessPort, harnessCookie, logger }) {
+export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, harnessCookie, logger }) {
   let socket
   let reader
   let stopped = false
@@ -188,13 +189,16 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, harnessCookie, 
 
     const prepared = await rewriteHeaders(head.headers)
     let response
-    const check = httpRequest({
-      host: '127.0.0.1',
-      port: harnessPort(),
-      method: head.method,
-      path: head.path,
-      headers: prepared,
-    }, (answer) => {
+      const daemonOwned = head.path === '/admin' || head.path.startsWith('/admin/')
+      const check = httpRequest({
+        host: '127.0.0.1',
+        port: daemonOwned ? daemonPort() : harnessPort(),
+        method: head.method,
+        path: head.path,
+        headers: daemonOwned
+          ? { ...head.headers, host: `127.0.0.1:${daemonPort()}`, 'x-dsh-federation': token }
+          : prepared,
+      }, (answer) => {
       response = answer
       sendOrClose(encodeJsonFrame(FRAME.responseHead, id, {
         status: answer.statusCode ?? 502,

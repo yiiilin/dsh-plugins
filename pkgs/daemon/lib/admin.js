@@ -14,7 +14,7 @@ import { deriveId, freshToken, normalizeEnvironment } from './registry.js'
 /** How long a tunnel status stays cached, so a panel refresh is not a probe storm. */
 const STATUS_TTL_MS = 5_000
 
-export function createAdmin({ registry, hub, config, profileSelf, logger }) {
+export function createAdmin({ registry, hub, config, profileSelf, inventory, logger }) {
   /** id -> `{ at, value }` for the last known connection state. */
   const statusCache = new Map()
 
@@ -73,6 +73,11 @@ export function createAdmin({ registry, hub, config, profileSelf, logger }) {
         self: profileSelf === undefined ? undefined : profileSelf(),
         environments: config.role === 'main' ? registry.list().map(describe) : [],
       })
+      return true
+    }
+
+    if (pathname === '/admin/inventory' && method === 'GET') {
+      json(res, 200, { ok: true, inventory: await inventory() })
       return true
     }
 
@@ -136,6 +141,23 @@ export function createAdmin({ registry, hub, config, profileSelf, logger }) {
       return true
     }
 
+    const remote = /^\/admin\/environments\/([a-z][a-z0-9-]{0,31})\/inventory$/u.exec(pathname)
+    if (remote !== null && method === 'GET') {
+      const id = remote[1]
+      if (registry.find(id) === undefined) {
+        json(res, 404, { ok: false, error: `unknown environment "${id}"` })
+        return true
+      }
+      if (!hub.isOnline(id)) {
+        json(res, 503, { ok: false, error: `environment "${id}" is offline` })
+        return true
+      }
+      // The edge's own daemon answers this, over the tunnel: only it knows its layout.
+      const answer = await askInventory(hub, id)
+      json(res, answer.ok ? 200 : 502, answer)
+      return true
+    }
+
     const rotate = /^\/admin\/environments\/([a-z][a-z0-9-]{0,31})\/token$/u.exec(pathname)
     if (rotate !== null && method === 'POST') {
       const id = rotate[1]
@@ -154,6 +176,50 @@ export function createAdmin({ registry, hub, config, profileSelf, logger }) {
     json(res, 404, { ok: false, error: `no such route: ${pathname}` })
     return true
   }
+}
+
+/**
+ * Ask an environment's own daemon for its inventory.
+ *
+ * A plain HTTP request into the tunnel rather than a bespoke frame type: the tunnel
+ * already carries HTTP, and adding a second protocol for one call would be a second
+ * thing to keep in sync. `/admin/inventory` is daemon-owned on the edge, so the request
+ * never reaches the edge's harness or its login.
+ *
+ * @returns `{ ok: true, inventory }` or `{ ok: false, error }`.
+ */
+function askInventory(hub, envId) {
+  return new Promise((resolve) => {
+    const settled = { done: false }
+    const finish = (value) => {
+      if (settled.done) return
+      settled.done = true
+      resolve(value)
+    }
+    const timer = setTimeout(() => finish({ ok: false, error: 'the environment did not answer in time' }), 15_000)
+    try {
+      hub.request(envId, { method: 'GET', path: '/admin/inventory', headers: {} }, {
+        onBody(chunk) {
+          settled.body = (settled.body ?? '') + chunk.toString('utf8')
+        },
+        onEnd() {
+          clearTimeout(timer)
+          try {
+            finish(JSON.parse(settled.body ?? '{}'))
+          } catch {
+            finish({ ok: false, error: 'the environment answered something that is not JSON' })
+          }
+        },
+        onError(error) {
+          clearTimeout(timer)
+          finish({ ok: false, error: String(error?.message ?? error) })
+        },
+      })
+    } catch (error) {
+      clearTimeout(timer)
+      finish({ ok: false, error: String(error?.message ?? error) })
+    }
+  })
 }
 
 function json(res, status, value) {

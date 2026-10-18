@@ -256,6 +256,43 @@ export function createTunnelHub({ verifyToken, logger }) {
     return true
   }
 
+  /**
+   * Send one request into an edge without a browser on the other end.
+   *
+   * Same frames as `proxy`, but the caller supplies handlers instead of a response
+   * object — used by the main node to ask an environment about itself.
+   *
+   * @param envId - the environment to reach.
+   * @param request - `{ method, path, headers }`.
+   * @param handlers - `{ onBody, onEnd, onError }`.
+   * @returns whether the request could be sent.
+   */
+  function request(envId, req, handlers) {
+    const record = connections.get(envId)
+    if (record === undefined) return false
+    const id = newRequestId()
+    const key = id.toString('hex')
+    record.pending.set(key, {
+      onHead() {},
+      onBody(payload) {
+        handlers.onBody(payload)
+      },
+      onEnd() {
+        handlers.onEnd()
+      },
+      onClose() {
+        handlers.onError?.(new Error('the tunnel closed before the environment answered'))
+      },
+    })
+    record.socket.send(encodeJsonFrame(FRAME.requestHead, id, {
+      method: req.method,
+      path: req.path,
+      headers: req.headers,
+    }))
+    record.socket.send(encodeFrame(FRAME.requestEnd, id))
+    return true
+  }
+
   /** Whether an environment currently has a live connection. */
   function isOnline(envId) {
     return connections.has(envId)
@@ -277,7 +314,7 @@ export function createTunnelHub({ verifyToken, logger }) {
     return token === '' ? undefined : verifyToken(token)
   }
 
-  return { accept: register, verify, proxy, proxyUpgrade, isOnline, ids, close }
+  return { accept: register, verify, proxy, proxyUpgrade, request, isOnline, ids, close }
 }
 
 /**

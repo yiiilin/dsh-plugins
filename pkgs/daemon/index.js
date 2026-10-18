@@ -27,6 +27,7 @@ import { createAuth } from './lib/auth/gateway.js'
 import { startEntry } from './lib/entry.js'
 import { createTunnelAgent } from './lib/federation/agent.js'
 import { createTunnelHub, createTunnelServer, tokenOf, TUNNEL_PATH } from './lib/federation/hub.js'
+import { defaultSkillsRoot, readInventory } from './lib/inventory.js'
 import { parseRegistry, serializeRegistry } from './lib/registry.js'
 
 export const name = 'daemon'
@@ -48,6 +49,8 @@ export const Config = z.object({
   token: z.string().default(''),
 
   registryPath: z.string().default(''),
+  /** Profile this process serves. Empty reads DSH_PROFILE, then `main`. */
+  profile: z.string().default(''),
   homeDir: z.string().default(''),
   cacheDir: z.string().default(''),
 
@@ -196,6 +199,14 @@ export function apply(ctx, config) {
    */
   const local = async (req, res, url) => {
     const secure = isSecure(req)
+    // Requests arriving over the tunnel were authenticated when the edge connected, and
+    // only the main node can put frames on that connection. Requiring a browser session
+    // here would make the main node's own inventory call fail.
+    const proof = req.headers['x-dsh-federation']
+    if (proof !== undefined && config.token !== '' && proof === config.token) {
+      const path = url.split('?')[0]
+      if (path === '/admin' || path.startsWith('/admin/')) return await admin(req, res, url)
+    }
     if (await auth.handle(req, res, url, secure)) return true
     if (!loaded) {
       res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8' })
@@ -290,11 +301,25 @@ export function apply(ctx, config) {
     },
   }
 
+  // Which profile this process serves decides where its composition lives.
+  const profileName = config.profile === ''
+    ? process.env.DSH_PROFILE ?? 'main'
+    : config.profile
+  const inventory = () => readInventory({
+    homeDir,
+    profile: profileName,
+    skillsRoot: defaultSkillsRoot(process.env.HOME ?? '/root'),
+    // Not `ctx.registry.keys()`: those are fiber keys, not plugin names. The mounted set
+    // is the profile's bundles, which `readInventory` already returns.
+    plugins: [],
+  })
+
   const admin = createAdmin({
     registry,
     hub,
     config: { ...config, cacheDir },
     profileSelf: selfInfo,
+    inventory,
     logger,
   })
 
@@ -309,6 +334,8 @@ export function apply(ctx, config) {
       mainUrl: config.mainUrl,
       token: config.token,
       harnessPort: () => embeddedRoot.portOrZero(),
+      // `/admin` belongs to this process; the tunnel forwards it here, not to the harness.
+      daemonPort: () => config.port,
       // The edge's own harness session, minted the same way the main node mints one for
       // its root profile.
       harnessCookie: async () => {
