@@ -263,7 +263,7 @@ export function createTunnelHub({ verifyToken, logger }) {
    * object — used by the main node to ask an environment about itself.
    *
    * @param envId - the environment to reach.
-   * @param request - `{ method, path, headers }`.
+   * @param request - `{ method, path, headers, body? }`; a body is sent as one frame.
    * @param handlers - `{ onBody, onEnd, onError }`.
    * @returns whether the request could be sent.
    */
@@ -289,6 +289,9 @@ export function createTunnelHub({ verifyToken, logger }) {
       path: req.path,
       headers: req.headers,
     }))
+    if (req.body !== undefined && req.body !== '') {
+      record.socket.send(encodeFrame(FRAME.requestBody, id, Buffer.from(req.body, 'utf8')))
+    }
     record.socket.send(encodeFrame(FRAME.requestEnd, id))
     return true
   }

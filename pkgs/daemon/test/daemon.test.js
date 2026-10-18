@@ -394,3 +394,90 @@ test('a missing profile reports empty lists rather than throwing', async () => {
   assert.deepEqual(inventory.packages, [])
   assert.deepEqual(inventory.skills, [])
 })
+
+// --- model configuration -----------------------------------------------------
+
+test('model rows are extracted without YAML round-tripping', async () => {
+  // The reason this is line-based: a YAML round trip rewrites the key `off` to `false`,
+  // and `reasoningEfforts` uses `off` as a key, so the config is then rejected.
+  const { extractModelRows } = await import('../lib/model-config.js')
+  const patch = [
+    '- id: something-else',
+    '  config:',
+    '    a: 1',
+    '- id: agent-default-model',
+    '  name: "@deepseek-ai/dsh-agent-default-model"',
+    '  config:',
+    '    provider: p',
+    '    model: m',
+    '- id: llm-pi-ai',
+    '  config:',
+    '    providers:',
+    '      p:',
+    '        reasoningEfforts:',
+    '          off: null',
+    '- id: after',
+  ].join('\n')
+  const rows = extractModelRows(patch)
+  assert.match(rows, /agent-default-model/u)
+  assert.match(rows, /llm-pi-ai/u)
+  assert.match(rows, /off: null/u, 'the key off survives')
+  assert.ok(!rows.includes('after'), 'unrelated rows are not included')
+  assert.ok(!rows.includes('something-else'))
+})
+
+test('replacing model rows leaves every other row alone', async () => {
+  const { extractModelRows, replaceModelRows } = await import('../lib/model-config.js')
+  const patch = [
+    '- id: keep-before',
+    '  config:',
+    '    x: 1',
+    '- id: llm-pi-ai',
+    '  config:',
+    '    providers:',
+    '      old:',
+    '        k: v',
+    '- id: keep-after',
+    '  config:',
+    '    y: 2',
+  ].join('\n')
+  const rows = [
+    '- id: agent-default-model',
+    '  config:',
+    '    provider: new',
+  ].join('\n')
+  const result = replaceModelRows(patch, rows)
+  assert.match(result, /keep-before/u)
+  assert.match(result, /keep-after/u)
+  assert.ok(!result.includes('old:'), 'the previous model row is gone')
+  assert.equal(extractModelRows(result), rows.trim())
+})
+
+test('a summary reports whether a key exists without exposing it', async () => {
+  const { summarizeModelRows } = await import('../lib/model-config.js')
+  const rows = [
+    '- id: agent-default-model',
+    '  config:',
+    '    provider: p',
+    '    model: m',
+    '    reasoningEffort: high',
+    '- id: llm-pi-ai',
+    '  config:',
+    '    providers:',
+    '      p:',
+    '        apiKeyEnv: SOME_KEY',
+    '        baseURL: https://example.test/v1',
+  ].join('\n')
+  const withKey = summarizeModelRows(rows, true)
+  assert.equal(withKey.provider, 'p')
+  assert.equal(withKey.model, 'm')
+  assert.equal(withKey.reasoningEffort, 'high')
+  assert.equal(withKey.apiKeyEnv, 'SOME_KEY')
+  assert.equal(withKey.hasApiKey, true)
+  assert.equal(withKey.configured, true)
+  // The summary names the variable and nothing more.
+  assert.ok(!JSON.stringify(withKey).includes('secret'))
+  assert.equal(summarizeModelRows(rows, false).hasApiKey, false)
+  // A node with no model config says so rather than reporting half a config.
+  assert.equal(summarizeModelRows('', false).configured, false)
+})

@@ -14,7 +14,9 @@ import { deriveId, freshToken, normalizeEnvironment } from './registry.js'
 /** How long a tunnel status stays cached, so a panel refresh is not a probe storm. */
 const STATUS_TTL_MS = 5_000
 
-export function createAdmin({ registry, hub, config, profileSelf, inventory, logger }) {
+export function createAdmin({
+  registry, hub, config, profileSelf, inventory, readModel, readModelRows, writeModel, logger,
+}) {
   /** id -> `{ at, value }` for the last known connection state. */
   const statusCache = new Map()
 
@@ -73,6 +75,22 @@ export function createAdmin({ registry, hub, config, profileSelf, inventory, log
         self: profileSelf === undefined ? undefined : profileSelf(),
         environments: config.role === 'main' ? registry.list().map(describe) : [],
       })
+      return true
+    }
+
+    if (pathname === '/admin/model' && method === 'GET') {
+      json(res, 200, { ok: true, model: await readModel() })
+      return true
+    }
+
+    if (pathname === '/admin/model' && method === 'POST') {
+      const body = await readJson(req)
+      if (typeof body.rows !== 'string' || body.rows.trim() === '') {
+        json(res, 400, { ok: false, error: 'rows is required' })
+        return true
+      }
+      const result = await writeModel(body.rows, { syncCredentials: body.syncCredentials === true, credentials: body.credentials })
+      json(res, result.ok ? 200 : 500, result)
       return true
     }
 
@@ -158,6 +176,44 @@ export function createAdmin({ registry, hub, config, profileSelf, inventory, log
       return true
     }
 
+    const remoteModel = /^\/admin\/environments\/([a-z][a-z0-9-]{0,31})\/model$/u.exec(pathname)
+    if (remoteModel !== null) {
+      const id = remoteModel[1]
+      if (registry.find(id) === undefined) {
+        json(res, 404, { ok: false, error: `unknown environment "${id}"` })
+        return true
+      }
+      if (!hub.isOnline(id)) {
+        json(res, 503, { ok: false, error: `environment "${id}" is offline` })
+        return true
+      }
+      if (method === 'GET') {
+        const answer = await relay(hub, id, { method: 'GET', path: '/admin/model', headers: {} })
+        json(res, answer.ok ? 200 : 502, answer)
+        return true
+      }
+      if (method === 'POST') {
+        const body = await readJson(req)
+        // `push: true` means "send this node's own model rows"; anything else carries its
+        // own `rows`, which lets a caller send a config that exists nowhere yet.
+        const rows = body.push === true ? await readModelRows() : body.rows
+        if (typeof rows !== 'string' || rows.trim() === '') {
+          json(res, 400, { ok: false, error: 'rows is required, or pass push: true' })
+          return true
+        }
+        const answer = await relay(hub, id, {
+          method: 'POST',
+          path: '/admin/model',
+          headers: { 'content-type': 'application/json' },
+          body: { rows, syncCredentials: body.syncCredentials === true },
+        })
+        json(res, answer.ok ? 200 : 502, answer)
+        return true
+      }
+      json(res, 405, { ok: false, error: `${method} is not supported here` })
+      return true
+    }
+
     const rotate = /^\/admin\/environments\/([a-z][a-z0-9-]{0,31})\/token$/u.exec(pathname)
     if (rotate !== null && method === 'POST') {
       const id = rotate[1]
@@ -189,23 +245,45 @@ export function createAdmin({ registry, hub, config, profileSelf, inventory, log
  * @returns `{ ok: true, inventory }` or `{ ok: false, error }`.
  */
 function askInventory(hub, envId) {
+  return relay(hub, envId, { method: 'GET', path: '/admin/inventory', headers: {} }).then((answer) => (
+    answer.ok ? answer : { ok: false, error: answer.error }
+  ))
+}
+
+/**
+ * Make one request into an environment over its tunnel.
+ *
+ * A plain HTTP request rather than a bespoke frame type: the tunnel already carries HTTP,
+ * and a second protocol for internal calls would be a second thing to keep in sync.
+ *
+ * @param hub - the tunnel hub.
+ * @param envId - the environment to reach.
+ * @param request - `{ method, path, headers, body? }`; a body is JSON-encoded.
+ * @returns the parsed JSON answer, or `{ ok: false, error }`.
+ */
+function relay(hub, envId, request) {
   return new Promise((resolve) => {
-    const settled = { done: false }
+    const settled = { done: false, body: '' }
     const finish = (value) => {
       if (settled.done) return
       settled.done = true
       resolve(value)
     }
-    const timer = setTimeout(() => finish({ ok: false, error: 'the environment did not answer in time' }), 15_000)
+    const timer = setTimeout(() => finish({ ok: false, error: 'the environment did not answer in time' }), 30_000)
     try {
-      hub.request(envId, { method: 'GET', path: '/admin/inventory', headers: {} }, {
+      hub.request(envId, {
+        method: request.method,
+        path: request.path,
+        headers: { ...request.headers, 'x-dsh-federation': request.token ?? '' },
+        body: request.body === undefined ? undefined : JSON.stringify(request.body),
+      }, {
         onBody(chunk) {
-          settled.body = (settled.body ?? '') + chunk.toString('utf8')
+          settled.body += chunk.toString('utf8')
         },
         onEnd() {
           clearTimeout(timer)
           try {
-            finish(JSON.parse(settled.body ?? '{}'))
+            finish(JSON.parse(settled.body === '' ? '{}' : settled.body))
           } catch {
             finish({ ok: false, error: 'the environment answered something that is not JSON' })
           }

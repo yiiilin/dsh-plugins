@@ -452,3 +452,37 @@ pnpm 12 造成的。
 - 模型配置的同步与编辑做成功能（第 5 步）：手工验证过链路，未固化为界面
 - `dsh: profile reload requires the root Include entry` 的根因：已确认与本设计无关
   （本机全新 profile 同样失败），但未找到成因
+
+### 2026-10-19：模型配置的读取、同步与编辑已实现
+
+三个端点，两端各有一份（主端额外提供按环境转发）：
+
+| 端点 | 作用 |
+| --- | --- |
+| `GET /admin/model` | 本节的模型配置摘要：provider、model、effort、baseURL、api、密钥是否存在 |
+| `POST /admin/model` | 用给定的 `rows` 替换本节的模型行，先备份原 patch |
+| `GET/POST /admin/environments/<id>/model` | 主端转发到该环境；POST 时 `push: true` 表示「把本节的模型行推过去」 |
+
+**关键实现约束**：全部按行处理，从不经过 YAML 解析再序列化。理由是实测过的——
+YAML 往返会把键名 `off` 改写成 `false`，而 `reasoningEfforts` 恰好用 `off` 作键，
+于是配置被 schema 拒绝（`ValidationError`）。
+
+**密钥不随配置传输**。`GET /admin/model` 只报告 `hasApiKey: true/false`，从不读取值。
+一个环境有模型但没密钥时会在第一条消息上失败，面板上能看出这是缺密钥而不是别的问题。
+
+**写入先备份**：`cordis.patch.yml.bak-model-<ts>`。模型配置写坏了会让 harness 起不来，
+而唯一能回去的地方就是那份备份。
+
+**验证证据**：
+
+```
+主端读取       provider=sub2api-gpt model=deepseek-v4.1-flash-free effort=high hasApiKey=true
+跨隧道读取 6.13  同上
+推送 push:true   成功，备份 cordis.patch.yml.bak-model-1792366273274
+6.13 重启后      激活失败 0，off: null 保留 6 处、false 键 0 处
+6.13 界面        deepseek-v4.1-flash-free / High 可选
+6.13 对话        问「只回答该文件内容」，答 SIX13_FILE_MARKER
+```
+
+**需要重启才生效**：写入只改文件，不触发 reload。响应里的 `note` 明确说明这一点，
+因为 reload 在这套部署上不可靠（见上文的 `requires the root Include entry`）。

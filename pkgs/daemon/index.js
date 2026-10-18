@@ -28,6 +28,11 @@ import { startEntry } from './lib/entry.js'
 import { createTunnelAgent } from './lib/federation/agent.js'
 import { createTunnelHub, createTunnelServer, tokenOf, TUNNEL_PATH } from './lib/federation/hub.js'
 import { defaultSkillsRoot, readInventory } from './lib/inventory.js'
+import {
+  extractModelRows,
+  replaceModelRows,
+  summarizeModelRows,
+} from './lib/model-config.js'
 import { parseRegistry, serializeRegistry } from './lib/registry.js'
 
 export const name = 'daemon'
@@ -314,12 +319,62 @@ export function apply(ctx, config) {
     plugins: [],
   })
 
+  const patchPath = join(homeDir, 'profiles', profileName, 'cordis.patch.yml')
+  const credentialsPath = join(homeDir, '.credentials.yaml')
+
+  /** Read this node's model configuration, summarized for display. */
+  const readModel = async () => {
+    let patch = ''
+    try {
+      patch = await readFile(patchPath, 'utf8')
+    } catch {
+      return summarizeModelRows('', false)
+    }
+    const rows = extractModelRows(patch)
+    const hasKey = await keyPresent(credentialsPath, rows)
+    return summarizeModelRows(rows, hasKey)
+  }
+
+  /** The model rows verbatim, for pushing to another node. */
+  const readModelRows = async () => extractModelRows(await readFile(patchPath, 'utf8'))
+
+  /**
+   * Replace this node's model configuration.
+   *
+   * The existing patch is copied aside first: a model config that stops the harness from
+   * booting is a state the operator has to be able to leave, and the only way back is the
+   * file that worked.
+   */
+  const writeModel = async (rows, { syncCredentials = false } = {}) => {
+    try {
+      const patch = await readFile(patchPath, 'utf8')
+      const backup = `${patchPath}.bak-model-${Date.now()}`
+      await writeFile(backup, patch, { mode: 0o600 })
+      await writeFile(patchPath, replaceModelRows(patch, rows), { mode: 0o600 })
+      const written = summarizeModelRows(extractModelRows(rows), await keyPresent(credentialsPath, rows))
+      return {
+        ok: true,
+        model: written,
+        backup,
+        // Stated rather than implied: a reload is needed for the new provider to take
+        // effect, and this deployment cannot reload in place.
+        note: 'restart this environment for the new configuration to take effect',
+        credentialsSynced: syncCredentials,
+      }
+    } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) }
+    }
+  }
+
   const admin = createAdmin({
     registry,
     hub,
     config: { ...config, cacheDir },
     profileSelf: selfInfo,
     inventory,
+    readModel,
+    readModelRows,
+    writeModel,
     logger,
   })
 
@@ -401,6 +456,24 @@ export function apply(ctx, config) {
       entry = undefined
     }
   })
+}
+
+/**
+ * Whether the key a model configuration references actually exists.
+ *
+ * Checked without ever reading the value: the panel needs to say 'this environment has no
+ * key' so a remote failure is attributable, and a secret has no business crossing that
+ * boundary.
+ */
+async function keyPresent(credentialsPath, rows) {
+  const name = /^\s*apiKeyEnv:\s*(\S+)$/mu.exec(rows)?.[1]?.replace(/^['"]|['"]$/gu, '')
+  if (name === undefined || name === '') return false
+  try {
+    const text = await readFile(credentialsPath, 'utf8')
+    return new RegExp(`^\\s+${name}:\\s*\\S`, 'mu').test(text)
+  } catch {
+    return false
+  }
 }
 
 /** Paths reachable without a session: the login exchange itself. */
