@@ -485,3 +485,40 @@ rootProfile: main     # 这个 profile 接管所有无前缀的路径
 
 于是生产迁移不再改 URL：`https://dsh.yiln.de/` 保持不变。
 
+### 14.5 迁移形态（已在生产副本上验证）
+
+daemon 不能住在被它代理的 profile 里（否则收养自己会递归），所以：
+
+```
+systemd  →  dsh --profile edge --port <spare>     ← daemon 宿主，自身 web-app 闲置
+              └─ daemon 0.0.0.0:3080
+                   ├─ /portal, /admin            归 daemon
+                   └─ /, /api                    → 收养的 web profile (127.0.0.1:57600)
+```
+
+「闲置」不精确：edge 自己的 web-app 仍监听 loopback，无害，但可以在不需要时
+从 bundles 里移除 web-app。
+
+用**生产 profile 的完整副本**验证过：25 个会话全部加载、`yiln-company` preset
+可用、模型可用、中文 UI 正常、对话跑通（`EDGE_ROOT_OK`）、控制台零错误。
+
+### 14.6 迁移的真正阻塞：生产没有密码
+
+查证过程：`cordis.patch.yml` 里 `webserver-auth` 的 `password` 是空串，
+`settings.yaml` 不存在，`.credentials.yaml` 只有模型 key，systemd 单元没有
+`DSH_AUTH_PASS`。
+
+而 auth-webserver 的判定是：
+
+```js
+const passwordValid = Boolean(pass) && safeEqual(submittedUser, user) && safeEqual(submittedPass, pass)
+```
+
+`Boolean("")` 为假 → **任何登录都失败**。实测空密码与错误密码都返回 401。
+
+也就是说生产现在是「登录页存在但无人能通过」，唯一进入方式是浏览器里既有的
+会话 cookie。迁移到 daemon 会换掉 cookie 名与会话库，**直接锁死**。
+
+因此迁移前必须先设定一个密码（`config.password` 或 `DSH_AUTH_PASS`）。
+daemon 已在启动时对空密码发出显式告警。
+
