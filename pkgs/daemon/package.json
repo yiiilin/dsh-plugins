@@ -1,0 +1,48 @@
+{
+  "name": "@yiln-dsh/dsh-daemon",
+  "version": "0.2.1",
+  "private": false,
+  "type": "module",
+  "license": "MIT",
+  "description": "Single entry, authentication, profile routing and SSH deployment for a DeepSeek Harness host",
+  "files": [
+    "client.js",
+    "index.js",
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "!**/test/"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./build-helper": "./lib/helper-build.js"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-ssh": "0.2.1-rc.2",
+    "@simplewebauthn/server": "13.3.3",
+    "js-yaml": "4.3.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "external": [
+        "react",
+        "react-dom",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ],
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-plugins"
+      ]
+    }
+  },
+  "main": "index.js"
+}

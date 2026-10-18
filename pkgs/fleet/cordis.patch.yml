@@ -5,7 +5,7 @@
       name: '@yiln-dsh/dsh-fleet'
       config:
         gatewayPort: 8090
-        gatewayHost: 0.0.0.0
+        gatewayHost: 127.0.0.1
         registryPath: !!js dshHomePath('fleet/boxes.json')
         homeDir: !!js dshHomePath()
         binPath: dsh

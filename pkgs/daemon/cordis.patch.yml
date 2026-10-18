@@ -1,0 +1,28 @@
+# One Loader layer for this package. Installed standalone from GitHub;
+# `dsh plugin --profile <p> add github:<owner>/<repo>#path:/pkgs/daemon`.
+- insert:
+    - id: daemon
+      name: '@yiln-dsh/dsh-daemon'
+      config:
+        # The only public listener. TLS is terminated by an external proxy.
+        host: 0.0.0.0
+        port: 3080
+        # Profile processes listen here, one port each, allocated upward.
+        portBase: 56789
+        # Registry of the profiles this daemon starts and routes.
+        registryPath: !!js dshHomePath('daemon/profiles.json')
+        homeDir: !!js dshHomePath()
+        # Helper artifact cache; a missing artifact is built or downloaded.
+        cacheDir: !!js dshHomePath('daemon/cache')
+        # Download template used only when a local build is impossible.
+        helperDownloadUrl: 'https://dsh.yiln.de/daemon/helper-<version>-<arch>.gz'
+        # Bundle layers every generated profile mounts.
+        profileBundles:
+          - '@deepseek-ai/dsh-base'
+          - '@deepseek-ai/dsh-web-app'
+          - '@local/yiln-agent-preset'
+        harnessVersion: 0.2.1-rc.2
+        # Start enabled profiles when the daemon boots.
+        autostart: true
+        # Seconds a profile has to answer its port after spawn.
+        readyMs: 90000

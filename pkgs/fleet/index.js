@@ -65,7 +65,7 @@ export const Config = z.object({
   /** Gateway listener port on the fleet host. */
   gatewayPort: z.natural().max(65535).default(8090),
   /** Gateway listener bind address. */
-  gatewayHost: z.string().default('0.0.0.0'),
+  gatewayHost: z.string().default('127.0.0.1'),
   /** Absolute path to the fleet registry JSON. */
   registryPath: z.string(),
   /** Absolute `$DSH_HOME` shared by every box process. */
