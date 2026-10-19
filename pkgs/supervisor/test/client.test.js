@@ -47,8 +47,8 @@ function applyClient() {
 
 test("the Settings card carries the start command copy in both locales", () => {
   const { locales } = applyClient();
-  const entry = locales.find(([ns]) => ns === "web-daemon");
-  assert.ok(entry !== undefined, "the web-daemon locale namespace is registered");
+  const entry = locales.find(([ns]) => ns === "supervisor");
+  assert.ok(entry !== undefined, "the supervisor locale namespace is registered");
   const [, dicts] = entry;
   for (const language of ["zh", "en"]) {
     for (const key of ["startCommand", "startCommand.hint"]) {

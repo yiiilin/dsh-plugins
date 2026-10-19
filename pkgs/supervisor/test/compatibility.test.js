@@ -9,7 +9,7 @@ const PATCH_SOURCE = readFileSync(new URL("../cordis.patch.yml", import.meta.url
 const GATE_SOURCE = readFileSync(new URL("../lib/recovery-gate.js", import.meta.url), "utf8");
 
 test("uses RC1 settings and recovery controller names", () => {
-  assert.match(HOST_SOURCE, /const NS = "web-daemon"/u);
+  assert.match(HOST_SOURCE, /const NS = "supervisor"/u);
   assert.match(GATE_SOURCE, /sessionController: \[/u);
   assert.match(GATE_SOURCE, /agentPresets: \["remoteExportList", "select"\]/u);
   assert.match(GATE_SOURCE, /subagents: \["listChildren", "prompt", "interruptByParent"\]/u);
@@ -20,7 +20,7 @@ test("uses RC1 settings and recovery controller names", () => {
 });
 
 test("injects Agents so the worker can persist running sessions", () => {
-  const start = PATCH_SOURCE.indexOf("- id: web-daemon");
+  const start = PATCH_SOURCE.indexOf("- id: supervisor");
   assert.notEqual(start, -1, "the Web Daemon Host row exists");
   const nextRow = PATCH_SOURCE.indexOf("\n- id:", start + 1);
   const row = PATCH_SOURCE.slice(start, nextRow === -1 ? undefined : nextRow);
@@ -35,7 +35,7 @@ test("supports alpha profile SettingsForms with volatile row config", () => {
 });
 test("registers the server status panel through the official sidebar footer slot", () => {
   assert.match(CLIENT_SOURCE, /sidebar\.footer\.action/u);
-  assert.match(CLIENT_SOURCE, /id: "web-daemon-server-status"/u);
+  assert.match(CLIENT_SOURCE, /id: "supervisor-server-status"/u);
   assert.doesNotMatch(CLIENT_SOURCE, /sidebar\.server\.status/u);
 });
 

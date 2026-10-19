@@ -1,5 +1,5 @@
 /**
- * dsh-plugin-web-daemon
+ * dsh-supervisor
  *
  * Host half of the Web daemon plugin. It manages the `dsh web` worker as a
  * real systemd unit: generates the unit file, maps the GUI buttons onto
@@ -39,19 +39,23 @@ import {
   storedChildRecord,
 } from "./lib/subagent-recovery.js";
 
-export const name = "web-daemon";
+export const name = "supervisor";
 export const inject = ["webServer", "settings"];
 
-const NS = "web-daemon";
+const NS = "supervisor";
 const WORKER_FLAG = "DSH_WEB_DAEMON_WORKER";
+// The plugin is `supervisor`; this route keeps its old name on purpose. A route is a wire
+// contract — a cached client bundle, a bookmark or another plugin in this suite would
+// break — and renaming it buys the operator nothing they can see. Only the identity
+// changed: package, row id, locale namespace and the state directory.
 const API_PREFIX = "/_dsh/web-daemon";
-const SESSION_REGISTRY_DIR = ["plugins", "dsh-plugin-web-daemon"];
+const SESSION_REGISTRY_DIR = ["plugins", "dsh-plugin-supervisor"];
 const SESSION_REGISTRY_FILE = "active-sessions.json";
 const SESSION_REGISTRY_LOCK_FILE = "active-sessions.lock";
 const SESSION_REGISTRY_DIAG_FILE = "recovery-diagnostics.json";
 const SESSION_REGISTRY_VERSION = 1;
 const SESSION_REGISTRY_STALE_MS = 30000;
-const RESUME_PLUGIN_SOURCE = "dsh-plugin-web-daemon";
+const RESUME_PLUGIN_SOURCE = "dsh-plugin-supervisor";
 const INTERRUPTED_RESUME_TEXT = "The daemon restarted while this session was running. Continue the task from the recovered conversation. Before repeating any operation, verify the outcome of tool calls marked as unknown.";
 
 function isHeadlessHost() {
@@ -147,12 +151,12 @@ function installHeadlessSessionOpenGuard(ctx, sessionController) {
   try {
     sessionController.openWorkspacePath = guarded;
   } catch {
-    ctx.logger?.warn?.("web-daemon: could not install the headless workspace-open guard");
+    ctx.logger?.warn?.("supervisor: could not install the headless workspace-open guard");
     return;
   }
   ctx.effect(() => () => {
     if (sessionController.openWorkspacePath === guarded) sessionController.openWorkspacePath = original;
-  }, "web-daemon: headless workspace-open guard");
+  }, "supervisor: headless workspace-open guard");
 }
 
 function registerHeadlessOpenGuard(ctx, webServer) {
@@ -175,9 +179,9 @@ function registerHeadlessOpenGuard(ctx, webServer) {
         const envelope = await readRpcEnvelope(req, res);
         if (envelope !== null) answerHeadlessOpen(res, envelope);
       },
-    }), `web-daemon: headless open guard ${endpoint}`);
+    }), `supervisor: headless open guard ${endpoint}`);
   }
-  ctx.logger?.info?.("web-daemon: headless host detected — native file-open RPCs are refused with a readable message (file explorer handles preview/download)");
+  ctx.logger?.info?.("supervisor: headless host detected — native file-open RPCs are refused with a readable message (file explorer handles preview/download)");
 }
 
 function volatile(schema) {
@@ -646,7 +650,7 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
     diag.lock = false;
     diag.lockError = error instanceof Error ? error.message : String(error);
     await writeRecoveryDiagnostics(diag);
-    ctx.logger?.warn?.("web-daemon: could not acquire session registry lease: %s", error);
+    ctx.logger?.warn?.("supervisor: could not acquire session registry lease: %s", error);
     return;
   }
   if (lease === undefined) {
@@ -654,7 +658,7 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
     diag.lock = false;
     diag.lockError = "another process owns the session registry";
     await writeRecoveryDiagnostics(diag);
-    ctx.logger?.info?.("web-daemon: another process owns the session registry; session recovery is disabled here");
+    ctx.logger?.info?.("supervisor: another process owns the session registry; session recovery is disabled here");
     return;
   }
   diag.lock = true;
@@ -698,7 +702,7 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
 
   const persistQuietly = () => {
     void persist().catch((error) => {
-      ctx.logger?.warn?.("web-daemon: session registry write failed: %s", error);
+      ctx.logger?.warn?.("supervisor: session registry write failed: %s", error);
     });
   };
 
@@ -790,7 +794,7 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
     await recoveryPromise;
     await writeTail;
     await releaseSessionRegistryLease(lease);
-  }, "web-daemon: session registry flush");
+  }, "supervisor: session registry flush");
 
   const recover = async () => {
     try {
@@ -827,10 +831,10 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
               probed = await readStoredSession(persistence, sessionId);
               if (probed !== undefined) {
                 header = probed.meta;
-                ctx.logger?.warn?.("web-daemon: session %s was absent from persistence.list() but stat() resolved it; resuming", sessionId);
+                ctx.logger?.warn?.("supervisor: session %s was absent from persistence.list() but stat() resolved it; resuming", sessionId);
               }
             } catch (error) {
-              ctx.logger?.warn?.("web-daemon: sessionPersistence.stat(%s) failed: %s", sessionId, error);
+              ctx.logger?.warn?.("supervisor: sessionPersistence.stat(%s) failed: %s", sessionId, error);
             }
           }
           if (header === undefined || header.origin === "subagent") {
@@ -932,29 +936,29 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
           // turn the round driver will not continue.
           const goal = restoreGoal(ctx, handle.agent);
           if (goal.decision === "re-armed") {
-            ctx.logger?.info?.("web-daemon: re-armed goal %s for resumed session %s", goal.goalId, sessionId);
+            ctx.logger?.info?.("supervisor: re-armed goal %s for resumed session %s", goal.goalId, sessionId);
           } else if (goal.decision === "resume-refused") {
-            ctx.logger?.warn?.("web-daemon: could not re-arm goal %s for session %s: %s", goal.goalId, sessionId, goal.error);
+            ctx.logger?.warn?.("supervisor: could not re-arm goal %s for session %s: %s", goal.goalId, sessionId, goal.error);
           }
           let continued = false;
           if (shouldResume && active) {
             if (typeof handle?.agent?.followup !== "function") {
-              ctx.logger?.warn?.("web-daemon: resumed session %s has no followup method; recorded running session remains idle", sessionId);
+              ctx.logger?.warn?.("supervisor: resumed session %s has no followup method; recorded running session remains idle", sessionId);
             } else {
               handle.agent.followup(createInterruptedResumeMessage());
               continued = true;
-              ctx.logger?.info?.("web-daemon: continuing recorded session %s after daemon restart", sessionId);
+              ctx.logger?.info?.("supervisor: continuing recorded session %s after daemon restart", sessionId);
             }
           }
           diag.entries.push({ sessionId, decision: "resumed", continued, goal: goal.decision });
-          ctx.logger?.info?.("web-daemon: resumed session %s", sessionId);
+          ctx.logger?.info?.("supervisor: resumed session %s", sessionId);
         } catch (error) {
           diag.entries.push({
             sessionId,
             decision: "failed",
             error: error instanceof Error ? error.message : String(error),
           });
-          ctx.logger?.warn?.("web-daemon: could not resume session %s: %s", sessionId, error);
+          ctx.logger?.warn?.("supervisor: could not resume session %s: %s", sessionId, error);
         }
       };
 
@@ -1000,14 +1004,14 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
             setup,
           });
           diag.entries.push({ sessionId: parentSessionId, decision: "resumed-parent" });
-          ctx.logger?.info?.("web-daemon: resumed %s to re-attach its running subagent(s)", parentSessionId);
+          ctx.logger?.info?.("supervisor: resumed %s to re-attach its running subagent(s)", parentSessionId);
         } catch (error) {
           diag.entries.push({
             sessionId: parentSessionId,
             decision: "failed-parent",
             error: error instanceof Error ? error.message : String(error),
           });
-          ctx.logger?.warn?.("web-daemon: could not resume parent session %s: %s", parentSessionId, error);
+          ctx.logger?.warn?.("supervisor: could not resume parent session %s: %s", parentSessionId, error);
         }
       };
 
@@ -1040,7 +1044,7 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
             text: INTERRUPTED_RESUME_TEXT,
           }), new AbortController().signal);
           diag.entries.push({ sessionId, decision: "resumed-child", parentSession: record.parentSession });
-          ctx.logger?.info?.("web-daemon: re-attached running subagent %s under %s", sessionId, record.parentSession);
+          ctx.logger?.info?.("supervisor: re-attached running subagent %s under %s", sessionId, record.parentSession);
         } catch (error) {
           const refusal = childRefusal(error);
           if (refusal !== undefined) {
@@ -1058,7 +1062,7 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
             decision: "failed",
             error: error instanceof Error ? error.message : String(error),
           });
-          ctx.logger?.warn?.("web-daemon: could not re-attach subagent %s: %s", sessionId, error);
+          ctx.logger?.warn?.("supervisor: could not re-attach subagent %s: %s", sessionId, error);
         }
       };
 
@@ -1101,14 +1105,14 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
       await Promise.all([...records.entries()].map(restore));
       await restoreChildren();
       if (active && (dirty || !loaded.present)) await persist();
-      ctx.logger?.info?.("web-daemon: session registry ready (%d session(s)): %s", records.size, path);
+      ctx.logger?.info?.("supervisor: session registry ready (%d session(s)): %s", records.size, path);
     } finally {
       await writeRecoveryDiagnostics(diag);
     }
   };
 
   recoveryPromise = recover().catch((error) => {
-    ctx.logger?.warn?.("web-daemon: session recovery failed: %s", error);
+    ctx.logger?.warn?.("supervisor: session recovery failed: %s", error);
   });
   return recoveryPromise;
 }
@@ -1593,10 +1597,10 @@ function snapshotCommandFor(cfg) {
  */
 function renderSystemdUnit(cfg) {
   const lines = [
-    "# Generated by dsh-plugin-web-daemon — do not edit by hand.",
+    "# Generated by dsh-supervisor — do not edit by hand.",
     "",
     "[Unit]",
-    "Description=DSH web daemon (dsh-plugin-web-daemon)",
+    "Description=DSH supervisor",
     "After=network-online.target",
     "Wants=network-online.target",
     "",
@@ -1706,7 +1710,7 @@ function assertUnitHomeOwner(target, previous) {
   const home = dshHome();
   if (owner === home) return;
   throw new Error(
-    `web-daemon: refusing to overwrite ${target}: it is owned by the DSH home ${owner}, `
+    `supervisor: refusing to overwrite ${target}: it is owned by the DSH home ${owner}, `
     + `not the current ${home}. A boot from another DSH_HOME must not rewrite this `
     + "installation's unit; give the other profile its own systemdUnit, or set "
     + "systemdScope: user.",
@@ -1776,7 +1780,7 @@ function createWebDaemonManager(ctx, settings, config, readConfig = () => config
         // The usual cause is a node/nvm upgrade: the unit remembered the old
         // interpreter, so systemd could not start it at all until this rewrite.
         ctx.logger?.warn?.(
-          `web-daemon: refreshed ${target}; ExecStart moved from ${written.previousExecStart} to ${now}`,
+          `supervisor: refreshed ${target}; ExecStart moved from ${written.previousExecStart} to ${now}`,
         );
       }
     }
@@ -1819,7 +1823,7 @@ function createWebDaemonManager(ctx, settings, config, readConfig = () => config
     try {
       runSystemctl(state.config, ["reset-failed", systemdUnitName(state.config)]);
     } catch (error) {
-      ctx.logger?.warn("web-daemon: systemd reset-failed error: %s", error);
+      ctx.logger?.warn("supervisor: systemd reset-failed error: %s", error);
     }
   };
 
@@ -1843,7 +1847,7 @@ function createWebDaemonManager(ctx, settings, config, readConfig = () => config
         }
       }
     } catch (error) {
-      ctx.logger?.warn("web-daemon: applying settings failed: %s", error);
+      ctx.logger?.warn("supervisor: applying settings failed: %s", error);
     }
   };
 
@@ -1856,12 +1860,12 @@ function createWebDaemonManager(ctx, settings, config, readConfig = () => config
     rememberRevision();
     ctx.effect(() => scope.watch((next) => applyConfig(clone(next), state.revision)));
   } else if (typeof settings?.configure === "function") {
-    ctx.effect(() => settings.configure({ auto: false }, ctx.fiber), "web-daemon: profile config form");
+    ctx.effect(() => settings.configure({ auto: false }, ctx.fiber), "supervisor: profile config form");
     ctx.effect(() => ctx.on("loader/volatile-update", () => {
       const descriptor = settings.describe({ redactSecrets: true }).find((entry) => entry.ns === NS);
       const next = currentConfig(readConfig());
       applyConfig(next, descriptor?.revision ?? state.revision);
-    }), "web-daemon: profile config updates");
+    }), "supervisor: profile config updates");
   }
 
   if (!isWorker && state.config.enabled) {
@@ -1873,7 +1877,7 @@ function createWebDaemonManager(ctx, settings, config, readConfig = () => config
           startUnit();
         }
       } catch (error) {
-        ctx.logger?.warn("web-daemon: autostart failed: %s", error);
+        ctx.logger?.warn("supervisor: autostart failed: %s", error);
       }
     }, 0);
   }
@@ -1911,7 +1915,7 @@ async function apply(ctx, config = {}) {
   try {
     manager.refreshUnit(manager.getSnapshot().config);
   } catch (error) {
-    ctx.logger?.warn?.("web-daemon: could not refresh the systemd unit on boot: %s", error);
+    ctx.logger?.warn?.("supervisor: could not refresh the systemd unit on boot: %s", error);
   }
   const agents = ctx.get("agents");
   const subagents = ctx.get("subagents");
@@ -2082,7 +2086,7 @@ async function apply(ctx, config = {}) {
         sendJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
       }
     },
-  }), "web-daemon: server metrics API");
+  }), "supervisor: server metrics API");
   ctx.effect(() => webServer.register({ kind: "exact", path: `${API_PREFIX}/state`, handler: (req, res) => handle(req, res, "state") }));
   ctx.effect(() => webServer.register({ kind: "exact", path: `${API_PREFIX}/save`, handler: (req, res) => handle(req, res, "save") }));
   ctx.effect(() => webServer.register({ kind: "exact", path: `${API_PREFIX}/start`, handler: (req, res) => handle(req, res, "start") }));

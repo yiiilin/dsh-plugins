@@ -28,7 +28,7 @@ function escapeRegExp(value) {
  * @param run - receives `{ call, config, ctx, unitPath, readUnit, warnings }`.
  */
 async function withHarness(run) {
-  const home = mkdtempSync(join(tmpdir(), "dsh-web-daemon-config-"));
+  const home = mkdtempSync(join(tmpdir(), "dsh-supervisor-config-"));
   const bin = join(home, "bin");
   const xdg = join(home, "config");
   mkdirSync(bin, { recursive: true });
@@ -64,9 +64,9 @@ async function withHarness(run) {
   const settings = {
     writable: true,
     configure() { return () => {}; },
-    describe() { return [{ ns: "web-daemon", revision, value: value() }]; },
+    describe() { return [{ ns: "supervisor", revision, value: value() }]; },
     async update(ns, patch, expectedRevision) {
-      assert.equal(ns, "web-daemon");
+      assert.equal(ns, "supervisor");
       assert.equal(expectedRevision, revision);
       for (const [key, next] of Object.entries(patch)) config[key]?.set(next);
       revision += 1;

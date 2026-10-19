@@ -40,7 +40,7 @@ installed at all — verified by booting it on a bare Cordis root with no
 |---|---|
 | Management API | Optional runtime binding via `ctx.inject(['webServer'], …)`. Absent when no web server service exists; the gateway and supervisor keep working. |
 | Generated profile bundles | `profileBundles` config, defaulting to the shipped web composition. Swapping the web plugin is a config change, never a code change. |
-| Other feature modules | None. No import, and no reference to `auth-webserver`, `web-daemon`, `git-graph`, `desktop-vnc` or `session-list-cache`. |
+| Other feature modules | None. No import, and no reference to `auth-webserver`, `supervisor`, `git-graph`, `desktop-vnc` or `session-list-cache`. |
 
 The one thing a swapped web plugin must still provide is the `--trusted-host`
 fence behaviour: a box is reached at the gateway's external authority, so

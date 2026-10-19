@@ -1,9 +1,9 @@
-# web-daemon
+# supervisor
 
-Standalone package [`@yiln-dsh/dsh-web-daemon`](../../pkgs/web-daemon). Loader row: `web-daemon`.
+Standalone package [`@yiln-dsh/dsh-supervisor`](../../pkgs/supervisor). Loader row: `supervisor`.
 
 ```bash
-dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/web-daemon"
+dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/supervisor"
 ```
 
 See the [root README](../../README.md) for the workspace layout, migration and testing.
@@ -17,7 +17,7 @@ come back after a process restart.
 Crash recovery (`Restart=always` — it keeps restarting unless explicitly
 stopped with `systemctl stop`), boot autostart (`systemctl enable`), and logs
 (journald) are handled by systemd itself. Session recovery is handled by the
-plugin's registry at `$DSH_HOME/plugins/dsh-plugin-web-daemon/active-sessions.json`:
+plugin's registry at `$DSH_HOME/plugins/dsh-plugin-supervisor/active-sessions.json`:
 attached agents are recorded atomically with their live status — every top-level
 session, plus every running subagent child under the `parentSession` it belongs
 to. Only records marked `running: true` are resumed after the next daemon start;
@@ -45,14 +45,14 @@ disposed session is removed.
   usage (device, mount point, used/total bytes, and percentage). The panel grows
   with the number of disk rows and collapses to a status dot with the sidebar
   rail.
-- Exposes daemon state through `/_dsh/web-daemon/*` JSON routes and server metrics through `/_dsh/web-daemon/metrics`.
+- Exposes daemon state through `/_dsh/supervisor/*` JSON routes and server metrics through `/_dsh/supervisor/metrics`.
 - Disk metrics list local block-backed filesystems visible to the worker and mounted in its namespace; virtual, network, overlay, loop, and zram filesystems are omitted. Unmounted disks cannot report filesystem occupancy. Byte counters are returned as decimal strings for large-volume precision.
-- Records sessions and their live status in `$DSH_HOME/plugins/dsh-plugin-web-daemon/active-sessions.json` — every top-level session, and every running subagent child as `{origin: "subagent", parentSession}`. Only records marked `running: true` are resumed; idle sessions are not started just because they have a transcript.
+- Records sessions and their live status in `$DSH_HOME/plugins/dsh-plugin-supervisor/active-sessions.json` — every top-level session, and every running subagent child as `{origin: "subagent", parentSession}`. Only records marked `running: true` are resumed; idle sessions are not started just because they have a transcript.
 
 A record is only discarded when its session is genuinely gone: if the persistence listing does not surface a recorded session, the plugin asks the backend directly (`sessionPersistence.inspect`) before pruning, so a session that exists on disk is resumed even when the listing omits it (as happened after the DSH 0.1.5 upgrade, where the concrete persistence backend moved). Persisted sessions that were deleted are pruned.
 - A resumed session restores its transcript and Agent. If the previous process stopped while the session was marked running, the plugin queues one internal recovery notice to continue it. Tool calls marked as unknown are explicitly left for the model to verify before retrying.
 - A running subagent child is re-attached to its parent with the same continuation notice, because a restart kills the child too and its in-flight turn is just as interrupted as its parent's. See [Subagent recovery](#subagent-recovery) for what that path can and cannot restore.
-- Registers the `web-daemon` settings namespace in the Host settings service
+- Registers the `supervisor` settings namespace in the Host settings service
   (the card is keyed by that namespace on both the legacy `settings.plugin.item` slot and the newer `plugins.item` slot).
 - The worker runs `dsh web --profile <profile> --no-open --port <port>` bound
   to loopback; LAN exposure is the job of `@yiln-dsh/dsh-auth-webserver`.
@@ -111,7 +111,7 @@ an upgrade is the operator's own concern.
 ## Session recovery
 
 The registry lives at
-`$DSH_HOME/plugins/dsh-plugin-web-daemon/active-sessions.json` and stores one
+`$DSH_HOME/plugins/dsh-plugin-supervisor/active-sessions.json` and stores one
 record per attached agent together with its live status:
 
 ```json
@@ -171,7 +171,7 @@ Each boot writes `recovery-diagnostics.json` next to the registry, recording
 the lock result, every session's decision, and the API calls the gate held:
 
 ```bash
-cat "$DSH_HOME/plugins/dsh-plugin-web-daemon/recovery-diagnostics.json"
+cat "$DSH_HOME/plugins/dsh-plugin-supervisor/recovery-diagnostics.json"
 journalctl -u dsh-web.service -f   # look for "resumed session …"
 ```
 

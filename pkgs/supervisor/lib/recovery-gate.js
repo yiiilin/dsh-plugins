@@ -78,7 +78,7 @@ function installRecoveryApiGate(ctx, services, recoveryReady, diag) {
       try {
         domain[methodName] = gated;
       } catch {
-        ctx.logger?.warn?.("web-daemon: could not gate %s.%s during recovery", domainName, methodName);
+        ctx.logger?.warn?.("supervisor: could not gate %s.%s during recovery", domainName, methodName);
         continue;
       }
       restorers.push(() => {
@@ -92,13 +92,13 @@ function installRecoveryApiGate(ctx, services, recoveryReady, diag) {
     // being deferred with no other symptom. Report the whole list once, at
     // start, so a DSH rename is visible instead of latent.
     ctx.logger?.warn?.(
-      `web-daemon: the recovery gate covers no such API member(s), so calls to them may race session recovery: ${uncovered.join(", ")}`,
+      `supervisor: the recovery gate covers no such API member(s), so calls to them may race session recovery: ${uncovered.join(", ")}`,
     );
   }
   if (restorers.length === 0) return;
   ctx.effect(() => () => {
     for (let index = restorers.length - 1; index >= 0; index -= 1) restorers[index]();
-  }, "web-daemon: api recovery gate");
+  }, "supervisor: api recovery gate");
 }
 
 export {

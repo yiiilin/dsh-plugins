@@ -1,8 +1,8 @@
 # One Loader layer for this package. Installed standalone from GitHub;
-# `dsh plugin --profile <p> add github:<owner>/<repo>#path:/pkgs/web-daemon`.
+# `dsh plugin --profile <p> add github:<owner>/<repo>#path:/pkgs/supervisor`.
 - insert:
-    - id: web-daemon
-      name: '@yiln-dsh/dsh-web-daemon'
+    - id: supervisor
+      name: '@yiln-dsh/dsh-supervisor'
       inject:
         - webServer
         - settings

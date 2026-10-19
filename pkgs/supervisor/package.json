@@ -1,5 +1,5 @@
 {
-  "name": "@yiln-dsh/dsh-web-daemon",
+  "name": "@yiln-dsh/dsh-supervisor",
   "version": "0.2.1",
   "private": false,
   "type": "module",

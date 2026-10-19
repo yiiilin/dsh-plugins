@@ -1,15 +1,15 @@
 /**
- * dsh-plugin-web-daemon — browser plugin configuration card.
+ * dsh-supervisor — browser plugin configuration card.
  *
  * Static DSH client bundle. The node half exposes the daemon API routes under
  * /_dsh/web-daemon; this card appears under Settings > Plugins > Plugin
- * configuration (settings.plugin.item, keyed by the "web-daemon" settings
+ * configuration (settings.plugin.item, keyed by the "supervisor" settings
  * namespace). The card chrome (header, disclosure, footer) is implemented
  * here because the client bundle purity gate forbids importing the official
  * card chrome as values; only the slot registration protocol is shared.
  */
 window.__ModuleLoader__.load({
-	id: '@yiln-dsh/dsh-web-daemon',
+	id: '@yiln-dsh/dsh-supervisor',
 	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;
@@ -18,7 +18,7 @@ window.__ModuleLoader__.load({
 
 		const inject = ["slots", "timer"];
 
-		const LOCALE_NS = "web-daemon";
+		const LOCALE_NS = "supervisor";
 		const ZH_DICT = {
 			server: "服务器",
 			"server.status": "服务器状态",
@@ -151,7 +151,7 @@ window.__ModuleLoader__.load({
 			return template.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match);
 		}
 
-		const STYLE_ID = "dsh-plugin-web-daemon-settings";
+		const STYLE_ID = "dsh-supervisor-settings";
 		if (typeof document !== "undefined") {
 			let style = document.getElementById(STYLE_ID);
 			if (style === null) {
@@ -261,7 +261,7 @@ window.__ModuleLoader__.load({
 				const error = new Error(`daemon API ${path} returned HTTP ${response.status}`);
 				error.dshStatus = response.status;
 				error.dshServerError = typeof data?.error === "string" ? data.error : undefined;
-				if (error.dshServerError !== undefined) console.warn("web-daemon:", error.message, error.dshServerError);
+				if (error.dshServerError !== undefined) console.warn("supervisor:", error.message, error.dshServerError);
 				throw error;
 			}
 			return data;
@@ -662,7 +662,7 @@ window.__ModuleLoader__.load({
 			if (slots === undefined || timer === undefined) return;
 			const locale = ctx.get("locale");
 			if (locale !== undefined) {
-				ctx.effect(() => locale.register(LOCALE_NS, { zh: ZH_DICT, en: EN_DICT }), "web-daemon: locale");
+				ctx.effect(() => locale.register(LOCALE_NS, { zh: ZH_DICT, en: EN_DICT }), "supervisor: locale");
 			}
 			const t = locale !== undefined
 				? locale.bind(LOCALE_NS)
@@ -670,7 +670,7 @@ window.__ModuleLoader__.load({
 			const ServerStatus = createServerStatus(timer, t);
 			ctx.slots.inject("sidebar.footer.action", () => ctx.slots.register({
 				name: "sidebar.footer.action",
-				id: "web-daemon-server-status",
+				id: "supervisor-server-status",
 				order: -10,
 				inject: () => ({}),
 			}, ServerStatus));
