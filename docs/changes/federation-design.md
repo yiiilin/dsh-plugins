@@ -486,3 +486,42 @@ YAML 往返会把键名 `off` 改写成 `false`，而 `reasoningEfforts` 恰好�
 
 **需要重启才生效**：写入只改文件，不触发 reload。响应里的 `note` 明确说明这一点，
 因为 reload 在这套部署上不可靠（见上文的 `requires the root Include entry`）。
+
+### 2026-10-19：daemon 启用后自配置 systemd
+
+**问题**：手工启动的 daemon 在机器重启后就不存在了，而且没有任何东西提示这一点——
+直到有人想用它。6.13 上正是这个状态：`nohup` 起的进程，`PPID=1`，没有任何单元。
+
+**做法**：`systemdUnit: auto`（默认）。监听器起来之后，daemon 判断三种情况：
+
+| 情况 | 行为 |
+| --- | --- |
+| 已在 systemd 下（`INVOCATION_ID` 存在） | 不动。从单元内部改写它正在读的文件没有意义 |
+| 手工启动 | 渲染单元、写入、`daemon-reload`、`enable` |
+| `systemdUnit: ''` | 不做 |
+
+**为什么在监听器之后**：单元里写着端口。一个绑定失败还写了单元的进程，会得到一份
+同样起不来的单元。
+
+**渲染原则是「照抄现状」而不是「套模板」**：可执行文件、脚本、profile、端口、
+`DSH_HOME`/`HOME`/`PATH` 都取自当前进程。`argv[1]` 缺失（进程被包装器起）时**拒绝
+写入**并说明原因——写一个启动别的东西的单元，比不写更糟。
+
+**两个刻意的决定**：
+
+- **只用 `enable`，不 `start`**：这个进程已经在跑，再 start 一个会和它抢端口。
+- **单元名不含 token**：单元名会出现在 `systemctl status`、journal 路径和进程列表里。
+  `auto` 生成 `dsh-<role>-<port>`。
+
+**验证**（6.13 实测）：
+
+```
+手工启动          → wrote /etc/systemd/system/dsh-edge-3080.service and enabled it
+单元内容           ExecStart=/root/.hermes/node/bin/node /usr/local/bin/dsh --profile main --port 56789
+                  Environment=DSH_HOME=/root/.dsh / HOME=/root / PATH=...
+                  WantedBy=multi-user.target
+is-enabled         enabled
+手工进程停掉后 systemctl start → active，56789 与 3080 都在听，PID 来自 systemd
+再次启动          running under systemd; not installing another unit
+生产（已在单元下）  already managed by systemd，未重复安装
+```

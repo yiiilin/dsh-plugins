@@ -481,3 +481,52 @@ test('a summary reports whether a key exists without exposing it', async () => {
   // A node with no model config says so rather than reporting half a config.
   assert.equal(summarizeModelRows('', false).configured, false)
 })
+
+// --- systemd -----------------------------------------------------------------
+
+test('a unit reproduces how the process was started', async () => {
+  const { renderUnit } = await import('../lib/systemd.js')
+  const text = renderUnit({
+    name: 'dsh-test',
+    argv: ['node', '/usr/local/bin/dsh', '--profile', 'main', '--no-open'],
+    execPath: '/usr/local/bin/node',
+    port: 56789,
+    env: { DSH_HOME: '/root/.dsh', HOME: '/root', PATH: '/usr/local/bin:/usr/bin' },
+  })
+  assert.match(text, /^ExecStart=\/usr\/local\/bin\/node \/usr\/local\/bin\/dsh --profile main --port 56789$/mu)
+  // `--no-open` would try to launch a browser on every boot.
+  assert.ok(!text.includes('--no-open'))
+  assert.match(text, /^Restart=always$/mu)
+  assert.match(text, /^Environment=DSH_HOME=\/root\/\.dsh$/mu)
+  assert.match(text, /^WantedBy=multi-user\.target$/mu)
+})
+
+test('a unit refuses to guess when it cannot describe the process', async () => {
+  // Writing a unit that starts something else is worse than writing none.
+  const { renderUnit } = await import('../lib/systemd.js')
+  assert.throws(() => renderUnit({ name: 'x', argv: ['node'], execPath: '/n', env: {} }), /script to run/u)
+})
+
+test('systemd quoting survives spaces and quotes', async () => {
+  const { systemdQuote } = await import('../lib/systemd.js')
+  assert.equal(systemdQuote('/plain/path'), '/plain/path')
+  assert.equal(systemdQuote('/with space/x'), '"/with space/x"')
+  assert.equal(systemdQuote(''), '""')
+  // A quote inside a value has to be escaped, or systemd ends the value early.
+  assert.match(systemdQuote('a"b'), /^".*\\".*"$/u)
+})
+
+test('a unit name never carries a credential', async () => {
+  const { unitNameFor } = await import('../lib/systemd.js')
+  assert.equal(unitNameFor('env-6-13'), 'dsh-env-6-13')
+  assert.equal(unitNameFor('Edge Box!'), 'dsh-edge-box')
+  // Nothing exotic survives into a filename systemd has to accept.
+  assert.match(unitNameFor('a/b c'), /^dsh-[a-z0-9-]+$/u)
+})
+
+test('being under systemd is read from the environment systemd sets', async () => {
+  const { underSystemd } = await import('../lib/systemd.js')
+  assert.equal(underSystemd({ INVOCATION_ID: 'abc' }), true)
+  assert.equal(underSystemd({}), false)
+  assert.equal(underSystemd({ INVOCATION_ID: '' }), false)
+})

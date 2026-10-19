@@ -28,6 +28,7 @@ import { startEntry } from './lib/entry.js'
 import { createTunnelAgent } from './lib/federation/agent.js'
 import { createTunnelHub, createTunnelServer, tokenOf, TUNNEL_PATH } from './lib/federation/hub.js'
 import { defaultSkillsRoot, readInventory } from './lib/inventory.js'
+import { installUnit, renderUnit, underSystemd, unitNameFor } from './lib/systemd.js'
 import {
   extractModelRows,
   replaceModelRows,
@@ -81,6 +82,16 @@ export const Config = z.object({
    * the wrong deployment.
    */
   selfUnit: z.string().default(''),
+  /**
+   * systemd unit to install for this process.
+   *
+   * `auto` writes one when this process is not already supervised by systemd — a daemon
+   * started by hand stops existing at the next reboot, and nothing says so until someone
+   * tries to use it. Empty opts out; any other value is used as the unit's base name.
+   */
+  systemdUnit: z.string().default('auto'),
+  /** `system` scope needs root; `user` scope works for an unprivileged daemon. */
+  systemdScope: z.union([z.const('system'), z.const('user')]).default('system'),
 })
 
 export function apply(ctx, config) {
@@ -159,6 +170,7 @@ export function apply(ctx, config) {
       plugins,
       startedAt: started,
       uptimeMs: Date.now() - started,
+      systemd: systemdState,
       restartable: config.selfUnit !== '',
       unit: config.selfUnit === '' ? undefined : config.selfUnit,
     }
@@ -307,6 +319,59 @@ export function apply(ctx, config) {
   }
 
   // Which profile this process serves decides where its composition lives.
+  /** Result of the systemd attempt, reported on the panel. */
+  let systemdState = { status: 'not attempted' }
+
+  /**
+   * Install a unit for this process when that would help.
+   *
+   * Three cases, and only the middle one acts:
+   *
+   * - already under systemd: a unit exists and is running; rewriting it from inside
+   *   itself would edit the file systemd is reading
+   * - started by hand: nothing brings this back after a reboot, so write and enable one
+   * - opted out: the operator said no
+   */
+  const ensureUnit = async () => {
+    if (config.systemdUnit === '') {
+      systemdState = { status: 'disabled by configuration' }
+      return
+    }
+    if (underSystemd()) {
+      systemdState = { status: 'already managed by systemd' }
+      logger.info('daemon: running under systemd; not installing another unit')
+      return
+    }
+    // Not from the token: a unit name shows up in `systemctl status`, in journal paths
+    // and in process listings, and a credential has no business in any of them.
+    const name = config.systemdUnit === 'auto'
+      ? unitNameFor(`${config.role}-${config.port}`)
+      : unitNameFor(config.systemdUnit)
+    try {
+      const text = renderUnit({
+        name,
+        argv: process.argv,
+        execPath: process.execPath,
+        port: config.port,
+        env: process.env,
+      })
+      const result = await installUnit({ name, text, scope: config.systemdScope })
+      systemdState = result.ok
+        ? { status: result.changed ? 'installed' : 'already current', unit: result.unit, path: result.path }
+        : { status: 'failed', error: result.error, unit: result.unit }
+      if (result.ok) {
+        logger.info(`daemon: wrote ${result.path} and enabled ${result.unit}; it will start on boot`)
+      } else {
+        logger.warn(`daemon: could not install a systemd unit: ${result.error}`)
+      }
+    } catch (error) {
+      // A process started in a way a unit cannot describe is not an error worth stopping
+      // for, but it is worth saying out loud.
+      systemdState = { status: 'failed', error: String(error.message) }
+      logger.warn(`daemon: could not describe this process as a unit: ${error.message}`)
+    }
+  }
+
   const profileName = config.profile === ''
     ? process.env.DSH_PROFILE ?? 'main'
     : config.profile
@@ -446,6 +511,10 @@ export function apply(ctx, config) {
         notFound,
       })
       logger.info(`daemon: listening on ${config.host}:${entry.port}`)
+
+      // Only now: the unit names the ports, and a process that failed to bind would have
+      // its failure written into a unit that then cannot start either.
+      if (!cancelled) await ensureUnit()
     })().catch((error) => logger.warn(`daemon: entry failed: ${error.message}`))
 
     return async () => {
