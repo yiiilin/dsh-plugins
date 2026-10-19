@@ -73,8 +73,11 @@ window.__ModuleLoader__.load({
     const FAINT = '#81858c'
     const HAIRLINE = 'rgba(0,0,0,.1)'
     const styles = {
-      wrap: { padding: '18px 20px', maxWidth: 1100, margin: '0 auto' },
-      hint: { margin: '0 0 14px', color: MUTED, fontSize: 12, lineHeight: '18px' },
+      // The market's content column: full width, 48px horizontal padding, no max-width
+      // and no centring. A centred 1100px column was the main reason this page did not
+      // line up with anything else in the product.
+      wrap: { padding: '4px 48px 24px', width: '100%', boxSizing: 'border-box' },
+      hint: { margin: '0 0 18px', color: MUTED, fontSize: 12, lineHeight: '18px' },
       detail: { color: FAINT, fontSize: 11, marginTop: 2 },
       mono: { fontFamily: 'ui-monospace, monospace', fontSize: 11, color: MUTED },
       dim: { color: FAINT, fontSize: 12 },
@@ -88,7 +91,12 @@ window.__ModuleLoader__.load({
       card: {
         display: 'flex', alignItems: 'flex-start', gap: 12,
         padding: '12px 14px', borderRadius: 12, border: `1px solid ${HAIRLINE}`,
-        background: '#fff', marginBottom: 8,
+        background: '#fff',
+      },
+      /** Two columns at this width, as the market does; it collapses when space runs out. */
+      grid: {
+        display: 'grid', gap: 10,
+        gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
       },
       cardMain: { flex: '1 1 auto', minWidth: 0 },
       cardName: { fontSize: 13, fontWeight: 600, color: INK, marginBottom: 2 },
@@ -129,7 +137,11 @@ window.__ModuleLoader__.load({
       },
       form: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 16, flexWrap: 'wrap' },
       formLabel: { fontSize: 12, color: MUTED, whiteSpace: 'nowrap' },
+      /** The market's section heading: 13px semibold ink, 8px above the content below it. */
       sectionTitle: { fontSize: 13, fontWeight: 600, color: INK, margin: '18px 0 8px' },
+      /** Its page title row: a 13px semibold name and its controls on one baseline. */
+      titleRow: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '0 0 4px' },
+      titleText: { fontSize: 14, fontWeight: 600, color: INK },
       tokenBox: {
         margin: '10px 0', padding: '12px 14px', borderRadius: 12,
         background: 'rgba(214,158,46,.1)', border: '1px solid rgba(214,158,46,.35)',
@@ -284,7 +296,10 @@ window.__ModuleLoader__.load({
       }, [load, t])
 
       const role = state.self?.role ?? 'main'
-      const children = [h('p', { key: 'hint', style: styles.hint }, t('hint'))]
+      const children = [h('div', { key: 'title', style: styles.titleRow },
+      h('span', { style: styles.titleText }, t('title')),
+      h('button', { style: styles.button, disabled: busy !== '', onClick: () => void load() }, t('refresh'))),
+    h('p', { key: 'hint', style: styles.hint }, t('hint'))]
       if (flash !== '') children.push(h('div', { key: 'flash', style: styles.ok }, flash))
 
       if (token !== '') {
@@ -325,7 +340,7 @@ window.__ModuleLoader__.load({
           h('div', { style: styles.sectionTitle }, t('sectionEnvironments')),
           state.environments.length === 0
             ? h('div', { style: styles.note }, t('empty'))
-            : h('div', null, cards),
+            : h('div', { style: styles.grid }, cards),
           h('div', { key: 'form', style: styles.form },
             h('label', { key: 'l', style: styles.formLabel }, t('labelLabel')),
             h('input', {
@@ -339,8 +354,6 @@ window.__ModuleLoader__.load({
         children.push(h('div', { key: 'edge', style: styles.note }, t('edgeNote')))
       }
 
-      children.push(h('div', { key: 'actions', style: { marginTop: 14 } },
-        h('button', { style: styles.button, disabled: busy !== '', onClick: () => void load() }, t('refresh'))))
 
       return h('div', { style: styles.wrap }, children)
     }
