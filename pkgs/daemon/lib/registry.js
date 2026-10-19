@@ -15,8 +15,17 @@
 
 import { randomBytes } from 'node:crypto'
 
-/** Environment ids appear in URLs, so they are restricted to something safe there. */
+/**
+ * Environment ids appear in URLs, so they are restricted to something safe there.
+ *
+ * The id is a node identifier, not a name: it is generated once from random bytes and
+ * never derived from the label. Deriving it from the label meant renaming a machine
+ * changed its URL — and left the old URL answering nothing, with no way back.
+ */
 export const ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/u
+
+/** Bytes behind a generated id. 9 bytes is 72 bits: no collision is reachable. */
+const ID_BYTES = 9
 
 /** Ids that would be mistaken for a route of our own. */
 export const RESERVED_IDS = new Set([
@@ -104,7 +113,22 @@ export function serializeRegistry(environments) {
  * @param taken - ids already in use.
  * @returns a unique, URL-safe id.
  */
-export function deriveId(wanted, taken) {
+export function deriveId(taken) {
+  // base64url yields `-` and `_`; only `-` is safe in a path segment, so the alphabet is
+  // narrowed to lowercase hex-ish letters and digits.
+  for (;;) {
+    const raw = randomBytes(ID_BYTES).toString('hex').slice(0, 16)
+    const candidate = `n${raw}`
+    if (!taken.has(candidate) && !RESERVED_IDS.has(candidate)) return candidate
+  }
+}
+
+/**
+ * The id this function used to produce, kept only so an existing registry can be read.
+ *
+ * @deprecated Nothing creates ids this way any more; see {@link deriveId}.
+ */
+export function deriveLegacyId(wanted, taken) {
   const base = String(wanted)
     .toLowerCase()
     .replace(/[^a-z0-9]+/gu, '-')

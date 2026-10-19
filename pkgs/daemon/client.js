@@ -15,7 +15,8 @@ window.__ModuleLoader__.load({
       colName: '名称', colPath: '访问路径', colToken: '令牌', colState: '状态', colActions: '操作',
       online: '在线', offline: '离线', never: '从未连接',
       open: '打开', rotate: '换令牌', remove: '移除',
-      labelLabel: '名称（可留空）', labelPlaceholder: '例如 6.13',
+      labelLabel: '名称', labelPlaceholder: '例如 6.13',
+      rename: '改名', renamePrompt: '新的名称', renamed: '已改名',
       create: '创建环境', creating: '创建中…',
       tokenOnce: '这个令牌只显示一次，请现在复制',
       tokenHint: '把它填到那台机器 dsh 的 daemon 配置：role=edge，并填上主节点地址。',
@@ -24,7 +25,7 @@ window.__ModuleLoader__.load({
       removed: '已移除 {id}。', rotated: '已为 {id} 换令牌。',
       actionFailed: '操作失败：{message}',
       edgeNote: '这台 dsh 是边端：它连向主节点，自己不管理其它环境。要在这里管理环境，把 role 改成 main。',
-      switcherLabel: '环境',
+      switcherLabel: '当前环境：',
       switcherLocal: '本机',
       switcherOffline: '（离线）',
       switcherTitle: '切换环境：打开另一台机器上的 dsh',
@@ -40,7 +41,8 @@ window.__ModuleLoader__.load({
       colName: 'Name', colPath: 'Path', colToken: 'Token', colState: 'State', colActions: 'Actions',
       online: 'online', offline: 'offline', never: 'never connected',
       open: 'Open', rotate: 'Rotate token', remove: 'Remove',
-      labelLabel: 'Name (optional)', labelPlaceholder: 'e.g. 6.13',
+      labelLabel: 'Name', labelPlaceholder: 'e.g. 6.13',
+      rename: 'Rename', renamePrompt: 'New name', renamed: 'Renamed',
       create: 'Create environment', creating: 'Creating…',
       tokenOnce: 'This token is shown once — copy it now',
       tokenHint: 'Put it in that machine\'s dsh daemon config: role=edge, plus this node\'s address.',
@@ -49,7 +51,7 @@ window.__ModuleLoader__.load({
       removed: 'Removed {id}.', rotated: 'New token issued for {id}.',
       actionFailed: 'Failed: {message}',
       edgeNote: 'This dsh is an edge: it connects to a main node and manages no environments itself. Set role to main to manage them here.',
-      switcherLabel: 'Environment',
+      switcherLabel: 'Current environment:',
       switcherLocal: 'This host',
       switcherOffline: ' (offline)',
       switcherTitle: 'Switch environment: open the dsh on another machine',
@@ -72,11 +74,22 @@ window.__ModuleLoader__.load({
       form: { display: 'flex', alignItems: 'center', gap: 0, marginTop: 16, flexWrap: 'wrap' },
       tokenBox: { margin: '10px 0', padding: '10px 12px', borderRadius: 6, background: 'rgba(214,158,46,.12)', border: '1px solid rgba(214,158,46,.4)' },
       tokenTitle: { fontSize: 13, fontWeight: 600, marginBottom: 6 },
-      switcher: { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', fontSize: 12 },
-      switcherLabel: { flex: 'none', opacity: 0.65, fontSize: 11 },
+      // The seat container (`sidebar.footer.action`) is `display: contents`, so it has no
+      // width to inherit: a flex row there sizes to its content and the select would
+      // collapse to its text. Stretching to the parent's content box is what gives the
+      // select the remaining horizontal space.
+      switcher: {
+        display: 'flex', alignItems: 'center', gap: 4, padding: '6px 8px', fontSize: 12,
+        width: '100%', boxSizing: 'border-box',
+      },
+      switcherLabel: { flex: 'none', opacity: 0.65, fontSize: 11, whiteSpace: 'nowrap' },
+      // `flex: 1` with `minWidth: 0` is what lets it take the remaining width: without the
+      // zero minimum a flex item refuses to shrink below its content, so a long
+      // environment label would push the row wider instead of truncating.
       switcherSelect: {
-        flex: 1, minWidth: 0, padding: '3px 6px', fontSize: 12, borderRadius: 5,
+        flex: '1 1 auto', minWidth: 0, padding: '3px 6px', fontSize: 12, borderRadius: 5,
         border: '1px solid rgba(128,128,128,.35)', background: 'transparent', color: 'inherit',
+        textOverflow: 'ellipsis',
       },
       tokenCode: { display: 'block', fontFamily: 'ui-monospace, monospace', fontSize: 12, wordBreak: 'break-all', userSelect: 'all' },
     }
@@ -136,7 +149,7 @@ window.__ModuleLoader__.load({
           const result = await call('/admin/environments', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ label: label.trim() === '' ? undefined : label.trim() }),
+            body: JSON.stringify({ label: label.trim() }),
           })
           if (result.ok) {
             // Shown once: the token is the edge's credential, not a display value.
@@ -150,6 +163,32 @@ window.__ModuleLoader__.load({
           setBusy('')
         }
       }, [label, load, t])
+
+        /**
+         * Rename one environment.
+         *
+         * Only the label changes. The id is the node identifier and the URL is built from
+         * it, so renaming must never move the address a bookmark points at.
+         */
+        const rename = useCallback(async (entry) => {
+          const next = window.prompt(t("renamePrompt"), entry.label)
+          if (next === null) return
+          const label = next.trim()
+          if (label === "" || label === entry.label) return
+          setBusy(entry.id)
+          setFlash("")
+          try {
+            const result = await call(`/admin/environments/${entry.id}`, {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ label }),
+            })
+            setFlash(result.ok ? `${t("renamed")}: ${label}` : t("actionFailed").replace("{message}", result.error ?? ""))
+            if (result.ok) await load()
+          } finally {
+            setBusy("")
+          }
+        }, [load, t])
 
       const remove = useCallback(async (entry) => {
         if (!confirm(t('confirmRemove').replace('{id}', entry.id))) return
@@ -207,6 +246,12 @@ window.__ModuleLoader__.load({
               : h('div', { style: styles.detail }, new Date(entry.lastSeen).toLocaleString())),
           h('td', { style: styles.cell },
             entry.online ? h('button', { key: 'open', style: styles.button, onClick: () => window.open(`/${entry.id}/`, '_blank') }, t('open')) : null,
+            // The name is the only thing an operator can change: the id is the node's
+            // identity and its URL is built from it.
+            h('button', {
+              key: 'rename', style: styles.button, disabled: busy !== '',
+              onClick: () => void rename(entry),
+            }, t('rename')),
             h('button', { key: 'rot', style: styles.button, disabled: busy !== '', onClick: () => void rotate(entry) }, t('rotate')),
             h('button', { key: 'rm', style: styles.button, disabled: busy !== '', onClick: () => void remove(entry) }, t('remove')))))
 

@@ -107,14 +107,21 @@ export function createAdmin({
 
     if (pathname === '/admin/environments' && method === 'POST') {
       const body = await readJson(req)
-      const id = deriveId(body.label ?? body.id ?? body.hostname ?? 'env', registry.usedIds())
-      const token = freshToken()
-      const environment = normalizeEnvironment({
-        id,
-        label: body.label ?? id,
-        token,
-        enabled: body.enabled === undefined ? true : body.enabled === true,
-      })
+        // The id is a node identifier and the label is a name: they are generated and
+        // supplied separately, so renaming a machine never moves its URL.
+        const id = deriveId(registry.usedIds())
+        const label = typeof body.label === "string" ? body.label.trim() : ""
+        if (label === "") {
+          json(res, 400, { ok: false, error: "label is required: it is the name this machine is shown under" })
+          return true
+        }
+        const token = freshToken()
+        const environment = normalizeEnvironment({
+          id,
+          label,
+          token,
+          enabled: body.enabled === undefined ? true : body.enabled === true,
+        })
       await registry.add(environment)
       logger.info(`daemon: created environment "${id}"`)
       // The token is shown exactly once: it is the edge's credential and the file that
@@ -138,7 +145,14 @@ export function createAdmin({
       if (method === 'PATCH') {
         const body = await readJson(req)
         const patch = {}
-        if (body.label !== undefined) patch.label = String(body.label)
+        if (body.label !== undefined) {
+          const label = String(body.label).trim()
+        if (label === '') {
+            json(res, 400, { ok: false, error: 'label must not be empty' })
+            return true
+          }
+          patch.label = label
+        }
         if (body.enabled !== undefined) patch.enabled = body.enabled === true
         if (Object.keys(patch).length === 0) {
           json(res, 400, { ok: false, error: 'nothing to update (editable: label, enabled)' })

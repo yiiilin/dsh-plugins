@@ -152,13 +152,19 @@ test('an absent registry is empty, a malformed one throws', () => {
 })
 
 test('ids are derived safely and stay unique', () => {
-  assert.equal(deriveId('6.13', new Set()), 'env-6-13')
-  assert.equal(deriveId('Box One', new Set()), 'box-one')
-  assert.equal(deriveId('box', new Set(['box'])), 'box-2')
-  assert.equal(deriveId('', new Set()), 'env', 'no trailing separator')
-  assert.equal(deriveId('---', new Set()), 'env')
+  // The id is a node identifier, never a slug of the label: renaming a machine must not
+  // move its URL. It only has to be URL-safe, unique, and not a route of our own.
+  const generated = new Set()
+  for (let i = 0; i < 50; i += 1) {
+    const id = deriveId(generated)
+    assert.match(id, /^[a-z][a-z0-9-]{0,31}$/u)
+    assert.ok(!RESERVED_IDS.has(id), `${id} must not shadow a route`)
+    generated.add(id)
+  }
+  assert.equal(generated.size, 50, 'ids never repeat')
+  // Two calls with the same "taken" set still differ: the id is random, not derived.
+  assert.notEqual(deriveId(new Set()), deriveId(new Set()))
   // A derived id must never collide with a route of our own.
-  assert.notEqual(deriveId('admin', new Set()), 'admin')
 })
 
 test('a fresh token is long enough to be worth generating', () => {
