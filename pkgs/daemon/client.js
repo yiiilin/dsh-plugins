@@ -17,6 +17,7 @@ window.__ModuleLoader__.load({
       open: '打开', rotate: '换令牌', remove: '移除',
       labelLabel: '名称', labelPlaceholder: '例如 6.13',
       rename: '改名', renamePrompt: '新的名称', renamed: '已改名',
+      sectionEnvironments: '环境',
       create: '创建环境', creating: '创建中…',
       tokenOnce: '这个令牌只显示一次，请现在复制',
       tokenHint: '把它填到那台机器 dsh 的 daemon 配置：role=edge，并填上主节点地址。',
@@ -43,6 +44,7 @@ window.__ModuleLoader__.load({
       open: 'Open', rotate: 'Rotate token', remove: 'Remove',
       labelLabel: 'Name', labelPlaceholder: 'e.g. 6.13',
       rename: 'Rename', renamePrompt: 'New name', renamed: 'Renamed',
+      sectionEnvironments: 'Environments',
       create: 'Create environment', creating: 'Creating…',
       tokenOnce: 'This token is shown once — copy it now',
       tokenHint: 'Put it in that machine\'s dsh daemon config: role=edge, plus this node\'s address.',
@@ -58,22 +60,85 @@ window.__ModuleLoader__.load({
       switcherFailed: 'Could not read the environment list',
     }
 
+    /**
+     * Panel styles.
+     *
+     * These mirror the Plugin Market's design language — 12px cards on a white surface,
+     * a 1px rgba(0,0,0,.1) hairline, 8px pill actions, 11px metadata, 4px tag chips — so
+     * this page reads as part of the product rather than a form bolted onto it. The
+     * values are the market's computed ones, not an approximation of them.
+     */
+    const INK = '#0f1115'
+    const MUTED = '#61666b'
+    const FAINT = '#81858c'
+    const HAIRLINE = 'rgba(0,0,0,.1)'
     const styles = {
       wrap: { padding: '18px 20px', maxWidth: 1100, margin: '0 auto' },
-      hint: { margin: '0 0 6px', opacity: 0.7, fontSize: 13 },
-      detail: { fontSize: 11, opacity: 0.6, marginTop: 2 },
-      mono: { fontFamily: 'ui-monospace, monospace', fontSize: 12 },
-      dim: { opacity: 0.6, fontSize: 13 },
-      ok: { color: '#2f855a', fontSize: 13 },
-      error: { color: '#c53030', fontSize: 13 },
-      note: { marginTop: 12, padding: '10px 12px', background: 'rgba(128,128,128,.08)', borderRadius: 6, fontSize: 13 },
-      table: { width: '100%', borderCollapse: 'collapse', fontSize: 13 },
-      cell: { padding: '7px 8px', borderBottom: '1px solid rgba(128,128,128,.18)', textAlign: 'left', verticalAlign: 'top' },
-      button: { marginRight: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer', borderRadius: 5, border: '1px solid rgba(128,128,128,.35)', background: 'transparent' },
-      input: { padding: '5px 8px', fontSize: 13, borderRadius: 5, border: '1px solid rgba(128,128,128,.35)', background: 'transparent', marginRight: 8 },
-      form: { display: 'flex', alignItems: 'center', gap: 0, marginTop: 16, flexWrap: 'wrap' },
-      tokenBox: { margin: '10px 0', padding: '10px 12px', borderRadius: 6, background: 'rgba(214,158,46,.12)', border: '1px solid rgba(214,158,46,.4)' },
-      tokenTitle: { fontSize: 13, fontWeight: 600, marginBottom: 6 },
+      hint: { margin: '0 0 14px', color: MUTED, fontSize: 12, lineHeight: '18px' },
+      detail: { color: FAINT, fontSize: 11, marginTop: 2 },
+      mono: { fontFamily: 'ui-monospace, monospace', fontSize: 11, color: MUTED },
+      dim: { color: FAINT, fontSize: 12 },
+      ok: { color: '#2f855a', fontSize: 12 },
+      error: { color: '#c53030', fontSize: 12 },
+      note: {
+        marginTop: 12, padding: '12px 14px', borderRadius: 12,
+        border: `1px solid ${HAIRLINE}`, background: '#fff', color: MUTED, fontSize: 12,
+      },
+      /** One environment. A card, not a table row: the market draws its records this way. */
+      card: {
+        display: 'flex', alignItems: 'flex-start', gap: 12,
+        padding: '12px 14px', borderRadius: 12, border: `1px solid ${HAIRLINE}`,
+        background: '#fff', marginBottom: 8,
+      },
+      cardMain: { flex: '1 1 auto', minWidth: 0 },
+      cardName: { fontSize: 13, fontWeight: 600, color: INK, marginBottom: 2 },
+      cardMeta: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 4 },
+      cardActions: {
+        display: 'flex', alignItems: 'center', gap: 6, flex: 'none', flexWrap: 'wrap',
+        justifyContent: 'flex-end',
+      },
+      /** A 4px chip, like the market's tag row. */
+      tag: {
+        padding: '1px 6px', borderRadius: 4, border: '1px solid rgba(0,0,0,.12)',
+        fontSize: 11, color: MUTED, whiteSpace: 'nowrap',
+      },
+      tagOk: {
+        padding: '1px 6px', borderRadius: 4, border: '1px solid rgba(47,133,90,.35)',
+        fontSize: 11, color: '#2f855a', whiteSpace: 'nowrap',
+      },
+      /** An 8px pill. The filled one is the single primary action on the page. */
+      button: {
+        height: 28, padding: '0 10px', fontSize: 12, cursor: 'pointer', borderRadius: 8,
+        border: `1px solid ${HAIRLINE}`, background: 'transparent', color: INK,
+        display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap',
+      },
+      buttonPrimary: {
+        height: 28, padding: '0 12px', fontSize: 12, cursor: 'pointer', borderRadius: 8,
+        border: 'none', background: INK, color: '#fff',
+        display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap',
+      },
+      buttonDanger: {
+        height: 28, padding: '0 10px', fontSize: 12, cursor: 'pointer', borderRadius: 8,
+        border: '1px solid rgba(197,48,48,.3)', background: 'transparent', color: '#c53030',
+        display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap',
+      },
+      input: {
+        height: 28, padding: '0 10px', fontSize: 12, borderRadius: 8,
+        border: `1px solid ${HAIRLINE}`, background: '#fff', color: INK,
+        boxSizing: 'border-box',
+      },
+      form: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 16, flexWrap: 'wrap' },
+      formLabel: { fontSize: 12, color: MUTED, whiteSpace: 'nowrap' },
+      sectionTitle: { fontSize: 13, fontWeight: 600, color: INK, margin: '18px 0 8px' },
+      tokenBox: {
+        margin: '10px 0', padding: '12px 14px', borderRadius: 12,
+        background: 'rgba(214,158,46,.1)', border: '1px solid rgba(214,158,46,.35)',
+      },
+      tokenTitle: { fontSize: 12, fontWeight: 600, color: INK, marginBottom: 6 },
+      tokenCode: {
+        display: 'block', fontFamily: 'ui-monospace, monospace', fontSize: 11,
+        wordBreak: 'break-all', userSelect: 'all', color: INK,
+      },
       // The seat container (`sidebar.footer.action`) is `display: contents`, so it has no
       // width to inherit: a flex row there sizes to its content and the select would
       // collapse to its text. Stretching to the parent's content box is what gives the
@@ -91,7 +156,6 @@ window.__ModuleLoader__.load({
         border: '1px solid rgba(128,128,128,.35)', background: 'transparent', color: 'inherit',
         textOverflow: 'ellipsis',
       },
-      tokenCode: { display: 'block', fontFamily: 'ui-monospace, monospace', fontSize: 12, wordBreak: 'break-all', userSelect: 'all' },
     }
 
     const call = async (path, options) => {
@@ -233,45 +297,44 @@ window.__ModuleLoader__.load({
       if (state.phase === 'failed') children.push(h('div', { key: 'error', style: styles.error }, t('unreachable')))
 
       if (role === 'main') {
-        const rows = state.environments.map((entry) => h('tr', { key: entry.id },
-          h('td', { style: styles.cell },
-            h('div', null, entry.label),
-            entry.hostname === undefined ? null : h('div', { style: styles.detail }, entry.hostname)),
-          h('td', { style: { ...styles.cell, ...styles.mono } }, `/${entry.id}/`),
-          h('td', { style: { ...styles.cell, ...styles.mono } }, entry.tokenHint),
-          h('td', { style: styles.cell },
-            h('span', { style: entry.online ? styles.ok : styles.dim }, entry.online ? t('online') : t('offline')),
-            entry.online || entry.lastSeen === undefined
-              ? null
-              : h('div', { style: styles.detail }, new Date(entry.lastSeen).toLocaleString())),
-          h('td', { style: styles.cell },
-            entry.online ? h('button', { key: 'open', style: styles.button, onClick: () => window.open(`/${entry.id}/`, '_blank') }, t('open')) : null,
+        // One card per environment, matching how the Plugin Market draws its records:
+        // name and metadata on the left, actions as pills on the right.
+        const cards = state.environments.map((entry) => h('div', { key: entry.id, style: styles.card },
+          h('div', { style: styles.cardMain },
+            h('div', { style: styles.cardName }, entry.label),
+            entry.hostname === undefined ? null : h('div', { style: styles.detail }, entry.hostname),
+            h('div', { style: styles.cardMeta },
+              h('span', { style: entry.online ? styles.tagOk : styles.tag },
+                entry.online ? t('online') : t('offline')),
+              h('span', { style: styles.tag }, `/${entry.id}/`),
+              h('span', { style: styles.tag }, entry.tokenHint),
+              entry.online || entry.lastSeen === undefined
+                ? null
+                : h('span', { style: styles.detail }, new Date(entry.lastSeen).toLocaleString()))),
+          h('div', { style: styles.cardActions },
+            entry.online
+              ? h('button', { key: 'open', style: styles.button, onClick: () => window.open(`/${entry.id}/`, '_blank') }, t('open'))
+              : null,
             // The name is the only thing an operator can change: the id is the node's
             // identity and its URL is built from it.
-            h('button', {
-              key: 'rename', style: styles.button, disabled: busy !== '',
-              onClick: () => void rename(entry),
-            }, t('rename')),
+            h('button', { key: 'rename', style: styles.button, disabled: busy !== '', onClick: () => void rename(entry) }, t('rename')),
             h('button', { key: 'rot', style: styles.button, disabled: busy !== '', onClick: () => void rotate(entry) }, t('rotate')),
-            h('button', { key: 'rm', style: styles.button, disabled: busy !== '', onClick: () => void remove(entry) }, t('remove')))))
+            h('button', { key: 'rm', style: styles.buttonDanger, disabled: busy !== '', onClick: () => void remove(entry) }, t('remove')))))
 
-        const table = h('table', { style: styles.table },
-          h('thead', null, h('tr', null,
-            ['colName', 'colPath', 'colToken', 'colState', 'colActions'].map((key) => h('th', { key, style: styles.cell }, t(key))))),
-          h('tbody', null, state.environments.length === 0
-            ? h('tr', null, h('td', { colSpan: 5, style: { ...styles.cell, ...styles.dim } }, t('empty')))
-            : rows))
-
-        children.push(h('div', { key: 'table', style: { marginTop: 14 } }, table))
-        children.push(h('div', { key: 'form', style: styles.form },
-          h('label', { key: 'l' }, `${t('labelLabel')} `),
-          h('input', {
-            key: 'i', style: styles.input, value: label,
-            placeholder: t('labelPlaceholder'),
-            onChange: (event) => setLabel(event.target.value),
-          }),
-          h('button', { key: 'b', style: styles.button, disabled: busy !== '', onClick: () => void create() },
-            busy === 'create' ? t('creating') : t('create'))))
+        children.push(h('div', { key: 'list' },
+          h('div', { style: styles.sectionTitle }, t('sectionEnvironments')),
+          state.environments.length === 0
+            ? h('div', { style: styles.note }, t('empty'))
+            : h('div', null, cards),
+          h('div', { key: 'form', style: styles.form },
+            h('label', { key: 'l', style: styles.formLabel }, t('labelLabel')),
+            h('input', {
+              key: 'i', style: styles.input, value: label,
+              placeholder: t('labelPlaceholder'),
+              onChange: (event) => setLabel(event.target.value),
+            }),
+            h('button', { key: 'b', style: styles.buttonPrimary, disabled: busy !== '', onClick: () => void create() },
+              busy === 'create' ? t('creating') : t('create')))))
       } else {
         children.push(h('div', { key: 'edge', style: styles.note }, t('edgeNote')))
       }
