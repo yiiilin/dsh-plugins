@@ -4,7 +4,32 @@ This repository targets the DSH Web bundle, not only the `@deepseek-ai/dsh` CLI
 package. Compatibility must be checked against the exact DSH packages that each
 plugin injects and the Cordis services/Slots used by its Host and Client halves.
 
-## Unified Package
+## Standalone Packages (current)
+
+`0.3.0` ships eight packages that install independently; there is no aggregate package.
+Verified against DSH `0.2.1-rc.2`: the workspace suite passes 361 tests and
+`npm run check` validates all eight.
+
+| Package | Verified injections |
+| --- | --- |
+| `gateway` | `webServer`, `settings`, `fs`, `sandboxPolicy`, `agents` |
+| `supervisor` | `webServer`, `settings` |
+| `delegate-mode` | `connection`, `locale`, `slots`, `sessions` |
+| `delete-session` | `slots`, `sessions` |
+| `git-graph` | `slots`, `locale`, `sidebarRight`, `sidebarRightTabs`, `remote`, `remote.session` |
+| `desktop-vnc` | `slots`, `locale`, `sidebarRightTabs`, `connection` |
+| `session-list-cache` | `sessions` |
+| `tool-restrict-presets` | `agents` |
+
+`auth-webserver` and `fleet` were retired in `0.3.0`: the Host ships `dsh-authorization`,
+and `gateway` replaces the SSH fleet model with a reverse tunnel.
+
+## Unified Package (historical)
+
+> The aggregate package described in this section no longer exists. It was split into
+> standalone packages in `0.2.1` and two of the resulting packages were retired in
+> `0.3.0`. The text below is kept as the record of what that package was, not as a
+> current compatibility statement.
 
 The workspace root defines `@yiln-dsh/dsh-plugins@0.2.1`, with seven internal Host
 modules and one composed Client entry. Its current peer window is

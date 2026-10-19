@@ -8,8 +8,26 @@ the plugins it actually runs.
 The workspace root is private and holds no plugin code: no `dsh.bundle`, no
 `cordis.patch.yml`, no aggregate Client bundle.
 
-Current version: `0.2.1`. Verified target: DSH `0.2.1-rc.2`. See
+Current version: `0.3.0`. Verified target: DSH `0.2.1-rc.2`. See
 [compatibility notes](COMPATIBILITY.md) for the exact scope.
+
+## Breaking change in `0.3.0`: two packages retired, three renamed
+
+Two packages were removed and three were renamed. A profile that still names an old one
+will not mount, so update it before restarting.
+
+| Before | After | Why |
+| --- | --- | --- |
+| `pkgs/daemon` (`@yiln-dsh/dsh-daemon`) | `pkgs/gateway` (`@yiln-dsh/dsh-gateway`) | "daemon" described every plugin here; this one is the entry to other machines |
+| `pkgs/web-daemon` (`@yiln-dsh/dsh-web-daemon`) | `pkgs/supervisor` | it manages systemd and recovers sessions, not the web surface |
+| `pkgs/session-mode` (`@yiln-dsh/dsh-session-mode`) | `pkgs/delegate-mode` | matches the mode it controls |
+| `pkgs/auth-webserver` | — | the Host ships `dsh-authorization`, which serves the login page itself |
+| `pkgs/fleet` | — | `gateway` does the same job with a reverse tunnel instead of SSH |
+
+Three names in this release are unchanged on purpose, because each one holds data that a
+rename would strand: the `/api/session-mode` route and its RPC method, the
+`/root/.dsh/daemon/` and `/root/.dsh/session-modes/` state directories, and the
+`delegate-writes` value stored per session.
 
 ## Breaking change in `0.2.0`
 

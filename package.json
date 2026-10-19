@@ -1,6 +1,6 @@
 {
   "name": "yiln-dsh-plugins-workspace",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Workspace of independently installable DeepSeek Harness plugins. Each package lives under pkgs/ and mounts its own dsh.bundle layer, so a profile installs only the plugins it needs.",
