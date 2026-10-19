@@ -366,8 +366,9 @@ window.__ModuleLoader__.load({
               h('div', { style: styles.cardMeta },
                 h('span', { style: entry.online ? styles.tagOk : styles.tag },
                   entry.online ? t('online') : t('offline')),
-                h('span', { style: styles.tag }, `/${entry.id}/`),
-                h('span', { style: styles.tag }, entry.tokenHint))),
+                // Status and path only: the token prefix that used to sit here is
+                // still part of a credential, and nothing on this card needs it.
+                  h('span', { style: styles.tag }, `/${entry.id}/`))),
             h('div', { style: styles.cardActions },
             entry.online
               ? h('button', { key: 'open', style: styles.button, onClick: () => window.open(`/${entry.id}/`, '_blank') }, t('open'))

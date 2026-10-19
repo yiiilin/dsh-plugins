@@ -46,7 +46,6 @@ are unchanged, so an existing profile only needs new package addresses — see
 
 | Package | Loader row ID | Purpose |
 | --- | --- | --- |
-| [`pkgs/auth-webserver`](pkgs/auth-webserver) | `webserver-auth` | Authenticated LAN gateway, TOTP/Passkeys, PWA, mobile layout and configuration editor. |
 | [`pkgs/delete-session`](pkgs/delete-session) | `dsh-delete-session` | Confirmed single/batch deletion with subagent cascade and guarded persistence paths. |
 | [`pkgs/git-graph`](pkgs/git-graph) | `dsh-git-graph` | Right-sidebar Git history, working-tree changes and file diffs. |
 | [`pkgs/session-list-cache`](pkgs/session-list-cache) | `session-list-cache` | Coalesces and caches concurrent session enumeration. |
@@ -54,7 +53,6 @@ are unchanged, so an existing profile only needs new package addresses — see
 | [`pkgs/session-mode`](pkgs/session-mode) | `session-mode` | Per-session `normal` / `delegate-writes` permissions with pruned catalogs and separate system prompts. |
 | [`pkgs/tool-restrict-presets`](pkgs/tool-restrict-presets) | `tool-restrict-presets` | Applies `agent.ctx.tools.restrict({ allow: [] })` to every Agent running a listed Agent Preset. |
 | [`pkgs/desktop-vnc`](pkgs/desktop-vnc) | `dsh-desktop-vnc` | Right-sidebar tab showing a Chromium browser inside a nested Xephyr display. |
-| [`pkgs/fleet`](pkgs/fleet) | `fleet` | One origin, many development boxes: path-prefix gateway, dynamic profiles and process supervision for remote machines. |
 
 ## Install
 
@@ -109,7 +107,7 @@ actually used:
 
 ```bash
 dsh plugin --profile web remove @yiln-dsh/dsh-plugins
-dsh plugin --profile web add "file:/path/to/dsh-plugin/pkgs/auth-webserver" ...
+dsh plugin --profile web add "file:/path/to/dsh-plugin/pkgs/daemon" ...
 ```
 
 Do not run both the aggregate package and the split packages at once: their row

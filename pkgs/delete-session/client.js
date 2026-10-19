@@ -16,7 +16,15 @@ window.__ModuleLoader__.load({
     const primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 
     const inject = ["slots", "sessions"];
-    const API_PATH = "/_dsh/delete-session/delete";
+    /**
+     * Resolved at call time, not stored as a bare path.
+     *
+     * The GUI is served under an environment prefix (`/main/`, `/env-6-13/`), and a
+     * root-absolute `/_dsh/...` escapes it: the request lands on the prefix-less route,
+     * which answers with a redirect to the login page. Deleting a session then appears to
+     * do nothing, because an HTML login page fails to parse as JSON.
+     */
+    const apiPath = () => new URL("_dsh/delete-session/delete", document.baseURI).href;
     const MAX_BATCH_SIZE = 100;
     const STYLE_ID = "dsh-plugin-delete-session-style";
     /** Widest gap, in pixels, between a session row's action button and its own popup menu. */
@@ -260,7 +268,7 @@ div[role="treeitem"]:has(> .dss-session-checkbox-host){position:relative}
     }
 
     async function requestDelete(sessionId) {
-      const response = await fetch(API_PATH, {
+      const response = await fetch(apiPath(), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ sessionId, confirm: true }),
@@ -278,7 +286,7 @@ div[role="treeitem"]:has(> .dss-session-checkbox-host){position:relative}
     }
 
     async function requestDeleteMany(sessionIds) {
-      const response = await fetch(API_PATH, {
+      const response = await fetch(apiPath(), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ sessionIds, confirm: true }),
