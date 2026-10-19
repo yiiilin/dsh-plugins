@@ -243,7 +243,7 @@ test('the patch declares exactly one row naming this package', async () => {
   assert.equal(rows.length, 1)
   const insert = rows[0].insert
   assert.equal(insert.length, 1)
-  assert.equal(insert[0].name, '@yiln-dsh/dsh-daemon')
+  assert.equal(insert[0].name, '@yiln-dsh/dsh-gateway')
 })
 
 test('the patch defaults to the main role with no prefix', async () => {

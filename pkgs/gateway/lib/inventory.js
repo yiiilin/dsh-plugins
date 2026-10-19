@@ -6,7 +6,7 @@
  * party that knows its own layout, which is why this lives on the edge and not on the
  * main node.
  *
- * @module @yiln-dsh/dsh-daemon/inventory
+ * @module @yiln-dsh/dsh-gateway/inventory
  */
 
 import { readdir, readFile, stat } from 'node:fs/promises'

@@ -19,7 +19,7 @@
  * is rewritten to `Path=/<id>/`: without it every profile cookie would be sent
  * to the portal and to every other profile.
  *
- * @module @yiln-dsh/dsh-daemon/entry
+ * @module @yiln-dsh/dsh-gateway/entry
  */
 
 import { createServer, request as httpRequest } from 'node:http'

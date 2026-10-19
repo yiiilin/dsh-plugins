@@ -10,7 +10,7 @@
  * container would not be reproduced correctly by a generic template, so those cases are
  * refused with a reason rather than written out wrong.
  *
- * @module @yiln-dsh/dsh-daemon/systemd
+ * @module @yiln-dsh/dsh-gateway/systemd
  */
 
 import { execFile } from 'node:child_process'

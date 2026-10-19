@@ -1,10 +1,10 @@
-# daemon
+# gateway
 
 One entry, many profiles. Standalone package
-[`@yiln-dsh/dsh-daemon`](../../docs/modules/daemon.md). Loader row: `daemon`.
+[`@yiln-dsh/dsh-gateway`](../../docs/changes/federation-design.md). Loader row: `gateway`.
 
 ```bash
-dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/daemon"
+dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/gateway"
 ```
 
 See the [root README](../../README.md) for the workspace layout, migration and testing,

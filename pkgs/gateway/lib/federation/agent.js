@@ -9,7 +9,7 @@
  * to that authority — the harness fences on them, and a browser that reached it through
  * the main node presents the main node's authority instead.
  *
- * @module @yiln-dsh/dsh-daemon/federation/agent
+ * @module @yiln-dsh/dsh-gateway/federation/agent
  */
 
 import { request as httpRequest } from 'node:http'

@@ -16,14 +16,14 @@
  * environment is another machine's dsh, and an environment exists only while its tunnel
  * is up.
  *
- * @module @yiln-dsh/dsh-daemon
+ * @module @yiln-dsh/dsh-gateway
  */
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import { createAdmin } from './lib/admin.js'
-import { createAuth } from './lib/auth/gateway.js'
+import { createAuth } from './lib/auth/session.js'
 import { startEntry } from './lib/entry.js'
 import { createTunnelAgent } from './lib/federation/agent.js'
 import { createTunnelHub, createTunnelServer, tokenOf, TUNNEL_PATH } from './lib/federation/hub.js'
@@ -36,7 +36,7 @@ import {
 } from './lib/model-config.js'
 import { parseRegistry, serializeRegistry } from './lib/registry.js'
 
-export const name = 'daemon'
+export const name = 'gateway'
 
 /** Nothing is injected: the daemon owns its listener and reads the harness port. */
 export const inject = []

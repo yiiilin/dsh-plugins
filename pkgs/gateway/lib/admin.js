@@ -6,7 +6,7 @@
  * response — an unhandled rejection would take the whole daemon, and with it the panel
  * the operator needs to see what broke.
  *
- * @module @yiln-dsh/dsh-daemon/admin
+ * @module @yiln-dsh/dsh-gateway/admin
  */
 
 import { deriveId, freshToken, normalizeEnvironment } from './registry.js'

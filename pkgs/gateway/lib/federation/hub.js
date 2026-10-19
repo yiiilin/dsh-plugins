@@ -11,7 +11,7 @@
  * consulted. That is why the edge can proxy straight to its harness without asking its
  * own user to log in again.
  *
- * @module @yiln-dsh/dsh-daemon/federation/hub
+ * @module @yiln-dsh/dsh-gateway/federation/hub
  */
 
 import { WebSocketServer } from 'ws'

@@ -12,7 +12,7 @@
  * and reloads on `{ ok: true }`, so a failure is JSON too — never a rendered
  * error page, which the page could not display.
  *
- * @module @yiln-dsh/dsh-daemon/auth
+ * @module @yiln-dsh/dsh-gateway/auth
  */
 
 import { createHash, timingSafeEqual } from 'node:crypto'

@@ -14,7 +14,7 @@
  * uses `off` as a key, so a round trip produces a config the schema rejects. This was
  * learned the hard way.
  *
- * @module @yiln-dsh/dsh-daemon/model-config
+ * @module @yiln-dsh/dsh-gateway/model-config
  */
 
 /** Patch rows that carry model configuration. */

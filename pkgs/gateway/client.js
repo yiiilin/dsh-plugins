@@ -1,13 +1,13 @@
 window.__ModuleLoader__.load({
-  id: '@yiln-dsh/dsh-daemon',
+  id: '@yiln-dsh/dsh-gateway',
   factory: (require) => {
     const React = require('react')
     const { useCallback, useEffect, useState } = React
-    const NS = 'daemon'
+    const NS = 'gateway'
     const h = React.createElement
 
     const ZH = {
-      title: '开发守护',
+      title: '联邦网关',
       hint: '一个入口，多个环境。每个环境是另一台机器上的完整 dsh：它自己跑工具、自己存会话，所以没有网络延迟。',
       refresh: '刷新',
       unreachable: '无法读取守护状态（管理接口只接受已登录的请求）。',
@@ -34,7 +34,7 @@ window.__ModuleLoader__.load({
     }
 
     const EN = {
-      title: 'Daemon',
+      title: 'Federation gateway',
       hint: 'One entry, many environments. Each is a complete dsh on another machine: it runs its own tools and keeps its own sessions, so there is no network latency.',
       refresh: 'Refresh',
       unreachable: 'Could not read daemon state (the admin API only answers authenticated requests).',
@@ -482,16 +482,16 @@ window.__ModuleLoader__.load({
       // Rail button …
       ctx.effect(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
         name: 'sidebar.panellist',
-        id: 'daemon',
+        id: 'gateway',
         order: 40,
         label: () => t('title'),
-      }, PanelIcon)), 'daemon: panel entry')
+      }, PanelIcon)), 'gateway: panel entry')
       // … and the page it opens, keyed by the same id.
       ctx.effect(() => ctx.slots.inject('main', () => ctx.slots.register({
         name: 'main',
-        key: 'daemon',
+        key: 'gateway',
         inject: () => ({}),
-      }, makePanelPage(t))), 'daemon: panel page')
+      }, makePanelPage(t))), 'gateway: panel page')
       // The switcher lives at the bottom of the sidebar: `sidebar.workspaces` is a
       // single slot owned upstream, so there is no "above the workspace list" to use.
       ctx.effect(() => ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({

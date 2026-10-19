@@ -14,7 +14,7 @@
  * reason `dsh-ssh` uses one, and a lesson from every half-written protocol that tried to
  * rely on separators instead.
  *
- * @module @yiln-dsh/dsh-daemon/federation/frames
+ * @module @yiln-dsh/dsh-gateway/federation/frames
  */
 
 /** Request/response lifecycle tags. */

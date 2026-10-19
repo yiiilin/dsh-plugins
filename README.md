@@ -49,6 +49,7 @@ are unchanged, so an existing profile only needs new package addresses — see
 | [`pkgs/delete-session`](pkgs/delete-session) | `dsh-delete-session` | Confirmed single/batch deletion with subagent cascade and guarded persistence paths. |
 | [`pkgs/git-graph`](pkgs/git-graph) | `dsh-git-graph` | Right-sidebar Git history, working-tree changes and file diffs. |
 | [`pkgs/session-list-cache`](pkgs/session-list-cache) | `session-list-cache` | Coalesces and caches concurrent session enumeration. |
+| [`pkgs/gateway`](pkgs/gateway) | `gateway` | Federation gateway: edges dial in over a reverse tunnel, and its panel lists and switches between them. |
 | [`pkgs/supervisor`](pkgs/supervisor) | `supervisor` | Systemd management, server metrics and interrupted-session recovery. |
 | [`pkgs/session-mode`](pkgs/session-mode) | `session-mode` | Per-session `normal` / `delegate-writes` permissions with pruned catalogs and separate system prompts. |
 | [`pkgs/tool-restrict-presets`](pkgs/tool-restrict-presets) | `tool-restrict-presets` | Applies `agent.ctx.tools.restrict({ allow: [] })` to every Agent running a listed Agent Preset. |
@@ -107,7 +108,7 @@ actually used:
 
 ```bash
 dsh plugin --profile web remove @yiln-dsh/dsh-plugins
-dsh plugin --profile web add "file:/path/to/dsh-plugin/pkgs/daemon" ...
+dsh plugin --profile web add "file:/path/to/dsh-plugin/pkgs/gateway" ...
 ```
 
 Do not run both the aggregate package and the split packages at once: their row

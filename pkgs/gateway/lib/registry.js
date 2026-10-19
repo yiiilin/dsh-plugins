@@ -10,7 +10,7 @@
  * it *is* that environment. `machineId` only helps a human tell two similarly named hosts
  * apart, and warns when a machine is enrolled twice.
  *
- * @module @yiln-dsh/dsh-daemon/registry
+ * @module @yiln-dsh/dsh-gateway/registry
  */
 
 import { randomBytes } from 'node:crypto'
