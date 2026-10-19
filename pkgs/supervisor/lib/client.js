@@ -246,7 +246,11 @@ window.__ModuleLoader__.load({
 				options.method = "POST";
 				options.body = JSON.stringify(payload);
 			}
-			const response = await fetch(path, options);
+			// Resolved against `document.baseURI`, not the site root: the GUI is served
+			// under an environment prefix (`/main/`, `/env-6-13/`), and a root-absolute
+			// path escapes it — the request lands on the prefix-less route and is
+			// redirected to the login page, which reads here as an empty metrics card.
+			const response = await fetch(new URL(path.replace(/^\//u, ""), document.baseURI), options);
 			let data;
 			try {
 				data = await response.json();

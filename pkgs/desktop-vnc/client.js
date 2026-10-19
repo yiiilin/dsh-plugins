@@ -30,15 +30,20 @@ window.__ModuleLoader__.load({
     /** The tab type discriminator, also the pane-body registration key. */
     const VNC_TAB_KIND = 'desktop-vnc'
     /** Host route prefix (contract §1); no other prefix may be used. */
-    const ASSET_BASE = '/_dsh/desktop-vnc/asset'
+    // Every one of these is resolved against `document.baseURI` rather than the site
+    // root: the GUI is served under an environment prefix (`/main/`, `/env-6-13/`), and a
+    // root-absolute path escapes it — the request lands on the prefix-less route and is
+    // redirected to the login page, which reads as a broken panel.
+    const BASE = () => (typeof document === 'undefined' ? 'http://localhost/' : document.baseURI)
+    const ASSET_BASE = () => new URL('_dsh/desktop-vnc/asset', BASE()).href
     /**
      * noVNC's RFB entry module. The Host serves only `core/**` and `vendor/**`,
      * and noVNC resolves its own `./util/*.js` imports relatively, so the loader
      * URL must be this exact path — not an `app/` bundle.
      */
-    const RFB_MODULE_PATH = `${ASSET_BASE}/core/rfb.js`
-    const WS_PATH = '/_dsh/desktop-vnc/ws'
-    const STATE_PATH = '/_dsh/desktop-vnc/state'
+    const RFB_MODULE_PATH = () => `${ASSET_BASE()}/core/rfb.js`
+    const WS_PATH = () => new URL('_dsh/desktop-vnc/ws', BASE()).href
+    const STATE_PATH = () => new URL('_dsh/desktop-vnc/state', BASE()).href
 
     const ZH_DICT = {
       'title': '桌面 VNC',
@@ -221,20 +226,22 @@ window.__ModuleLoader__.load({
     // ===== URL helpers =====
 
     /**
-     * The VNC WebSocket URL for the page's origin.
-     * @param location - `window.location` (or any `{protocol, host}`).
-     * @param path - the Host upgrade path.
-     * @returns `ws(s)://<host><path>`, following the page's own scheme.
+     * The VNC WebSocket URL for the page origin.
+     *
+     * Takes the absolute http(s) URL of the Host upgrade route and swaps the scheme, so
+     * the environment prefix it was resolved with survives — building the URL from a bare
+     * path dropped the prefix and connected to a route that answers with the login page.
+     *
+     * @param httpUrl - absolute http(s) URL of the upgrade route.
+     * @returns the same URL over ws(s).
      */
-    function wsUrlFor(location, path) {
-      const protocol = location?.protocol === 'https:' ? 'wss:' : 'ws:'
-      const host = typeof location?.host === 'string' && location.host !== '' ? location.host : 'localhost'
-      return `${protocol}//${host}${path}`
+    function wsUrlFor(httpUrl) {
+      return String(httpUrl).replace(/^http/u, "ws")
     }
 
     /** @returns the absolute URL of noVNC's RFB module, as served by the Host. */
     function rfbModuleUrl() {
-      return RFB_MODULE_PATH
+      return RFB_MODULE_PATH()
     }
 
     // ===== locale fallback =====
@@ -570,7 +577,7 @@ window.__ModuleLoader__.load({
      */
     function loadRfbModule() {
       if (rfbModulePromise === null) {
-        rfbModulePromise = Promise.resolve().then(() => rfbImport(RFB_MODULE_PATH)).then((mod) => {
+        rfbModulePromise = Promise.resolve().then(() => rfbImport(RFB_MODULE_PATH())).then((mod) => {
           const RFB = mod?.default
           if (typeof RFB !== 'function') throw new Error('noVNC core/rfb.js did not export a constructor')
           return RFB
@@ -605,7 +612,7 @@ window.__ModuleLoader__.load({
      * @returns the parsed state document.
      */
     async function readDesktopState(fetchImpl) {
-      const response = await fetchImpl(STATE_PATH, { headers: { accept: 'application/json' } })
+      const response = await fetchImpl(STATE_PATH(), { headers: { accept: 'application/json' } })
       if (response?.ok !== true) throw new Error(`desktop-vnc state returned HTTP ${response?.status}`)
       const state = await response.json()
       if (state === null || typeof state !== 'object') throw new Error('desktop-vnc state was not an object')
@@ -843,7 +850,7 @@ window.__ModuleLoader__.load({
           const credentials = typeof passwordRef.current === 'string' ? { password: passwordRef.current } : {}
           let rfb
           try {
-            rfb = new RFB(hostRef.current, wsUrlFor(window.location, WS_PATH), {
+            rfb = new RFB(hostRef.current, wsUrlFor(WS_PATH()), {
               credentials,
               wsProtocols: ['binary', 'base64'],
               scaleViewport: scale,

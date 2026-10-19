@@ -73,7 +73,11 @@ test('the tab body never reads a prop the seat does not pass', async () => {
   // Nothing else may be read from the seat either: the Host half resolves the workspace
   // from the sandbox policy when a request carries no path.
   // The workspace comes from the session list through the closure, not from the seat.
-  assert.match(code, /remote\.session\.list\(\)/u)
+  assert.match(code, /remote\.session\.list\(\{\}\)/u)
+  // The reply is `{ ok, value: { items } }`, not an array. Reading it as an array was
+  // the bug that kept the graph empty with no error anywhere.
+  assert.match(code, /result\.value\?\.items/u)
+  assert.match(code, /result\?\.ok !== true/u)
   assert.ok(!/props\.sessionId/u.test(code), 'the body must not read props.sessionId')
 })
 

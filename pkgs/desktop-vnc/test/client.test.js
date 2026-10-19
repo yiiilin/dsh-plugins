@@ -63,7 +63,21 @@ function loadFactory(sandboxExtras = {}) {
   let entry = null;
   const window = sandboxExtras.window ?? {};
   window.__ModuleLoader__ = { load(spec) { entry = spec } };
-  const sandbox = { window, ...sandboxExtras };
+  // `URL` and `document` are browser globals the bundle resolves its routes
+  // against; the sandbox has to provide them the way a real page does.
+  const sandbox = {
+    URL,
+    document: {
+    baseURI: "http://127.0.0.1:3080/main/",
+    head: { append() {} },
+    createElement: () => ({ id: "", dataset: {}, textContent: "", remove() {} }),
+    addEventListener() {},
+    removeEventListener() {},
+    fullscreenElement: null,
+  },
+    ...sandboxExtras,
+    window,
+  };
   sandbox.window = window;
   vm.createContext(sandbox);
   vm.runInContext(CLIENT_SOURCE, sandbox, { filename: CLIENT_PATH, timeout: 2000 });
@@ -123,15 +137,20 @@ test("declares the frozen contract identities", () => {
   assert.deepEqual([...inject].sort(), ["connection", "locale", "sidebarRightTabs", "slots"]);
   assert.equal(__test.VNC_TAB_ID, "@yiln-dsh/dsh-desktop-vnc");
   assert.equal(__test.VNC_TAB_KIND, "desktop-vnc");
-  assert.equal(__test.ASSET_BASE, "/_dsh/desktop-vnc/asset");
-  assert.equal(__test.RFB_MODULE_PATH, "/_dsh/desktop-vnc/asset/core/rfb.js");
-  assert.equal(__test.WS_PATH, "/_dsh/desktop-vnc/ws");
-  assert.equal(__test.STATE_PATH, "/_dsh/desktop-vnc/state");
+    // These are readers, not constants: each resolves against `document.baseURI` at
+    // call time so the environment prefix the GUI is served under survives.
+    assert.equal(typeof __test.ASSET_BASE, "function");
+    assert.equal(typeof __test.RFB_MODULE_PATH, "function");
+    assert.equal(typeof __test.WS_PATH, "function");
+    assert.equal(typeof __test.STATE_PATH, "function");
+    assert.match(__test.ASSET_BASE(), /\/_dsh\/desktop-vnc\/asset$/u);
+    assert.match(__test.WS_PATH(), /\/_dsh\/desktop-vnc\/ws$/u);
+    assert.match(__test.STATE_PATH(), /\/_dsh\/desktop-vnc\/state$/u);
 });
 
 test("loads noVNC core through the host route, never the app bundle", () => {
   const { __test } = exportsOf();
-  assert.equal(__test.rfbModuleUrl(), "/_dsh/desktop-vnc/asset/core/rfb.js");
+    assert.match(__test.rfbModuleUrl(), /\/_dsh\/desktop-vnc\/asset\/core\/rfb\.js$/u);
   assert.doesNotMatch(CLIENT_SOURCE, /\/_dsh\/desktop-vnc\/asset\/app\//u);
   // The asset route only exists if the served tree the URL points at exists.
   assert.doesNotThrow(() => readFileSync(NOVNC_RFB, "utf8"));
@@ -139,11 +158,12 @@ test("loads noVNC core through the host route, never the app bundle", () => {
 
 test("builds the WebSocket URL from the page scheme", () => {
   const { __test } = exportsOf();
-  assert.equal(__test.wsUrlFor({ protocol: "http:", host: "127.0.0.1:3080" }, __test.WS_PATH),
-    "ws://127.0.0.1:3080/_dsh/desktop-vnc/ws");
-  assert.equal(__test.wsUrlFor({ protocol: "https:", host: "desk.test" }, __test.WS_PATH),
-    "wss://desk.test/_dsh/desktop-vnc/ws");
-  assert.equal(__test.wsUrlFor({}, __test.WS_PATH), "ws://localhost/_dsh/desktop-vnc/ws");
+    // The prefix must survive: building from a bare path dropped it and connected to a
+    // route that answers with the login page.
+    assert.equal(__test.wsUrlFor("http://127.0.0.1:3080/main/_dsh/desktop-vnc/ws"),
+      "ws://127.0.0.1:3080/main/_dsh/desktop-vnc/ws");
+    assert.equal(__test.wsUrlFor("https://dsh.yiln.de/env-6-13/_dsh/desktop-vnc/ws"),
+      "wss://dsh.yiln.de/env-6-13/_dsh/desktop-vnc/ws");
 });
 
 // ===== state machine =====

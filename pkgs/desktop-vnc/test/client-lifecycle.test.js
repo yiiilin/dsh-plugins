@@ -20,7 +20,10 @@ import vm from "node:vm";
 
 const CLIENT_PATH = fileURLToPath(new URL("../client.js", import.meta.url));
 const CLIENT_SOURCE = readFileSync(CLIENT_PATH, "utf8");
-const EXPECTED_RFB_PATH = "/_dsh/desktop-vnc/asset/core/rfb.js";
+// Resolved against `document.baseURI`, so the environment prefix the GUI is served under
+// is part of every route the page uses.
+const BASE = "http://127.0.0.1:3080/main/";
+const EXPECTED_RFB_PATH = `${BASE}_dsh/desktop-vnc/asset/core/rfb.js`;
 
 // ===== a tiny React-shaped hook runtime =====
 
@@ -213,6 +216,8 @@ async function mountPage(options = {}) {
 
   const headChildren = [];
   const document = {
+    // The bundle resolves its routes against the page base, so the fixture needs one.
+    baseURI: "http://127.0.0.1:3080/main/",
     fullscreenElement: null,
     head: { append: (node) => headChildren.push(node) },
     addEventListener: () => {},
@@ -228,7 +233,7 @@ async function mountPage(options = {}) {
 
   let entry = null;
   window.__ModuleLoader__ = { load: (spec) => { entry = spec; } };
-  const sandbox = { window, document, navigator, console, Promise, Object, Array, Error, JSON, setTimeout, clearTimeout, fetch: window.fetch };
+  const sandbox = { window, document, navigator, console, Promise, Object, Array, Error, JSON, URL, setTimeout, clearTimeout, fetch: window.fetch };
   vm.createContext(sandbox);
   vm.runInContext(CLIENT_SOURCE, sandbox, { filename: CLIENT_PATH, timeout: 2000 });
   assert.notEqual(entry, null, "the bundle must register with window.__ModuleLoader__");
@@ -397,7 +402,7 @@ test("connects with the contract URL, options, and subprotocols", async () => {
   assert.deepEqual(page.importedPaths, [EXPECTED_RFB_PATH]);
   assert.equal(page.created.length, 1);
   const rfb = page.viewer();
-  assert.equal(rfb.url, "ws://127.0.0.1:3080/_dsh/desktop-vnc/ws");
+  assert.equal(rfb.url, "ws://127.0.0.1:3080/main/_dsh/desktop-vnc/ws");
   assert.equal(rfb.options.resizeSession, false, "the desktop resolution must not be changed");
   assert.equal(rfb.options.scaleViewport, true);
   assert.equal(rfb.options.viewOnly, false);

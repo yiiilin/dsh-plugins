@@ -1018,7 +1018,11 @@ window.__ModuleLoader__.load({
 				const options = { headers: { "content-type": "application/json" } };
 				options.method = "POST";
 				options.body = JSON.stringify(payload === undefined ? {} : payload);
-				const response = await fetch(`/_dsh/git-graph/${method}`, options);
+				// Resolved against `document.baseURI`, not the site root: the GUI is served
+				// under an environment prefix (`/main/`, `/env-6-13/`), and a root-absolute
+				// path would escape it — the request would land on the prefix-less route and
+				// be redirected to the login page, which reads as a failed load.
+				const response = await fetch(new URL(`_dsh/git-graph/${method}`, document.baseURI), options);
 				let data;
 				try {
 					data = await response.json();
@@ -1053,7 +1057,8 @@ window.__ModuleLoader__.load({
 			// served tree, and resolve 'vs/editor/editor.main' once. Language features
 			// for css/html/json/typescript register on demand when a model with that
 			// language id is created.
-			const MONACO_BASE = '/_dsh/git-graph/monaco/vs'
+			// Same reason as the API path: an environment prefix must not be escaped.
+			const MONACO_BASE = new URL('_dsh/git-graph/monaco/vs', document.baseURI).href
 			let monacoPromise = null
 			function loadMonaco() {
 				if (monacoPromise) return monacoPromise
@@ -1093,7 +1098,7 @@ window.__ModuleLoader__.load({
 			// `html: false` escapes any embedded HTML in the workspace file, and
 			// markdown-it's built-in validateLink rejects javascript:/vbscript:/
 			// file:/data: hrefs, so the rendered HTML can be injected as-is.
-			const MARKDOWN_IT_URL = '/_dsh/git-graph/vendor/markdown-it.mjs'
+			const MARKDOWN_IT_URL = new URL('_dsh/git-graph/vendor/markdown-it.mjs', document.baseURI).href
 			let markdownItPromise = null
 			function loadMarkdownIt() {
 				if (markdownItPromise) return markdownItPromise
@@ -1849,11 +1854,13 @@ window.__ModuleLoader__.load({
 					let cancelled = false
 					void (async () => {
 						try {
-							// `session.list()` answers an array already ordered by activity,
-							// newest first, and each summary carries the session's cwd.
-							const rows = await remote.session.list()
-							if (cancelled) return
-							const freshest = (Array.isArray(rows) ? rows : [])
+							// `session.list()` answers `{ ok, value: { items } }`, and each item
+							// carries the session's cwd. The items are already ordered by
+							// activity, so the first one with a cwd is the freshest.
+							const result = await remote.session.list({})
+							if (cancelled || result?.ok !== true) return
+							const items = result.value?.items
+							const freshest = (Array.isArray(items) ? items : [])
 								.find((row) => typeof row?.cwd === 'string' && row.cwd !== '')
 							if (freshest !== undefined) setCwd(freshest.cwd)
 						} catch {
