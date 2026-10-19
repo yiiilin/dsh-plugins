@@ -68,53 +68,98 @@ window.__ModuleLoader__.load({
      * this page reads as part of the product rather than a form bolted onto it. The
      * values are the market's computed ones, not an approximation of them.
      */
-    const INK = '#0f1115'
-    const MUTED = '#61666b'
-    const FAINT = '#81858c'
-    const HAIRLINE = 'rgba(0,0,0,.1)'
+    /**
+     * Panel styles.
+     *
+     * Every value here is taken from the Plugin Market's own stylesheet
+     * (`dshmarket/src/client/Market.module.css`), not inferred from the rendered page:
+     *
+     *   .root   container-type:inline-size, so the panel is a query container
+     *   .head   flex column, gap 12, padding 4px 4px 6px
+     *   .title  16px / 24px / 500
+     *   .sub    12px / 18px / label-tertiary
+     *   .body   padding 12px 4px 64px
+     *   .card   bg layer-1, 1px border-l2, radius 12, padding 12px 14px,
+     *           flex COLUMN with gap 12
+     *   .nm     15px / 22px / 600
+     *   .desc   12px / 18px / label-tertiary
+     *   .meta   11px
+     *   .tag    11px / 16px, padding 1px 6px, radius 4
+     *
+     * Reading the source is why the earlier attempts kept missing: the values visible
+     * in the DOM at one viewport width are the *computed* result of container queries,
+     * so they were right for that width and wrong for the design.
+     */
+    const INK = '#1f2328'
+    const SECONDARY = '#5c6570'
+    const TERTIARY = '#8b93a1'
+    const HAIRLINE = '#e5e7eb'
     const styles = {
-      // The market's content column: full width, 48px horizontal padding, no max-width
-      // and no centring. A centred 1100px column was the main reason this page did not
-      // line up with anything else in the product.
-      wrap: { padding: '4px 48px 24px', width: '100%', boxSizing: 'border-box' },
-      hint: { margin: '0 0 18px', color: MUTED, fontSize: 12, lineHeight: '18px' },
-      detail: { color: FAINT, fontSize: 11, marginTop: 2 },
-      mono: { fontFamily: 'ui-monospace, monospace', fontSize: 11, color: MUTED },
-      dim: { color: FAINT, fontSize: 12 },
-      ok: { color: '#2f855a', fontSize: 12 },
-      error: { color: '#c53030', fontSize: 12 },
-      note: {
-        marginTop: 12, padding: '12px 14px', borderRadius: 12,
-        border: `1px solid ${HAIRLINE}`, background: '#fff', color: MUTED, fontSize: 12,
+      /** `.root`: a query container, so the panel measures against itself. */
+      root: {
+        height: '100%', display: 'flex', flexDirection: 'column', minWidth: 0,
+        color: INK, position: 'relative', containerType: 'inline-size',
+        // One column for the head and the body. The market's host surface holds this
+        // width by growing padding; standing alone, the panel sets it here so the two
+        // regions cannot disagree about where their content starts.
+        maxWidth: 968, width: '100%', margin: '0 auto', boxSizing: 'border-box',
       },
-      /** One environment. A card, not a table row: the market draws its records this way. */
+      /** `.head`: title and sub share one column with a 12px gap. */
+      head: { display: 'flex', flexDirection: 'column', gap: 12, padding: '4px 0 6px' },
+      /** `.titleRow`: heading and its actions on one baseline. */
+      titleRow: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px 10px' },
+      titleText: { fontSize: 16, lineHeight: '24px', fontWeight: 500, margin: 0, whiteSpace: 'nowrap' },
+      /** `.sub`: the description under the title. */
+      hint: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, lineHeight: '18px', color: TERTIARY, margin: 0 },
+      /**
+       * `.body`: the scrolling region.
+       *
+       * The market's own `.body` has only 4px of side padding because the surface that
+       * hosts it keeps the content at 960px by growing padding instead of setting a
+       * width — its computed padding is `4px 185.5px 6px` at this viewport. Standing
+       * alone here, the panel has to hold that width itself, or the content stretches
+       * to the full window and stops matching at any width past ~1300px.
+       */
+      wrap: { flex: 1, padding: '12px 0 64px', minWidth: 0 },
+      /** `.sectionTitle`: an h3-sized heading inside the body. */
+      sectionTitle: { fontSize: 13, fontWeight: 600, color: INK, lineHeight: '20px', margin: '0 0 8px', padding: '0 4px' },
+      /** `.card`: a COLUMN — content first, then its footer. */
       card: {
-        display: 'flex', alignItems: 'flex-start', gap: 12,
-        padding: '12px 14px', borderRadius: 12, border: `1px solid ${HAIRLINE}`,
-        background: '#fff',
+        background: '#fff', border: `1px solid ${HAIRLINE}`, borderRadius: 12,
+        padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 12,
+        alignSelf: 'start', minWidth: 0,
       },
-      /** Two columns at this width, as the market does; it collapses when space runs out. */
-      grid: {
-        display: 'grid', gap: 10,
-        gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
-      },
+      /** `.row1`: name and the action cluster on one line. */
+      cardRow: { display: 'flex', alignItems: 'flex-start', gap: 10, minWidth: 0 },
       cardMain: { flex: '1 1 auto', minWidth: 0 },
-      cardName: { fontSize: 13, fontWeight: 600, color: INK, marginBottom: 2 },
-      cardMeta: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 4 },
-      cardActions: {
-        display: 'flex', alignItems: 'center', gap: 6, flex: 'none', flexWrap: 'wrap',
-        justifyContent: 'flex-end',
+      /** `.nm`: the name carries the card, so it is the one thing sized up. */
+      cardName: {
+        fontWeight: 600, fontSize: 15, lineHeight: '22px',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
       },
-      /** A 4px chip, like the market's tag row. */
+      /** `.byline`: the row under the name. */
+      cardMeta: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, marginTop: 2, flexWrap: 'wrap' },
+      cardActions: { flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+      /** `.meta`: 11px, not 12. */
+      detail: { fontSize: 11, color: TERTIARY, marginTop: 2 },
+      mono: { fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: 11, color: SECONDARY },
+      dim: { fontSize: 12, color: TERTIARY },
+      ok: { color: '#16a34a', fontSize: 12 },
+      error: { color: '#dc2626', fontSize: 12 },
+      /** `.tag`: 1px 6px, radius 4, 11px over a 16px line. */
       tag: {
-        padding: '1px 6px', borderRadius: 4, border: '1px solid rgba(0,0,0,.12)',
-        fontSize: 11, color: MUTED, whiteSpace: 'nowrap',
+        border: '1px solid #d9dde3', color: SECONDARY, borderRadius: 4,
+        flexShrink: 0, padding: '1px 6px', fontSize: 11, lineHeight: '16px', whiteSpace: 'nowrap',
       },
       tagOk: {
-        padding: '1px 6px', borderRadius: 4, border: '1px solid rgba(47,133,90,.35)',
-        fontSize: 11, color: '#2f855a', whiteSpace: 'nowrap',
+        border: '1px solid #d9dde3', color: '#16a34a', borderRadius: 4,
+        flexShrink: 0, padding: '1px 6px', fontSize: 11, lineHeight: '16px', whiteSpace: 'nowrap',
       },
-      /** An 8px pill. The filled one is the single primary action on the page. */
+      note: {
+        padding: '12px 14px', borderRadius: 12, border: `1px solid ${HAIRLINE}`,
+        background: '#fff', color: TERTIARY, fontSize: 12,
+      },
+      /** The market's pill: 28px tall, 8px radius. */
       button: {
         height: 28, padding: '0 10px', fontSize: 12, cursor: 'pointer', borderRadius: 8,
         border: `1px solid ${HAIRLINE}`, background: 'transparent', color: INK,
@@ -127,28 +172,24 @@ window.__ModuleLoader__.load({
       },
       buttonDanger: {
         height: 28, padding: '0 10px', fontSize: 12, cursor: 'pointer', borderRadius: 8,
-        border: '1px solid rgba(197,48,48,.3)', background: 'transparent', color: '#c53030',
+        border: '1px solid rgba(220,38,38,.3)', background: 'transparent', color: '#dc2626',
         display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap',
       },
       input: {
         height: 28, padding: '0 10px', fontSize: 12, borderRadius: 8,
-        border: `1px solid ${HAIRLINE}`, background: '#fff', color: INK,
-        boxSizing: 'border-box',
+        border: `1px solid ${HAIRLINE}`, background: '#fff', color: INK, boxSizing: 'border-box',
       },
-      form: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 16, flexWrap: 'wrap' },
-      formLabel: { fontSize: 12, color: MUTED, whiteSpace: 'nowrap' },
-      /** The market's section heading: 13px semibold ink, 8px above the content below it. */
-      sectionTitle: { fontSize: 13, fontWeight: 600, color: INK, margin: '18px 0 8px' },
-      /** Its page title row: a 13px semibold name and its controls on one baseline. */
-      titleRow: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '0 0 4px' },
-      titleText: { fontSize: 14, fontWeight: 600, color: INK },
+      form: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, flexWrap: 'wrap' },
+      formLabel: { fontSize: 12, color: SECONDARY, whiteSpace: 'nowrap' },
+      /** `.grid`: exactly two columns, as the market defines it. */
+      grid: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', alignItems: 'start', gap: 10 },
       tokenBox: {
-        margin: '10px 0', padding: '12px 14px', borderRadius: 12,
-        background: 'rgba(214,158,46,.1)', border: '1px solid rgba(214,158,46,.35)',
+        padding: '12px 14px', borderRadius: 12,
+        background: '#fdf3e3', border: '1px solid #f3e3c3',
       },
       tokenTitle: { fontSize: 12, fontWeight: 600, color: INK, marginBottom: 6 },
       tokenCode: {
-        display: 'block', fontFamily: 'ui-monospace, monospace', fontSize: 11,
+        display: 'block', fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: 11,
         wordBreak: 'break-all', userSelect: 'all', color: INK,
       },
       // The seat container (`sidebar.footer.action`) is `display: contents`, so it has no
@@ -315,18 +356,16 @@ window.__ModuleLoader__.load({
         // One card per environment, matching how the Plugin Market draws its records:
         // name and metadata on the left, actions as pills on the right.
         const cards = state.environments.map((entry) => h('div', { key: entry.id, style: styles.card },
-          h('div', { style: styles.cardMain },
-            h('div', { style: styles.cardName }, entry.label),
-            entry.hostname === undefined ? null : h('div', { style: styles.detail }, entry.hostname),
-            h('div', { style: styles.cardMeta },
-              h('span', { style: entry.online ? styles.tagOk : styles.tag },
-                entry.online ? t('online') : t('offline')),
-              h('span', { style: styles.tag }, `/${entry.id}/`),
-              h('span', { style: styles.tag }, entry.tokenHint),
-              entry.online || entry.lastSeen === undefined
-                ? null
-                : h('span', { style: styles.detail }, new Date(entry.lastSeen).toLocaleString()))),
-          h('div', { style: styles.cardActions },
+          // `.row1`: the name (and what it is) on the left, its actions on the right.
+          h('div', { style: styles.cardRow },
+            h('div', { style: styles.cardMain },
+              h('div', { style: styles.cardName }, entry.label),
+              h('div', { style: styles.cardMeta },
+                h('span', { style: entry.online ? styles.tagOk : styles.tag },
+                  entry.online ? t('online') : t('offline')),
+                h('span', { style: styles.tag }, `/${entry.id}/`),
+                h('span', { style: styles.tag }, entry.tokenHint))),
+            h('div', { style: styles.cardActions },
             entry.online
               ? h('button', { key: 'open', style: styles.button, onClick: () => window.open(`/${entry.id}/`, '_blank') }, t('open'))
               : null,
@@ -334,7 +373,14 @@ window.__ModuleLoader__.load({
             // identity and its URL is built from it.
             h('button', { key: 'rename', style: styles.button, disabled: busy !== '', onClick: () => void rename(entry) }, t('rename')),
             h('button', { key: 'rot', style: styles.button, disabled: busy !== '', onClick: () => void rotate(entry) }, t('rotate')),
-            h('button', { key: 'rm', style: styles.buttonDanger, disabled: busy !== '', onClick: () => void remove(entry) }, t('remove')))))
+            h('button', { key: 'rm', style: styles.buttonDanger, disabled: busy !== '', onClick: () => void remove(entry) }, t('remove')))),
+          // `.meta`: the quiet second line, when there is one.
+          entry.hostname === undefined && entry.online
+            ? null
+            : h('div', { style: styles.detail },
+              [entry.hostname, entry.online || entry.lastSeen === undefined
+                ? null
+                : new Date(entry.lastSeen).toLocaleString()].filter(Boolean).join(' · '))))
 
         children.push(h('div', { key: 'list' },
           h('div', { style: styles.sectionTitle }, t('sectionEnvironments')),
@@ -355,7 +401,12 @@ window.__ModuleLoader__.load({
       }
 
 
-      return h('div', { style: styles.wrap }, children)
+      // Mirrors the market's markup: a query container holding a head and a body.
+      const head = [children[0], children[1]]
+      const body = children.slice(2)
+      return h('div', { style: styles.root },
+        h('div', { style: styles.head }, head),
+        h('div', { style: styles.wrap }, body))
     }
 
 
