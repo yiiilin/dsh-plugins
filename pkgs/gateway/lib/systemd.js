@@ -18,6 +18,24 @@ import { readFile, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
+/**
+ * systemd helpers for the gateway's own unit.
+ *
+ * This module and `supervisor` both touch systemd, and the split is deliberate:
+ *
+ * - here — reproduce *this process* as a unit. The inputs come from `process.argv` and
+ *   `process.env`, because the job is to describe a process that is already running.
+ * - `supervisor` — manage a unit from *configuration*: read its state, change its
+ *   profile or port, and refuse to overwrite one owned by another DSH home.
+ *
+ * They are separate packages that install independently, so neither imports the other.
+ * The one rule they must agree on is {@link systemdQuote}, and it is the reason this
+ * comment exists: the two copies had drifted, and this one had lost the `$`/`%`
+ * escaping that systemd requires.
+ *
+ * @module @yiln-dsh/dsh-gateway/systemd
+ */
+
 /** Where systemd reads unit files for the system scope. */
 const UNIT_DIR = '/etc/systemd/system'
 
@@ -165,12 +183,24 @@ function systemctl(scope, args) {
  * systemd splits on whitespace and honours double quotes, so a value with a space has to
  * be quoted and its own quotes escaped. This is deliberately the reverse of the parsing
  * rule rather than a shell quote: the unit is read by systemd, not by a shell.
+ *
+ * `$` and `%` are escaped as well, and that is not cosmetic. systemd expands `$NAME` and
+ * `%x` specifiers in a unit file, so a path containing either would be rewritten before
+ * the process ever started — `/opt/a$b/dsh.js` became `/opt/a/dsh.js`. Doubling is the
+ * documented literal form: `$$` and `%%`.
  */
 export function systemdQuote(value) {
+  // An empty argument still has to occupy a position in `ExecStart=`, and systemd drops a
+  // bare empty field entirely — so it is written as a quoted empty string.
+  if (String(value) === '') return '""'
   const text = String(value)
-  if (text === '') return '""'
-  if (!/[\s"'\\]/u.test(text)) return text
-  return `"${text.replace(/\\/gu, '\\\\').replace(/"/gu, '\\"')}"`
+    .replace(/\\/gu, '\\\\')
+    .replace(/"/gu, '\\"')
+    // A replacement string treats `$` specially, so these use functions: `'$$$$'` in a
+    // string produced four percent signs rather than two.
+    .replace(/\$/gu, () => '$$')
+    .replace(/%/gu, () => '%%')
+  return /[\s"'$`%]/u.test(String(value)) ? `"${text}"` : text
 }
 
 /** The unit name this daemon installs. Fixed: it is the daemon, wherever it runs. */

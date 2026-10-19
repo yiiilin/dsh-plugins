@@ -520,6 +520,9 @@ test('systemd quoting survives spaces and quotes', async () => {
   assert.equal(systemdQuote(''), '""')
   // A quote inside a value has to be escaped, or systemd ends the value early.
   assert.match(systemdQuote('a"b'), /^".*\\".*"$/u)
+  // `$` and `%` are systemd's own expansion syntax and must be doubled.
+  assert.equal(systemdQuote('a$b'), '"a$$b"')
+  assert.equal(systemdQuote('a%b'), '"a%%b"')
 })
 
 test('the unit name is fixed, on every machine', async () => {
@@ -535,4 +538,17 @@ test('being under systemd is read from the environment systemd sets', async () =
   assert.equal(underSystemd({ INVOCATION_ID: 'abc' }), true)
   assert.equal(underSystemd({}), false)
   assert.equal(underSystemd({ INVOCATION_ID: '' }), false)
+})
+
+test('a unit escapes the characters systemd would otherwise expand', async () => {
+  // Not cosmetic: systemd expands `$NAME` and `%x` inside a unit file, so an unescaped
+  // path is rewritten before the process starts — `/opt/a$b/dsh.js` became `/opt/a/dsh.js`
+  // in a unit this module wrote. Doubling is the documented literal form.
+  const { systemdQuote } = await import('../lib/systemd.js')
+  assert.equal(systemdQuote('a$b'), '"a$$b"')
+  assert.equal(systemdQuote('a%b'), '"a%%b"')
+  assert.equal(systemdQuote('/plain'), '/plain')
+  assert.equal(systemdQuote('/a b'), '"/a b"')
+  // A backslash and a quote still survive; the shell rule is not what applies here.
+  assert.equal(systemdQuote('a"b'), '"a\\"b"')
 })

@@ -1144,13 +1144,22 @@ async function readJson(req, limit = 262144) {
   return JSON.parse(body);
 }
 
+/**
+ * Quote one argument for a systemd `ExecStart=` line.
+ *
+ * `$` and `%` are doubled because systemd expands `$NAME` and `%x` in a unit
+ * file; an unescaped one rewrites the command before the process starts. The
+ * replacements use functions: `'$$'` in a *string* is a replacement escape that
+ * yields a single `$`, so the obvious spelling silently did nothing. `%` also joins
+ * the quoting test, since a value containing it is rewritten and must be quoted.
+ */
 function systemdQuote(value) {
   const text = String(value)
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\$/g, "$$")
-    .replace(/%/g, "%%");
-  return /[\s"'$`]/.test(String(value)) ? `"${text}"` : text;
+    .replace(/\\/g, () => "\\\\")
+    .replace(/"/g, () => '\\"')
+    .replace(/\$/g, () => "$$")
+    .replace(/%/g, () => "%%");
+  return /[\s"'$`%]/.test(String(value)) ? `"${text}"` : text;
 }
 
 function systemdUnitName(cfg) {
