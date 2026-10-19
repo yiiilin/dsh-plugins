@@ -268,11 +268,13 @@ async function mountPage(options = {}) {
   // The page is always handed its translator by `apply`; use the real zh
   // dictionary so the assertions read what a Chinese user sees.
   const t = (key) => exported.__test.ZH_DICT[key] ?? key;
-  let tabVisible = options.visible !== false;
-  const runtime = createHookRuntime(exported.__test.createVncPage(t, connection), {
-    sessionId: "session-1",
-    useTabInfo: () => ({ tab: { visible: tabVisible } }),
-  });
+    let tabVisible = options.visible !== false
+    // No `sessionId` prop: the seat does not pass one. The body's identity comes from
+    // the tab the hook reports, exactly as it does in the real seat.
+    let tabId = options.tabId ?? "tab-1"
+    const runtime = createHookRuntime(exported.__test.createVncPage(t, connection), {
+      useTabInfo: () => ({ tab: { id: tabId, visible: tabVisible } }),
+    });
   reactTarget.current = runtime.React;
   runtime.render();
 
@@ -283,6 +285,8 @@ async function mountPage(options = {}) {
     exported,
     ZH: exported.__test.ZH_DICT,
     setTabVisible: (value) => { tabVisible = value; runtime.setProps({}); },
+    /** Rebind the pane to another tab, as a session switch does. */
+    setTabId: (value) => { tabId = value; runtime.setProps({}); },
     generation: () => { for (const listener of [...generationListeners]) listener(); },
     /** Let the component's async connect path settle. */
     settle: async (rounds = 8) => {
@@ -639,3 +643,23 @@ test("keeps the automatic status out of the settled states", async () => {
   assert.match(page.runtime.text(), /已连接/u);
   assert.doesNotMatch(page.runtime.text(), /自动连接中/u);
 });
+
+test("a new tab identity starts a fresh viewer lifetime", async () => {
+  // The seat passes no `sessionId` prop, so the body's identity has to come from the tab
+  // the hook reports. Without it the lifetime effect never restarted, and a viewer kept
+  // its socket and its x11vnc client alive after the pane moved to another session —
+  // which is the leak this pins shut.
+  const page = await mountPage()
+  await page.settle()
+  assert.notEqual(page.viewer(), undefined, "the first tab connects")
+
+  const before = page.viewer()
+  assert.equal(before.disconnects, 0, "the first viewer is connected")
+
+  page.setTabId("tab-2")
+  await page.settle()
+
+  // The old viewer must be released: a stale RFB keeps its socket, and through it
+  // x11vnc's client slot, alive with nothing drawing it.
+  assert.equal(before.disconnects, 1, "the previous viewer is disconnected")
+})

@@ -671,13 +671,18 @@ window.__ModuleLoader__.load({
          */
         const lifeRef = React.useRef({ live: false, sequence: 0, connected: false, automatic: false })
 
-        const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
         // The seat supplies this reader for every tab body; without it (a bare
         // unit render) the page simply treats itself as visible. Called
         // unconditionally so the hook order never depends on the prop.
         const useTabInfo = typeof props.useTabInfo === 'function' ? props.useTabInfo : noTabInfo
         const tabInfo = useTabInfo()
         const visible = tabInfo === null || tabInfo === undefined ? true : tabInfo?.tab?.visible !== false
+        // The seat gives a tab body no session id, but it does give the tab itself, and
+        // that identity changes when the pane rebinds to another session.
+        const tabIdentity = tabInfo?.tab?.id ?? ''
+        const sessionId = typeof props.sessionId === 'string' && props.sessionId !== ''
+          ? props.sessionId
+          : tabIdentity
 
         // One lifetime per mounted page (and per Session switch): leaving the
         // page releases the viewer, because the pane may remount the body
