@@ -103,6 +103,9 @@ window.__ModuleLoader__.load({
         // width by growing padding; standing alone, the panel sets it here so the two
         // regions cannot disagree about where their content starts.
         maxWidth: 968, width: '100%', margin: '0 auto', boxSizing: 'border-box',
+        // `.panelHost` in the market's stylesheet: the 28px clears the window frame's top
+        // controls. The CSS variable lets a host add to it; absent one, it is 28px.
+        paddingTop: 'calc(28px + var(--dsh-frame-top-clearance, 0px))',
       },
       /** `.head`: title and sub share one column with a 12px gap. */
       head: { display: 'flex', flexDirection: 'column', gap: 12, padding: '4px 0 6px' },
