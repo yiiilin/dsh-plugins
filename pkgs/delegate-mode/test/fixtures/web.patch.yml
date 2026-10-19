@@ -21,7 +21,7 @@
   disabled: true
 - id: web-daemon
   disabled: true
-- id: session-mode
+- id: delegate-mode
   config:
     normalPrompt: 'QA normal executor prompt.'
     delegateWritesPrompt: 'QA delegate-writes coordinator prompt.'

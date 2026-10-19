@@ -1,8 +1,8 @@
 # One Loader layer for this package. Installed standalone from GitHub;
-# `dsh plugin --profile <p> add github:<owner>/<repo>#path:/pkgs/session-mode`.
+# `dsh plugin --profile <p> add github:<owner>/<repo>#path:/pkgs/delegate-mode`.
 - insert:
-    - id: session-mode
-      name: '@yiln-dsh/dsh-session-mode'
+    - id: delegate-mode
+      name: '@yiln-dsh/dsh-delegate-mode'
       inject:
         - tools
         - agents

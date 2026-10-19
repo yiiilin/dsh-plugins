@@ -34,7 +34,7 @@ prompt was false about the Agent's actual capabilities.
 `tools.restrict({ allow: [] })` masks the tools a scope **inherits** — the global
 layer plus every ancestor layer on its chain — and deliberately never what the
 scope's own layer registers. Applying it to `agent.ctx` is therefore exactly the
-lever this needs, and it is the same mechanism `session-mode` uses to prune the
+lever this needs, and it is the same mechanism `delegate-mode` uses to prune the
 restricted Lead's catalog.
 
 Two properties of that mechanism are load-bearing:

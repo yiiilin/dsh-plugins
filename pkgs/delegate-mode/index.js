@@ -2,7 +2,7 @@ import z from '@deepseek-ai/schemastery'
 import { DEFAULT_ALLOWED_TOOLS, NORMAL_PROMPT, DELEGATE_WRITES_PROMPT } from './policy.js'
 import { installSessionMode } from './runtime.js'
 
-export const name = 'session-mode'
+export const name = 'delegate-mode'
 export const inject = ['tools', 'agents', 'commands', 'connection', 'systemPrompt', 'sessionController', 'jobs', 'sessions']
 export const Config = z.object({
   defaultMode: z.union([z.const('normal'), z.const('delegate-writes')]).default('normal'),

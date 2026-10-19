@@ -24,7 +24,7 @@ test('delegate toggle registers matching locale keys beside the permission contr
   })
   const { zh, en } = locales[0].dictionaries
   assert.deepEqual(Object.keys(zh).sort(), Object.keys(en).sort())
-  assert.equal(locales[0].ns, 'session-mode')
+  assert.equal(locales[0].ns, 'delegate-mode')
   // A switch states a condition, so both states need their own localized word;
   // showing the raw mode identifier is the same text in every language.
   for (const [name, dict] of [['zh', zh], ['en', en]]) {
@@ -36,7 +36,7 @@ test('delegate toggle registers matching locale keys beside the permission contr
   assert.notEqual(zh.on, en.on, 'the state word must differ per language')
   // Rendered in the toolbar row immediately after the permission/plan controls.
   assert.equal(slots[0].options.name, 'conversation.input.left')
-  assert.equal(slots[0].options.id, 'session-mode')
+  assert.equal(slots[0].options.id, 'delegate-mode')
   const worker = slots[0].component({ sessionId: 'child', useSession: (selector) => selector({ running: false, removed: false, subagent: {} }) })
   assert.equal(worker, null)
   const loading = slots[0].component({ sessionId: 's', useSession: (selector) => selector({ running: false, removed: false, subagent: null }) })

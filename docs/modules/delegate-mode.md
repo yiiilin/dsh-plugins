@@ -1,14 +1,14 @@
-# Session Mode
+# Delegate Mode
 
-Standalone package [`@yiln-dsh/dsh-session-mode`](../../pkgs/session-mode). Loader row: `session-mode`.
+Standalone package [`@yiln-dsh/dsh-delegate-mode`](../../pkgs/delegate-mode). Loader row: `delegate-mode`.
 
 ```bash
-dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/session-mode"
+dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/delegate-mode"
 ```
 
 See the [root README](../../README.md) for the workspace layout, migration and testing.
 
-The Host row `session-mode` provides two policies for each session:
+The Host row `delegate-mode` provides two policies for each session:
 
 | Mode | Main agent | Delegated worker |
 | --- | --- | --- |
@@ -48,10 +48,10 @@ current mode when first attached, but remain main agents rather than workers.
 
 ## Configuration
 
-Override the `session-mode` row in the profile's user patch:
+Override the `delegate-mode` row in the profile's user patch:
 
 ```yaml
-- id: session-mode
+- id: delegate-mode
   config:
     defaultMode: normal
     normalPrompt: |-
@@ -157,14 +157,14 @@ sessions whose delegation-only workflow must remain enforced.
 ## Verification
 
 ```bash
-node --test pkgs/session-mode/test/*.test.js
+node --test pkgs/delegate-mode/test/*.test.js
 npm run build
 npm run check
 npm test
 DSH_MODE_QA_URL=http://127.0.0.1:<isolated-port>/?token=<fixture-token> npm run test:modes:browser
 ```
 
-The browser fixture overlay is `pkgs/session-mode/test/fixtures/web.patch.yml`.
+The browser fixture overlay is `pkgs/delegate-mode/test/fixtures/web.patch.yml`.
 Use a fresh `DSH_HOME`, install a packed artifact into its `web` profile, and
 launch with that overlay, `DSH_MODE_TEST_API_KEY=mode-qa-only`, and
 `DSH_TELEMETRY_DISABLED=1`. The fixture routes the model to an unused loopback
@@ -178,7 +178,7 @@ client localization, and actual Cordis scope/tool/prompt integration. All
 filesystem mutations use temporary test directories; no external model call or
 production profile mutation is required.
 
-Verified in this pass: 266 suite tests pass, the scoped session-mode tests hold
+Verified in this pass: 266 suite tests pass, the scoped delegate-mode tests hold
 100% line coverage, and a packed artifact installed into a fresh isolated `web`
 profile passed all four browser journeys, twice in a row from a persisted
 `delegate-writes` state: the switch sits in the toolbar row to the right of the
@@ -187,5 +187,5 @@ tall), blank-session toggling with stale-revision rejection, fit and
 clickability at 1440/768/375 widths, and reload persistence. The switch mounts
 in `conversation.input.left`; the session-header seat, `conversation.composer.dock`
 (hero variant), and the single-occupant `conversation.input.permission` seat are
-unavailable to it. Unauthenticated `/api/session-mode` returns 401. No prompt was
+unavailable to it. Unauthenticated `/api/session-mode` (the unchanged wire route) returns 401. No prompt was
 sent to any model provider.

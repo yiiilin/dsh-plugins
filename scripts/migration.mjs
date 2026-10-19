@@ -18,7 +18,9 @@ export const ADDRESSES = Object.freeze([
   { id: 'dsh-git-graph', key: 'git-graph', legacy: '@yiln-dsh/dsh-plugin-git-graph' },
   { id: 'session-list-cache', key: 'session-list-cache', legacy: '@yiln-dsh/dsh-plugin-session-list-cache' },
   { id: 'web-daemon', key: 'web-daemon', legacy: '@yiln-dsh/dsh-plugin-web-daemon' },
-  { id: 'session-mode', key: 'session-mode', legacy: '@yiln-dsh/dsh-plugins/session-mode' },
+  // `id` still matches the row a legacy profile wrote; `key` decides what it becomes.
+  // `legacyKey` carries the pre-rename standalone name for the same reason.
+  { id: 'session-mode', key: 'delegate-mode', legacyKey: 'session-mode', legacy: '@yiln-dsh/dsh-plugins/session-mode' },
   { id: 'tool-restrict-presets', key: 'tool-restrict-presets', legacy: '@yiln-dsh/dsh-plugins/tool-restrict-presets' },
   { id: 'dsh-desktop-vnc', key: 'desktop-vnc', legacy: '@yiln-dsh/dsh-plugin-desktop-vnc' },
   { id: 'fleet', key: 'fleet', legacy: '@yiln-dsh/dsh-plugins/fleet' },

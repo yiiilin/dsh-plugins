@@ -108,7 +108,7 @@ export async function installSessionMode(ctx, config = {}, adapters = {}) {
     const id = exec.agent ? String(exec.agent.session.id) : undefined
     if (changing.has(id)) return 'Session mode is changing; retry after it settles.'
     return toolDenial(records.get(id), exec.agent, exec.name, allowed)
-  }), 'session-mode: execution policy')
+  }), 'delegate-mode: execution policy')
   ctx.effect(() => ctx.systemPrompt.section({
     name: 'yiln:session-mode', order: 650, interpolate: false,
     text: ({ agent, sessionModeProbe }) => {
@@ -117,7 +117,7 @@ export async function installSessionMode(ctx, config = {}, adapters = {}) {
       if (changing.has(id)) throw modeError('busy', 'Session mode is changing')
       return promptFor(records.get(id), agent, config)
     },
-  }), 'session-mode: system instructions')
+  }), 'delegate-mode: system instructions')
   ctx.on('agent/created', ({ agent }) => attach(agent))
   ctx.on('agent/disposed', ({ agent }) => {
     const id = String(agent.session.id)
@@ -154,7 +154,7 @@ export async function installSessionMode(ctx, config = {}, adapters = {}) {
         return { kind: 'error', text: error.message }
       }
     },
-  }), 'session-mode: user command')
+  }), 'delegate-mode: user command')
 
   installRoute(ctx, runtime, store, defaultMode)
   return runtime
@@ -212,5 +212,5 @@ function installRoute(ctx, runtime, store, defaultMode) {
         return Response.json({ type: 'server-response', rpcId, result })
       },
     })
-  }, 'session-mode: user control route')
+  }, 'delegate-mode: user control route')
 }

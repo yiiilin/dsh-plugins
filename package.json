@@ -12,7 +12,7 @@
     "check": "node scripts/check.mjs",
     "test": "node --test test/*.test.js pkgs/*/test/*.test.js",
     "test:editor": "node --test pkgs/auth-webserver/test/e2e/settings-editor.test.js",
-    "test:modes:browser": "node --test pkgs/session-mode/test/e2e/modes.test.js",
+    "test:modes:browser": "node --test pkgs/delegate-mode/test/e2e/modes.test.js",
     "migrate": "node scripts/migrate-profile.mjs"
   },
   "devDependencies": {

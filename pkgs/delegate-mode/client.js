@@ -1,9 +1,9 @@
 window.__ModuleLoader__.load({
-  id: '@yiln-dsh/dsh-session-mode',
+  id: '@yiln-dsh/dsh-delegate-mode',
   factory: (require) => {
     const React = require('react')
     const MODES = ['normal', 'delegate-writes']
-    const NS = 'session-mode'
+    const NS = 'delegate-mode'
     const ZH_DICT = {
       label: '委托模式', toggle: '委托模式',
       on: '已开启', off: '已关闭',
@@ -155,14 +155,14 @@ window.__ModuleLoader__.load({
     }
 
     function apply(ctx) {
-      ctx.effect(() => ctx.locale.register(NS, { zh: ZH_DICT, en: EN_DICT }), 'session-mode: locale')
-      ctx.effect(() => installStyle(), 'session-mode: stylesheet')
+      ctx.effect(() => ctx.locale.register(NS, { zh: ZH_DICT, en: EN_DICT }), 'delegate-mode: locale')
+      ctx.effect(() => installStyle(), 'delegate-mode: stylesheet')
       const rpc = createRpc(ctx.connection.rpc, Reflect.has(ctx.connection, 'generation'))
       const Selector = createSelector(ctx.locale.bind(NS), rpc, ctx.connection, ctx.sessions)
       ctx.effect(() => ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
-        name: 'conversation.input.left', id: 'session-mode', order: 40, locale: NS, inject: () => ({}),
-      }, Selector)), 'session-mode: selector')
+        name: 'conversation.input.left', id: 'delegate-mode', order: 40, locale: NS, inject: () => ({}),
+      }, Selector)), 'delegate-mode: selector')
     }
-    return { name: 'session-mode-client', inject: ['connection', 'locale', 'slots', 'sessions'], apply, __test: { createRpc, createSelector } }
+    return { name: 'delegate-mode-client', inject: ['connection', 'locale', 'slots', 'sessions'], apply, __test: { createRpc, createSelector } }
   },
 })

@@ -51,7 +51,7 @@ are unchanged, so an existing profile only needs new package addresses — see
 | [`pkgs/session-list-cache`](pkgs/session-list-cache) | `session-list-cache` | Coalesces and caches concurrent session enumeration. |
 | [`pkgs/gateway`](pkgs/gateway) | `gateway` | Federation gateway: edges dial in over a reverse tunnel, and its panel lists and switches between them. |
 | [`pkgs/supervisor`](pkgs/supervisor) | `supervisor` | Systemd management, server metrics and interrupted-session recovery. |
-| [`pkgs/session-mode`](pkgs/session-mode) | `session-mode` | Per-session `normal` / `delegate-writes` permissions with pruned catalogs and separate system prompts. |
+| [`pkgs/delegate-mode`](pkgs/delegate-mode) | `delegate-mode` | Per-session `normal` / `delegate-writes` permissions with pruned catalogs and separate system prompts. |
 | [`pkgs/tool-restrict-presets`](pkgs/tool-restrict-presets) | `tool-restrict-presets` | Applies `agent.ctx.tools.restrict({ allow: [] })` to every Agent running a listed Agent Preset. |
 | [`pkgs/desktop-vnc`](pkgs/desktop-vnc) | `dsh-desktop-vnc` | Right-sidebar tab showing a Chromium browser inside a nested Xephyr display. |
 
@@ -60,7 +60,7 @@ are unchanged, so an existing profile only needs new package addresses — see
 Install one plugin straight from this repository:
 
 ```bash
-dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/session-mode"
+dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/delegate-mode"
 ```
 
 Install several by repeating the path form:
@@ -68,13 +68,13 @@ Install several by repeating the path form:
 ```bash
 dsh plugin --profile web add \
   "github:<owner>/dsh-plugin#path:/pkgs/git-graph" \
-  "github:<owner>/dsh-plugin#path:/pkgs/session-mode"
+  "github:<owner>/dsh-plugin#path:/pkgs/delegate-mode"
 ```
 
 Or install a local checkout by path:
 
 ```bash
-dsh plugin --profile web add "file:/path/to/dsh-plugin/pkgs/session-mode"
+dsh plugin --profile web add "file:/path/to/dsh-plugin/pkgs/delegate-mode"
 ```
 
 Refresh a local `file:` installation after source changes, then restart the
@@ -84,7 +84,7 @@ A package missing `dsh.bundle.patch` installs as an inert dependency and mounts
 nothing. Confirm the composed tree carries the row before restarting:
 
 ```bash
-dsh --profile web --dump-config | grep -c session-mode
+dsh --profile web --dump-config | grep -c delegate-mode
 ```
 
 ## Migration from the aggregate package
@@ -123,7 +123,7 @@ switch label and both state words are localized through the Client locale
 dictionary. The two modes have independent `normalPrompt` and
 `delegateWritesPrompt` Config fields. Selections survive restart; worker
 permissions and prompts use the mode captured at creation.
-See [Session Mode](<docs/modules/session-mode.md>) for configuration and boundaries.
+See [Delegate Mode](<docs/modules/delegate-mode.md>) for configuration and boundaries.
 
 ## Development
 

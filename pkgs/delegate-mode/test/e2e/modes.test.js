@@ -5,7 +5,7 @@ import { before, after, test } from 'node:test'
 
 const run = promisify(execFile)
 const url = process.env.DSH_MODE_QA_URL
-const session = `session-mode-browser-${process.pid}`
+const session = `delegate-mode-browser-${process.pid}`
 
 async function browser(...args) {
   const { stdout } = await run('agent-browser', ['--session', session, '--json', ...args], { timeout: 30000, maxBuffer: 1024 * 1024 })
@@ -104,7 +104,7 @@ test('the toggle fits and stays clickable on desktop and mobile viewports', { sk
     assert.equal(result.fits, true, `${width}x${height} label clipped`)
     assert.equal(result.clickable, true, `${width}x${height} not clickable`)
   }
-  await browser('screenshot', '/tmp/dsh-session-mode-mobile.png')
+  await browser('screenshot', '/tmp/dsh-delegate-mode-mobile.png')
 })
 
 test('saved mode remains addressable after browser reload', { skip: !url, timeout: 60000 }, async () => {

@@ -41,7 +41,7 @@ test('default policy directories are profile-scoped and require absolute overrid
 })
 
 async function fixture(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'dsh-session-mode-'))
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-delegate-mode-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
   const { createPolicyStore } = await store()
   return { dir, runtime: createPolicyStore(dir), createPolicyStore }
