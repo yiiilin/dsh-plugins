@@ -5,7 +5,7 @@ window.__ModuleLoader__.load({
     const MODES = ['normal', 'delegate-writes']
     const NS = 'session-mode'
     const ZH_DICT = {
-      label: '会话模式', toggle: '委托模式',
+      label: '委托模式', toggle: '委托模式',
       on: '已开启', off: '已关闭',
       hint: '{label}：{state}。{detail}',
       normalTitle: '主 agent 可直接修改文件', delegateWritesTitle: '主 agent 只读，写入交给子 agent',
@@ -15,7 +15,7 @@ window.__ModuleLoader__.load({
       unsupported: '当前 preset 未提供可直接调用的子 agent 工具。',
     }
     const EN_DICT = {
-      label: 'Session mode', toggle: 'Delegate mode',
+      label: 'Delegate mode', toggle: 'Delegate mode',
       on: 'On', off: 'Off',
       hint: '{label}: {state}. {detail}',
       normalTitle: 'The main agent may edit files directly', delegateWritesTitle: 'The main agent is read-only; subagents perform writes',

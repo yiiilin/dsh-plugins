@@ -668,6 +668,10 @@ div[role="treeitem"]:has(> .dss-session-checkbox-host){position:relative}
             },
             settle: () => refreshSessionList(sessions),
           });
+          // Closing is part of succeeding: the rows are gone, so a surface still
+          // asking to confirm them is asking about sessions that no longer exist.
+          setManaging(false);
+            setSelectedIds(new Set());
         };
 
         const openMenuDelete = (target) => {
@@ -706,6 +710,9 @@ div[role="treeitem"]:has(> .dss-session-checkbox-host){position:relative}
             },
             settle: () => refreshSessionList(sessions),
           });
+          // Closing is part of succeeding: the session is gone, so a dialog still
+          // asking to confirm it is asking about something that no longer exists.
+          setMenuDeleteTarget(null);
         };
 
         const modeMarker = !managing || sectionTarget === null
@@ -891,6 +898,9 @@ div[role="treeitem"]:has(> .dss-session-checkbox-host){position:relative}
           },
           settle: () => refreshSessionList(sessions),
         });
+        // Closing is part of succeeding: the session is gone, so a dialog still
+        // asking to confirm it is asking about something that no longer exists.
+        setConfirming(false);
       };
 
       const trashIcon = icon("trash", 16, "×");
