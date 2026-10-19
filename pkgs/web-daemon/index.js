@@ -404,6 +404,48 @@ function turnNeedsContinuation(events) {
   return false;
 }
 
+/**
+ * Re-arm a goal the restart disarmed.
+ *
+ * A restart drops the goal's continuation authority: the goal service deliberately sets
+ * every freshly created agent to `disarmed`, so an autonomous loop cannot silently
+ * continue after a crash. That protects against a restart loop spending tokens unattended
+ * — but it also means an operator who asked for a long task finds it stopped.
+ *
+ * `phase` separates the two cases without any extra persistence: `pause()` writes
+ * `paused`, so a goal that is still `active` was running when the process died, while a
+ * `paused` one was stopped on purpose. Only the former is resumed here.
+ *
+ * The round budget still bounds it: the service refuses a resume that has exhausted
+ * `maxGoalRounds`, and that refusal is reported rather than swallowed.
+ *
+ * @param ctx - Cordis context carrying the live agent graph.
+ * @param agent - the agent whose session was just resumed.
+ * @returns what happened, for the recovery log.
+ */
+function restoreGoal(ctx, agent) {
+  const goals = ctx.get("goals");
+  if (goals === undefined) return { decision: "no-goal-service" };
+  let goal;
+  try {
+    goal = goals.get(agent);
+  } catch (error) {
+    return { decision: "read-failed", error: String(error?.message ?? error) };
+  }
+  if (goal === undefined) return { decision: "no-goal" };
+  if (goal.phase !== "active") {
+    // Paused or blocked was a decision; complete needs nothing.
+    return { decision: "left-alone", phase: goal.phase };
+  }
+  if (goal.activation === "armed") return { decision: "already-armed" };
+  try {
+    goals.resume(agent, { id: goal.id, revision: goal.revision });
+    return { decision: "re-armed", goalId: goal.id };
+  } catch (error) {
+    return { decision: "resume-refused", goalId: goal.id, error: String(error?.message ?? error) };
+  }
+}
+
 function createInterruptedResumeMessage() {
   return createUserMessage({
     content: [{ type: "text", text: INTERRUPTED_RESUME_TEXT }],
@@ -886,6 +928,14 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
             agentOptions: options,
             setup,
           });
+          // Re-arm before the followup: a message delivered to a disarmed goal starts a
+          // turn the round driver will not continue.
+          const goal = restoreGoal(ctx, handle.agent);
+          if (goal.decision === "re-armed") {
+            ctx.logger?.info?.("web-daemon: re-armed goal %s for resumed session %s", goal.goalId, sessionId);
+          } else if (goal.decision === "resume-refused") {
+            ctx.logger?.warn?.("web-daemon: could not re-arm goal %s for session %s: %s", goal.goalId, sessionId, goal.error);
+          }
           let continued = false;
           if (shouldResume && active) {
             if (typeof handle?.agent?.followup !== "function") {
@@ -896,7 +946,7 @@ async function createSessionRecovery(ctx, agents, persistence, agentPresets, dia
               ctx.logger?.info?.("web-daemon: continuing recorded session %s after daemon restart", sessionId);
             }
           }
-          diag.entries.push({ sessionId, decision: "resumed", continued });
+          diag.entries.push({ sessionId, decision: "resumed", continued, goal: goal.decision });
           ctx.logger?.info?.("web-daemon: resumed session %s", sessionId);
         } catch (error) {
           diag.entries.push({
@@ -2046,3 +2096,5 @@ async function apply(ctx, config = {}) {
 }
 
 export { apply };
+/** Internal helpers exercised by the test suite. Not part of any public contract. */
+export const __test = { restoreGoal, createInterruptedResumeMessage, turnNeedsContinuation };
