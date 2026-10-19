@@ -1579,9 +1579,11 @@ window.__ModuleLoader__.load({
 			// line, the commit lane rows with an expandable per-commit detail, and a
 			// diff modal. Data comes entirely from the /_dsh/git-graph/git-*
 			// JSON API.
-			function createGitGraphView(t) {
+			function createGitGraphView(t, apiFromBody) {
 				return function GitGraphView(props) {
-				const api = props.api
+				// The seat renders a tab body with empty props; the API comes from the
+				// plugin body through the closure instead.
+				const api = props.api ?? apiFromBody
 				const cwd = props.cwd
 				const [scope, setScope] = React.useState('all')
 				const [log, setLog] = React.useState(null)
@@ -1820,28 +1822,49 @@ window.__ModuleLoader__.load({
 			}
 			}
 
-			function createFileExplorerGitPage(t) {
+			/**
+			 * The tab body.
+			 *
+			 * It is rendered with empty props, so anything it needs must come from this
+			 * closure rather than from a prop.
+			 */
+			function createFileExplorerGitPage(t, remote) {
 				return function FileExplorerGitPage(props) {
-				const useSessions = props.useSessions
-				// The tab belongs to the session its pane is bound to, which the
-				// seat passes as `sessionId`; the globally current session is only
-				// a fallback for a surface that renders outside a session scope.
-				const scopedSessionId = useSessions((state) => {
-					const current = state.current
-					if (current === undefined) return undefined
-					const row = state.byId[current]
-					if (!row || row.blank === true) return undefined
-					return current
-				})
-				const sessionId = typeof props.sessionId === 'string' && props.sessionId !== ''
-					? props.sessionId
-					: scopedSessionId
-				const cwd = useSessions((state) => {
-					const row = state.byId[sessionId]
-					return row ? row.cwd : undefined
-				})
+				// The seat passes no `useSessions`: `sidebar.right.pane.tab` declares its
+				// injection as `hooks.tabInfo` and nothing else, and `TabSlot` renders it with
+				// empty props. Reading `props.useSessions` therefore yielded undefined and the
+				// tab body threw on its first render — which surfaced as a tab that did
+				// nothing, with no console error pointing at it.
+				//
+				// The Host fallback is not usable here: under full access the sandbox policy's
+				// workspace root is `/`, which is not a git repository, so a request without a
+				// path fails with 'not a git repository'. The session's own cwd is the fact
+				// that matters, and it is in the session list.
+				//
+				// `remote` comes from the plugin body through the closure: the seat renders a
+				// tab body with empty props, so nothing may arrive that way.
+				const [cwd, setCwd] = React.useState(props.cwd)
+				React.useEffect(() => {
+					if (cwd !== undefined) return undefined
+					let cancelled = false
+					void (async () => {
+						try {
+							// `session.list()` answers an array already ordered by activity,
+							// newest first, and each summary carries the session's cwd.
+							const rows = await remote.session.list()
+							if (cancelled) return
+							const freshest = (Array.isArray(rows) ? rows : [])
+								.find((row) => typeof row?.cwd === 'string' && row.cwd !== '')
+							if (freshest !== undefined) setCwd(freshest.cwd)
+						} catch {
+							// A failed lookup leaves the empty state showing; the tab stays
+							// reachable instead of throwing.
+						}
+					})()
+					return () => { cancelled = true }
+				}, [cwd])
 
-				if (sessionId === undefined) {
+				if (cwd === undefined) {
 					return React.createElement('div', { className: 'dsh-fe-page' },
 						React.createElement('div', { className: 'dsh-fe-status' }, t('noSession')))
 				}
@@ -1853,8 +1876,8 @@ window.__ModuleLoader__.load({
 			}
 			}
 
-			const GitGraphView = createGitGraphView(t);
-						const FileExplorerGitPage = createFileExplorerGitPage(t);
+			const GitGraphView = createGitGraphView(t, api);
+						const FileExplorerGitPage = createFileExplorerGitPage(t, ctx.get('remote'));
 
 			ctx.effect(() => {
 				// Only the Git Graph is contributed here: the product ships its own

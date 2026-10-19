@@ -523,6 +523,20 @@ export function apply(ctx) {
   })
 }
 
+/**
+ * Internal helpers exercised by the test suite. Not part of any public contract.
+ *
+ * Exported because these decide whether a request is answered or rejected, and getting
+ * one wrong is invisible until someone hits the route.
+ */
+export const __test = {
+  cleanGitError,
+  guessMime,
+  isSafeCommitish,
+  isSafeGitPath,
+  parentOf,
+}
+
 /** Attach inject on the default-exported apply: the loader unwraps default exports and drops named exports. */
 apply.inject = ['webServer']
 
