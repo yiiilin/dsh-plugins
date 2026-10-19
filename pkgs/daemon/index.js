@@ -83,13 +83,13 @@ export const Config = z.object({
    */
   selfUnit: z.string().default(''),
   /**
-   * systemd unit to install for this process.
+   * Whether to install a systemd unit for this process.
    *
-   * `auto` writes one when this process is not already supervised by systemd — a daemon
-   * started by hand stops existing at the next reboot, and nothing says so until someone
-   * tries to use it. Empty opts out; any other value is used as the unit's base name.
+   * The unit is always named `dsh-daemon`. `auto` (the default) writes and enables it when
+   * this process is not already supervised — a daemon started by hand stops existing at
+   * the next reboot, and nothing says so until someone tries to use it. Empty opts out.
    */
-  systemdUnit: z.string().default('auto'),
+  systemdUnit: z.union([z.const('auto'), z.const(''), z.const('dsh-daemon')]).default('auto'),
   /** `system` scope needs root; `user` scope works for an unprivileged daemon. */
   systemdScope: z.union([z.const('system'), z.const('user')]).default('system'),
 })
@@ -342,11 +342,10 @@ export function apply(ctx, config) {
       logger.info('daemon: running under systemd; not installing another unit')
       return
     }
-    // Not from the token: a unit name shows up in `systemctl status`, in journal paths
-    // and in process listings, and a credential has no business in any of them.
-    const name = config.systemdUnit === 'auto'
-      ? unitNameFor(`${config.role}-${config.port}`)
-      : unitNameFor(config.systemdUnit)
+    // Fixed, not derived: the unit is *the daemon*. Deriving it from role or port would
+    // make the name depend on configuration, so a port change would leave a stale unit
+    // behind that still starts on boot.
+    const name = unitNameFor()
     try {
       const text = renderUnit({
         name,

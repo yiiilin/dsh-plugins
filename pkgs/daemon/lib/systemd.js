@@ -173,8 +173,17 @@ export function systemdQuote(value) {
   return `"${text.replace(/\\/gu, '\\\\').replace(/"/gu, '\\"')}"`
 }
 
-/** A unit name derived from an environment id, kept to what systemd accepts. */
-export function unitNameFor(id) {
-  const safe = String(id).toLowerCase().replace(/[^a-z0-9-]/gu, '-').replace(/^-+|-+$/gu, '')
-  return `dsh-${safe === '' ? 'edge' : safe}`
+/** The unit name this daemon installs. Fixed: it is the daemon, wherever it runs. */
+export const UNIT_NAME = 'dsh-daemon'
+
+/**
+ * Resolve the unit name to install.
+ *
+ * `auto` and an explicit name both end at {@link UNIT_NAME}; the exported constant exists
+ * so callers and tests share one definition rather than repeating a literal.
+ *
+ * @returns the unit base name, without `.service`.
+ */
+export function unitNameFor() {
+  return UNIT_NAME
 }

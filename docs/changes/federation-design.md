@@ -497,7 +497,7 @@ YAML 往返会把键名 `off` 改写成 `false`，而 `reasoningEfforts` 恰好�
 | 情况 | 行为 |
 | --- | --- |
 | 已在 systemd 下（`INVOCATION_ID` 存在） | 不动。从单元内部改写它正在读的文件没有意义 |
-| 手工启动 | 渲染单元、写入、`daemon-reload`、`enable` |
+| 手工启动 | 渲染单元、写入、`daemon-reload`、`enable`（单元名固定 `dsh-daemon`） |
 | `systemdUnit: ''` | 不做 |
 
 **为什么在监听器之后**：单元里写着端口。一个绑定失败还写了单元的进程，会得到一份
@@ -510,8 +510,9 @@ YAML 往返会把键名 `off` 改写成 `false`，而 `reasoningEfforts` 恰好�
 **两个刻意的决定**：
 
 - **只用 `enable`，不 `start`**：这个进程已经在跑，再 start 一个会和它抢端口。
-- **单元名不含 token**：单元名会出现在 `systemctl status`、journal 路径和进程列表里。
-  `auto` 生成 `dsh-<role>-<port>`。
+- **单元名固定为 `dsh-daemon`**：它是「那个守护进程」，不随角色或端口变化。按端口派生
+  会让改端口后留下一个仍在开机启动的旧单元。包里导出 `UNIT_NAME` 常量，调用方和测试
+  共用一处定义。
 
 **验证**（6.13 实测）：
 
@@ -525,3 +526,17 @@ is-enabled         enabled
 再次启动          running under systemd; not installing another unit
 生产（已在单元下）  already managed by systemd，未重复安装
 ```
+
+#### 单元名统一后的两端状态（2026-10-19）
+
+```
+生产    dsh-daemon.service  active + enabled，公网 200，旧 dsh-web.service 已删
+6.13    dsh-daemon.service  active + enabled，56789 与 3080 都在听
+```
+
+生产的切换由 `/root/switch-unit.sh` 经 `systemd-run` 独立单元执行：从自身服务内部停
+自身会把这个脚本一起杀掉。脚本在任一检查失败时回滚到 `dsh-web` 并重新启用它。
+输出 `RESULT=OK`，随后删掉旧单元文件。
+
+`supervisor`（原 web-daemon）的 `systemdUnit` 也改成 `dsh-daemon.service`，否则它每次
+启动会用旧名字重写单元，把这次改名撤销。

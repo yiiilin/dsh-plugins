@@ -516,12 +516,12 @@ test('systemd quoting survives spaces and quotes', async () => {
   assert.match(systemdQuote('a"b'), /^".*\\".*"$/u)
 })
 
-test('a unit name never carries a credential', async () => {
-  const { unitNameFor } = await import('../lib/systemd.js')
-  assert.equal(unitNameFor('env-6-13'), 'dsh-env-6-13')
-  assert.equal(unitNameFor('Edge Box!'), 'dsh-edge-box')
-  // Nothing exotic survives into a filename systemd has to accept.
-  assert.match(unitNameFor('a/b c'), /^dsh-[a-z0-9-]+$/u)
+test('the unit name is fixed, on every machine', async () => {
+  // Deriving it from role or port would make the name depend on configuration, so
+  // changing a port would leave a stale unit behind that still starts on boot.
+  const { UNIT_NAME, unitNameFor } = await import('../lib/systemd.js')
+  assert.equal(UNIT_NAME, 'dsh-daemon')
+  assert.equal(unitNameFor(), 'dsh-daemon')
 })
 
 test('being under systemd is read from the environment systemd sets', async () => {
