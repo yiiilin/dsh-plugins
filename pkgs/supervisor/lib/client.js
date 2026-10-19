@@ -2,7 +2,7 @@
  * dsh-supervisor — browser plugin configuration card.
  *
  * Static DSH client bundle. The node half exposes the daemon API routes under
- * /_dsh/web-daemon; this card appears under Settings > Plugins > Plugin
+ * /_dsh/supervisor; this card appears under Settings > Plugins > Plugin
  * configuration (settings.plugin.item, keyed by the "supervisor" settings
  * namespace). The card chrome (header, disclosure, footer) is implemented
  * here because the client bundle purity gate forbids importing the official
@@ -323,7 +323,7 @@ window.__ModuleLoader__.load({
 					if (requestRef.current) return;
 					requestRef.current = true;
 					try {
-						const next = await api("/_dsh/web-daemon/metrics");
+						const next = await api("/_dsh/supervisor/metrics");
 						failuresRef.current = 0;
 						setSnapshot(next);
 						setError(null);
@@ -445,7 +445,7 @@ window.__ModuleLoader__.load({
 
 			const refresh = React.useCallback(async () => {
 				try {
-					const next = await api("/_dsh/web-daemon/state");
+					const next = await api("/_dsh/supervisor/state");
 					failuresRef.current = 0;
 					setSnapshot(next);
 					setError(null);
@@ -478,7 +478,7 @@ window.__ModuleLoader__.load({
 				try {
 					if (action === "save") {
 						if (draft === null) return;
-						const result = await api("/_dsh/web-daemon/save", {
+						const result = await api("/_dsh/supervisor/save", {
 							config: draft,
 							revision: snapshot?.revision ?? 0,
 						});
@@ -489,11 +489,11 @@ window.__ModuleLoader__.load({
 						// The worker kills itself as part of `systemctl restart`,
 						// so this request never gets a response — fire it and let
 						// polling reconnect to the fresh process.
-						api("/_dsh/web-daemon/restart", {}).catch(() => {});
+						api("/_dsh/supervisor/restart", {}).catch(() => {});
 						setNotice(t("notice.restarting"));
 						timer.timeout(() => void refresh(), 3000);
 					} else {
-						const result = await api(`/_dsh/web-daemon/${action}`, {});
+						const result = await api(`/_dsh/supervisor/${action}`, {});
 						setSnapshot(result);
 						setDraft(null);
 						if (action === "start") setNotice(t("notice.start"));

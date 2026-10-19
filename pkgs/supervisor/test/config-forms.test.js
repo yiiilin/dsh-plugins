@@ -104,7 +104,7 @@ async function withHarness(run) {
   const unitPath = join(xdg, "systemd", "user", "dsh-web.service");
   const readUnit = () => readFileSync(unitPath, "utf8");
   const call = async (action, body) => {
-    const handler = routes.get(`/_dsh/web-daemon/${action}`);
+    const handler = routes.get(`/_dsh/supervisor/${action}`);
     assert.equal(typeof handler, "function", `the ${action} route is registered`);
     const chunk = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
     const req = {

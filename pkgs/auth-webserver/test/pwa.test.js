@@ -75,7 +75,7 @@ test("provides a pass-through service worker with a fetch handler", () => {
 test("does not proxy dynamic DSH API requests through the service worker", () => {
   const result = dispatchServiceWorkerFetch({
     method: "GET",
-    url: "https://dsh.example.test/_dsh/web-daemon/metrics",
+    url: "https://dsh.example.test/_dsh/supervisor/metrics",
   });
   assert.equal(result.forwarded.length, 0);
   assert.equal(result.responsePromise, undefined);

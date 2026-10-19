@@ -44,11 +44,7 @@ export const inject = ["webServer", "settings"];
 
 const NS = "supervisor";
 const WORKER_FLAG = "DSH_WEB_DAEMON_WORKER";
-// The plugin is `supervisor`; this route keeps its old name on purpose. A route is a wire
-// contract — a cached client bundle, a bookmark or another plugin in this suite would
-// break — and renaming it buys the operator nothing they can see. Only the identity
-// changed: package, row id, locale namespace and the state directory.
-const API_PREFIX = "/_dsh/web-daemon";
+const API_PREFIX = "/_dsh/supervisor";
 const SESSION_REGISTRY_DIR = ["plugins", "dsh-plugin-supervisor"];
 const SESSION_REGISTRY_FILE = "active-sessions.json";
 const SESSION_REGISTRY_LOCK_FILE = "active-sessions.lock";
