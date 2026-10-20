@@ -194,25 +194,30 @@ export function apply(ctx, config) {
   const mount = mountPrefix === '' ? '' : `/${mountPrefix}`
 
   /**
-   * The admin path a request addresses, with the harness mount stripped.
+   * The daemon-owned path a request addresses, with the harness mount stripped.
    *
    * One origin carries two surfaces: this process's own routes (`/admin`,
-   * `/api/auth.*`) and the harness, mounted under `config.rootPrefix`. The panel is
-   * a client plugin *inside* the harness, so it resolves its requests against the
-   * page it is on and calls `<mount>/admin/…`. Those calls name this process's own
-   * API — the mount is where its UI is served, not a different authority — so the
-   * mount is stripped before the admin router sees the path.
+   * `/api/auth.*`) and the harness, mounted under `config.rootPrefix`. The panel and
+   * the login page are served *from* that mount, so a browser resolves their
+   * requests against the page it is on and calls `<mount>/admin/…` or
+   * `<mount>/api/auth.login`. Those calls name this process's own API — the mount is
+   * where its UI is served, not a different authority — so the mount is stripped
+   * before the routers see the path.
    *
-   * Only `/admin` is rewritten: everything else under the mount belongs to the
-   * harness and is proxied untouched.
+   * Only `/admin` and `/api/auth.*` are rewritten: everything else under the mount
+   * belongs to the harness and is proxied untouched.
    *
    * @param path - the request path, without its query string.
-   * @returns the admin path, or the path unchanged.
+   * @returns the daemon path, or the path unchanged.
    */
-  const adminPath = (path) => {
+  const ownPath = (path) => {
     if (mount === '' || !path.startsWith(`${mount}/`)) return path
     const rest = path.slice(mount.length)
-    return rest === '/admin' || rest.startsWith('/admin/') ? rest : path
+    if (rest === '/admin' || rest.startsWith('/admin/')) return rest
+    // The auth endpoints are matched as exact strings by the auth layer, so the
+    // login form posts inside the mount and the mount is stripped here.
+    if (rest === '/api/auth.login' || rest === '/api/auth.logout' || rest === '/api/auth.state') return rest
+    return path
   }
 
   /**
@@ -235,7 +240,12 @@ export function apply(ctx, config) {
       const path = url.split('?')[0]
       if (path === '/admin' || path.startsWith('/admin/')) return await admin(req, res, url)
     }
-    if (await auth.handle(req, res, url, secure)) return true
+    // The auth layer matches its endpoints as exact strings, and the login page
+    // posts from inside the mount, so the mount is stripped before it is asked.
+    const authQueryAt = url.indexOf('?')
+    const authPath = ownPath(authQueryAt === -1 ? url : url.slice(0, authQueryAt))
+    const authUrl = authQueryAt === -1 ? authPath : `${authPath}${url.slice(authQueryAt)}`
+    if (await auth.handle(req, res, authUrl, secure)) return true
     if (!loaded) {
       res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8' })
       res.end('daemon: starting\n')
@@ -245,7 +255,7 @@ export function apply(ctx, config) {
     const path = queryAt === -1 ? url : url.slice(0, queryAt)
     const search = queryAt === -1 ? '' : url.slice(queryAt)
     // The same admin route, addressed through the mount the panel is served from.
-    const ownPath = adminPath(path)
+    const daemonPath = ownPath(path)
     // The login page's own assets, ahead of the session gate: they are what the page
     // a visitor without a session is served refers to, so gating them would make the
     // browser parse the login HTML as a manifest and fail silently. Both the route and
@@ -269,8 +279,8 @@ export function apply(ctx, config) {
         return true
       }
     }
-    if (ownPath === '/admin' || ownPath.startsWith('/admin/')) {
-      return await admin(req, res, `${ownPath}${search}`)
+    if (daemonPath === '/admin' || daemonPath.startsWith('/admin/')) {
+      return await admin(req, res, `${daemonPath}${search}`)
     }
     return false
   }

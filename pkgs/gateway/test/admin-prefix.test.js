@@ -184,3 +184,36 @@ test('at the origin root the admin API is unchanged', async () => {
     assert.equal((await state.json()).ok, true)
   })
 })
+
+test('the login page served under the mount posts to a path the daemon answers', async () => {
+  // The page is served from inside the mount, so a browser resolves its form action
+  // against that mount. The action must therefore both name the mount AND be
+  // rewritten by the daemon — a form that posts to `/main/api/auth.login` when
+  // nothing rewrites it falls through to the login page again, and the page's own
+  // `response.json()` throws, so pairing becomes impossible on every prefixed
+  // deployment while the HTML still looks correct.
+  await withDaemon({ rootPrefix: '/main' }, async ({ origin }) => {
+    const page = await fetch(`${origin}/main/admin/state`)
+    const html = await page.text()
+    const action = html.match(/<form[^>]*action="([^"]+)"/u)?.[1]
+    assert.ok(action !== undefined, 'the served page carries a form action')
+    assert.ok(
+      action.startsWith('/main/api/auth.login'),
+      `the action stays inside the mount the page was served from, got ${action}`,
+    )
+
+    // Post exactly what the browser would post: the action, verbatim.
+    const response = await fetch(`${origin}${action}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password: CREDENTIAL }),
+    })
+    assert.equal(response.status, 200, 'the daemon answers the posted action')
+    const body = await response.json()
+    assert.equal(body.ok, true, 'the posted credential pairs')
+    assert.ok(
+      (response.headers.getSetCookie() ?? []).some((entry) => entry.startsWith('dsh_daemon_session=')),
+      'pairing yields a session cookie',
+    )
+  })
+})
