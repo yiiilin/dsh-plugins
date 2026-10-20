@@ -644,3 +644,39 @@ test('a cookie minted before the credential model changed is refused on the next
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('a wrong issue time is refused without signing the real browser out', async () => {
+  // The pair `<id>.<issuedAt>` is the identity, so a cookie whose time has been
+  // edited is not this session and must be refused. But refusing it must not be
+  // the same act as revoking it: anyone who learns the id could otherwise end
+  // the real session by presenting it with a wrong timestamp — a denial of
+  // service that needs no credential at all.
+  const directory = await temporaryDirectory()
+  const clock = manualClock()
+  const auth = createAuth({
+    directory,
+    password: 'secret',
+    sessionMaxAgeSeconds: 3600,
+    sessionIdleSeconds: 60,
+    now: clock.now,
+  })
+  const { server, origin } = await startAuthServer(auth)
+  try {
+    const value = sessionValue(await login(origin, 'secret'))
+    const id = value.slice(0, value.indexOf('.'))
+    const issuedAt = Number(value.slice(value.indexOf('.') + 1))
+
+    // The genuine cookie works to begin with, so the assertion at the end is
+    // about survival and not about a session that never existed.
+    assert.equal((await authState(origin, `${id}.${issuedAt}`)).authenticated, true, 'the genuine cookie is accepted')
+
+    const tampered = await authState(origin, `${id}.${issuedAt + 1}`)
+    assert.equal(tampered.authenticated, false, 'the edited issue time is refused')
+
+    const survivor = await authState(origin, `${id}.${issuedAt}`)
+    assert.equal(survivor.authenticated, true, 'the genuine cookie still works after the edited one was refused')
+  } finally {
+    await stopAuthServer(server)
+    await rm(directory, { recursive: true, force: true })
+  }
+})

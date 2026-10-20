@@ -285,14 +285,20 @@ export class SessionStore {
   touch(id, issuedAt) {
     const now = this.#now();
     const record = this.records.get(id);
-    // The epoch is checked here, at the only place a cookie is accepted, so a
-    // record that somehow outlived its model is refused on the very request that
-    // presents it rather than lingering until the next restart.
-    if (record === undefined || record.issuedAt !== issuedAt || record.authEpoch !== this.#epoch || this.#expired(record, now)) {
-      if (record !== undefined) {
-        this.records.delete(id);
-        this.persist();
-      }
+    if (record === undefined) return null;
+    // A cookie whose issue time does not match the record is stale: it names a
+    // session that has since been replaced, and refusing it is the whole point.
+    // Deleting the record on the way out is not, and must not happen — anyone
+    // holding the id could then sign the real browser out by presenting a wrong
+    // timestamp. Only a record that is genuinely dead (expired, or minted under a
+    // retired credential model) is dropped below.
+    if (record.issuedAt !== issuedAt) return null
+    // The epoch is checked at the only place a cookie is accepted, so a record that
+    // somehow outlived its model is refused on the very request that presents it
+    // rather than lingering until the next restart.
+    if (record.authEpoch !== this.#epoch || this.#expired(record, now)) {
+      this.records.delete(id);
+      this.persist();
       return null;
     }
     record.lastSeenAt = now;
