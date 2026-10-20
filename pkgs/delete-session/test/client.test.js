@@ -218,3 +218,81 @@ test("releases the busy flag even when the sidebar refresh rejects", async () =>
   assert.deepEqual(order, ["busy", "deleted", "idle"]);
   assert.deepEqual(errors, [null], "a sidebar refresh failure is never a deletion error");
 });
+
+test("the selected blank session stays visible in the batch list", () => {
+  // The list of sessions a user deletes from must show the row they are about to
+  // act on. A blank session is the provisional "New Session" row: ordinary
+  // sessions are always visible, but among blank sessions only the selected one
+  // is — the same rule the product's Workspace browser applies.
+  //
+  // `SessionListState` carries no `current` field. The selected session is the
+  // one the client retains for the main view, which the product reads as
+  // `retainedBy.mainView > 0`. Reading `list.current` yields undefined, so no
+  // blank session ever matches, and the selected blank row disappears.
+  const { exports } = loadClient();
+  const { buildSessionSelectionModel } = exports.__test;
+
+  const blankId = "session-blank";
+  const ordinaryId = "session-ordinary";
+  const list = {
+    ids: [blankId, ordinaryId],
+    byId: {
+      [blankId]: {
+        id: blankId,
+        origin: "main",
+        blank: true,
+        updatedAt: 10,
+        retainedBy: { mainView: 1 },
+      },
+      [ordinaryId]: {
+        id: ordinaryId,
+        origin: "main",
+        blank: false,
+        updatedAt: 20,
+        retainedBy: { mainView: 0 },
+      },
+    },
+    phase: "ready",
+    projectionsBySession: {},
+  };
+  const workspaceList = { items: [], archivedSessionIds: [] };
+
+  const model = buildSessionSelectionModel(list, workspaceList);
+
+  assert.ok(
+    model.flatIds.includes(blankId),
+    "the selected blank session must stay visible — it is the row the user is acting on",
+  );
+  assert.ok(
+    model.flatIds.includes(ordinaryId),
+    "ordinary sessions stay visible",
+  );
+});
+
+test("a blank session that is not the selected one stays hidden", () => {
+  // The rule is "among blank sessions, only the current one", not "all blank
+  // sessions". This pins the other half, so a fix that simply shows every blank
+  // row would fail here.
+  const { exports } = loadClient();
+  const { buildSessionSelectionModel } = exports.__test;
+
+  const selectedBlank = "session-selected";
+  const otherBlank = "session-other";
+  const list = {
+    ids: [selectedBlank, otherBlank],
+    byId: {
+      [selectedBlank]: { id: selectedBlank, origin: "main", blank: true, updatedAt: 10, retainedBy: { mainView: 1 } },
+      [otherBlank]: { id: otherBlank, origin: "main", blank: true, updatedAt: 20, retainedBy: { mainView: 0 } },
+    },
+    phase: "ready",
+    projectionsBySession: {},
+  };
+
+  const model = buildSessionSelectionModel(list, { items: [], archivedSessionIds: [] });
+
+  assert.ok(model.flatIds.includes(selectedBlank), "the selected blank session is visible");
+  assert.ok(
+    !model.flatIds.includes(otherBlank),
+    "a blank session that is not selected stays hidden",
+  );
+});

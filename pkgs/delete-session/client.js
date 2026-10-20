@@ -365,7 +365,7 @@ div[role="treeitem"]:has(> .dss-session-checkbox-host){position:relative}
       return true;
     }
 
-    const EMPTY_SESSION_LIST = { current: undefined, ids: [], byId: {} };
+    const EMPTY_SESSION_LIST = { ids: [], byId: {} };
     const EMPTY_WORKSPACE_LIST = { items: [], archivedSessionIds: [] };
 
     function sessionIsVisible(summary, current, archived) {
@@ -373,6 +373,20 @@ div[role="treeitem"]:has(> .dss-session-checkbox-host){position:relative}
         && summary.origin !== "subagent"
         && !archived.has(summary.id)
         && (!summary.blank || summary.id === current);
+    }
+
+    /**
+     * The session the client retains for the main view.
+     *
+     * `SessionListState` has no `current` field — it carries `ids`, `byId`,
+     * `phase` and `projectionsBySession`. The selected session is the one the
+     * object layer retains for the main view, which the product's Workspace
+     * browser reads the same way. Reading `list.current` yields undefined, so no
+     * blank session ever matched and the selected blank row disappeared.
+     */
+    function mainSessionId(list) {
+      const byId = list?.byId ?? {};
+      return Object.values(byId).find((session) => (session?.retainedBy?.mainView ?? 0) > 0)?.id;
     }
 
     function compareSessionRecency(left, right, byId) {
@@ -385,7 +399,7 @@ div[role="treeitem"]:has(> .dss-session-checkbox-host){position:relative}
     function buildSessionSelectionModel(list, workspaceList) {
       const byId = list?.byId ?? {};
       const sourceIds = Array.isArray(list?.ids) ? list.ids : [];
-      const current = list?.current;
+      const current = mainSessionId(list);
       const archived = new Set(Array.isArray(workspaceList?.archivedSessionIds) ? workspaceList.archivedSessionIds : []);
       const visible = (id) => sessionIsVisible(byId[id], current, archived);
       const workspaces = Array.isArray(workspaceList?.items) ? workspaceList.items : [];
@@ -429,6 +443,7 @@ div[role="treeitem"]:has(> .dss-session-checkbox-host){position:relative}
     }
 
     function collectWorkspaceTargets(browserRoot, model, list) {
+      const current = mainSessionId(list);
       const sectionHeader = browserRoot?.firstElementChild;
       const headerTarget = [...sectionHeader?.children ?? []].find((child) => (
         child.tagName === "DIV"
@@ -457,8 +472,8 @@ div[role="treeitem"]:has(> .dss-session-checkbox-host){position:relative}
       const targets = [];
       for (const row of rows) {
         let id;
-        if (list?.current !== undefined && row.getAttribute("aria-selected") === "true" && byId[list.current]?.blank === true) {
-          id = list.current;
+        if (current !== undefined && row.getAttribute("aria-selected") === "true" && byId[current]?.blank === true) {
+          id = current;
         } else {
           const candidates = candidatesByTitle.get(directSessionRowTitle(row));
           id = candidates?.shift();
@@ -528,6 +543,7 @@ div[role="treeitem"]:has(> .dss-session-checkbox-host){position:relative}
       return function BatchManagementAction(props) {
         const list = typeof props.useSessions === "function" ? props.useSessions((state) => state) : EMPTY_SESSION_LIST;
         const workspaceList = typeof props.useWorkspaces === "function" ? props.useWorkspaces((state) => state) : EMPTY_WORKSPACE_LIST;
+        const current = mainSessionId(list);
         const model = React.useMemo(() => buildSessionSelectionModel(list, workspaceList), [list, workspaceList]);
         const selectableSet = React.useMemo(() => new Set(model.selectableIds), [model.selectableIds]);
         const [managing, setManaging] = React.useState(false);
@@ -655,11 +671,11 @@ div[role="treeitem"]:has(> .dss-session-checkbox-host){position:relative}
             attempt: async () => {
               await requestDeleteMany(selected);
               const selectedSet = new Set(selected);
-              if (selectedSet.has(list.current)) {
+              if (selectedSet.has(current)) {
                 const archived = new Set(Array.isArray(workspaceList?.archivedSessionIds) ? workspaceList.archivedSessionIds : []);
                 const nextSessionId = (Array.isArray(list.ids) ? list.ids : []).find((id) => {
                   const summary = list.byId[id];
-                  return !selectedSet.has(id) && sessionIsVisible(summary, list.current, archived) && summary.blank !== true;
+                  return !selectedSet.has(id) && sessionIsVisible(summary, current, archived) && summary.blank !== true;
                 });
                 if (nextSessionId !== undefined && typeof sessions?.open === "function") sessions.open(nextSessionId);
                 else if (typeof sessions?.clear === "function") sessions.clear(); else if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
@@ -697,11 +713,11 @@ div[role="treeitem"]:has(> .dss-session-checkbox-host){position:relative}
             t,
             attempt: async () => {
               await requestDelete(target.id);
-              if (list.current === target.id) {
+              if (current === target.id) {
                 const archived = new Set(Array.isArray(workspaceList?.archivedSessionIds) ? workspaceList.archivedSessionIds : []);
                 const nextSessionId = (Array.isArray(list.ids) ? list.ids : []).find((id) => {
                   const summary = list.byId[id];
-                  return id !== target.id && sessionIsVisible(summary, list.current, archived) && summary.blank !== true;
+                  return id !== target.id && sessionIsVisible(summary, current, archived) && summary.blank !== true;
                 });
                 if (nextSessionId !== undefined && typeof sessions?.open === "function") sessions.open(nextSessionId);
                 else if (typeof sessions?.clear === "function") sessions.clear(); else if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
@@ -970,6 +986,7 @@ div[role="treeitem"]:has(> .dss-session-checkbox-host){position:relative}
     exports.__test = {
       MENU_ANCHOR_GAP_PX,
       boxDistance,
+      buildSessionSelectionModel,
       menuContentTarget,
       openMenuForRow,
       refreshSessionList,
