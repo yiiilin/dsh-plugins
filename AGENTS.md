@@ -67,3 +67,24 @@ the root version when the workspace layout changes. Update the root README and
 compatibility notes in the same change. Commit/push when requested, and do not
 publish without an explicit release request — this repository intentionally has
 no npm publication target.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as markdown under `.scratch/<feature>/`, one file per ticket,
+`Status:` line for triage state. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage role strings, each equal to its role name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `GLOSSARY.md` plus `docs/adr/`, shared by every `pkgs/*` package. See `docs/agents/domain.md`.
+
+### Dev flows
+
+`dev-flow` routes incoming work to `new-feature`, `feature-upgrade`, or `bug-fix`;
+those three wrap Matt Pocock's engineering skills. They need his skill set
+installed, and this table is that per-repo setup.
