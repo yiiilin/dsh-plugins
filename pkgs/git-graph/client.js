@@ -1833,45 +1833,25 @@ window.__ModuleLoader__.load({
 			 * It is rendered with empty props, so anything it needs must come from this
 			 * closure rather than from a prop.
 			 */
-			function createFileExplorerGitPage(t, remote) {
-				return function FileExplorerGitPage(props) {
-				// The seat passes no `useSessions`: `sidebar.right.pane.tab` declares its
-				// injection as `hooks.tabInfo` and nothing else, and `TabSlot` renders it with
-				// empty props. Reading `props.useSessions` therefore yielded undefined and the
-				// tab body threw on its first render — which surfaced as a tab that did
-				// nothing, with no console error pointing at it.
+			function createFileExplorerGitPage(t) {
+				return function FileExplorerGitPage({ sessionId, useSessions }) {
+				// The seat declares `sidebar.right.pane.tab` as `{ kind: 'keyed', scope:
+				// 'session' }`, so a tab body receives the session-scoped standard props —
+				// `sessionId` — plus the synthesized `useSessions` selector hook. That pair is
+				// how the product's own Files tab resolves its workspace, and it is what this
+				// body reads.
 				//
-				// The Host fallback is not usable here: under full access the sandbox policy's
-				// workspace root is `/`, which is not a git repository, so a request without a
-				// path fails with 'not a git repository'. The session's own cwd is the fact
-				// that matters, and it is in the session list.
+				// It must not ask the session list instead. That list is global and ordered by
+				// activity, so "the freshest session" is the same answer in every workspace:
+				// the graph showed one workspace's history everywhere, and switching
+				// workspaces changed nothing.
 				//
-				// `remote` comes from the plugin body through the closure: the seat renders a
-				// tab body with empty props, so nothing may arrive that way.
-				const [cwd, setCwd] = React.useState(props.cwd)
-				React.useEffect(() => {
-					if (cwd !== undefined) return undefined
-					let cancelled = false
-					void (async () => {
-						try {
-							// `session.list()` answers `{ ok, value: { items } }`, and each item
-							// carries the session's cwd. The items are already ordered by
-							// activity, so the first one with a cwd is the freshest.
-							const result = await remote.session.list({})
-							if (cancelled || result?.ok !== true) return
-							const items = result.value?.items
-							const freshest = (Array.isArray(items) ? items : [])
-								.find((row) => typeof row?.cwd === 'string' && row.cwd !== '')
-							if (freshest !== undefined) setCwd(freshest.cwd)
-						} catch {
-							// A failed lookup leaves the empty state showing; the tab stays
-							// reachable instead of throwing.
-						}
-					})()
-					return () => { cancelled = true }
-				}, [cwd])
+				// The Host fallback is not usable either: under full access the sandbox
+				// policy's workspace root is `/`, which is not a git repository, so a request
+				// without a path fails with 'not a git repository'.
+				const cwd = useSessions((sessions) => sessions.byId[sessionId]?.cwd)
 
-				if (cwd === undefined) {
+				if (typeof cwd !== 'string' || cwd === '') {
 					return React.createElement('div', { className: 'dsh-fe-page' },
 						React.createElement('div', { className: 'dsh-fe-status' }, t('noSession')))
 				}
@@ -1884,7 +1864,7 @@ window.__ModuleLoader__.load({
 			}
 
 			const GitGraphView = createGitGraphView(t, api);
-						const FileExplorerGitPage = createFileExplorerGitPage(t, ctx.get('remote'));
+						const FileExplorerGitPage = createFileExplorerGitPage(t);
 
 			ctx.effect(() => {
 				// Only the Git Graph is contributed here: the product ships its own
@@ -1911,6 +1891,12 @@ window.__ModuleLoader__.load({
 					name: 'sidebar.right.pane.tab',
 					key: GIT_TAB_ID,
 					locale: LOCALE_NS,
+					// No `inject` here, and none is needed. The seat declares this slot as
+					// `{ kind: 'keyed', scope: 'session' }`, so every body already receives the
+					// session-scoped standard props — `sessionId` among them — plus the
+					// synthesized `useSessions` selector hook. An `inject` face is a factory
+					// whose result is spread into props; it is not how a body declares a
+					// dependency on the session it is drawn in.
 				}, FileExplorerGitPage))
 				return () => {
 					disposeGitBody()

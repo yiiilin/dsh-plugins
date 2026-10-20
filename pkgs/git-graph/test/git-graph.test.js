@@ -60,25 +60,25 @@ test('an unknown extension is served as bytes, never as something executable', (
   assert.equal(guessMime('x.unknown'), 'application/octet-stream')
 })
 
-test('the tab body never reads a prop the seat does not pass', async () => {
-  // The regression this package shipped: `sidebar.right.pane.tab` injects only
-  // `hooks.tabInfo` and `TabSlot` renders the body with empty props, so a body that reads
-  // `props.useSessions` throws on first render and the tab appears to do nothing.
+test('the tab body reads its workspace from declared inject props only', async () => {
+  // Two regressions meet here, and the fix for the first must not reintroduce the second.
+  //
+  // 1. `sidebar.right.pane.tab` renders a body with empty owner props, so a body that
+  //    reads `props.useSessions` without declaring it through `inject` throws on first
+  //    render and the tab appears to do nothing.
+  // 2. Resolving the workspace from the global session list instead meant every
+  //    workspace showed the same session's history. See the session-scoped test below.
   const client = await readFile(new URL('../client.js', import.meta.url), 'utf8')
   const body = client.slice(client.indexOf('function createFileExplorerGitPage'))
-  // Comments explain the old bug and mention the offending expression, so strip them
+  // Comments explain both bugs and mention the offending expressions, so strip them
   // before looking for the dependency itself.
   const code = body.replace(/\/\*[\s\S]*?\*\//gu, '').replace(/^\s*\/\/.*$/gmu, '')
   assert.ok(!/props\.useSessions/u.test(code), 'the body must not read props.useSessions')
-  // Nothing else may be read from the seat either: the Host half resolves the workspace
-  // from the sandbox policy when a request carries no path.
-  // The workspace comes from the session list through the closure, not from the seat.
-  assert.match(code, /remote\.session\.list\(\{\}\)/u)
-  // The reply is `{ ok, value: { items } }`, not an array. Reading it as an array was
-  // the bug that kept the graph empty with no error anywhere.
-  assert.match(code, /result\.value\?\.items/u)
-  assert.match(code, /result\?\.ok !== true/u)
   assert.ok(!/props\.sessionId/u.test(code), 'the body must not read props.sessionId')
+  assert.ok(
+    !/remote\.session\.list\(/u.test(code),
+    'the workspace must not come from the global session list',
+  )
 })
 
 test('the Host still accepts a request that carries a path', async () => {
@@ -90,4 +90,29 @@ test('the Host still accepts a request that carries a path', async () => {
   const resolveDir = source.slice(source.indexOf('const resolveDir = '), source.indexOf('const resolveRepo = '))
   assert.match(resolveDir, /typeof requestedPath === 'string' && requestedPath\.trim\(\) !== ''/u)
   assert.match(resolveDir, /fs\.resolve\(dir\)/u, 'and resolves it through the fs service')
+})
+
+test('the git tab follows the session it is drawn in, not the busiest session', async () => {
+  // The bug this pins: the body resolved its workspace by asking the session list for
+  // the freshest session and taking its cwd. That list is global, so every workspace
+  // showed whichever session had most recently been active — the same graph everywhere,
+  // and switching workspaces changed nothing.
+  //
+  // The seat already declares `sidebar.right.pane.tab` as `{ kind: 'keyed', scope:
+  // 'session' }`, so a body receives `sessionId` and the `useSessions` selector hook
+  // without declaring anything. The product's own Files tab reads exactly that pair and
+  // takes `sessions.byId[sessionId].cwd`.
+  const client = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  const body = client.slice(client.indexOf('function createFileExplorerGitPage'))
+  const bodyCode = body.replace(/\/\*[\s\S]*?\*\//gu, '').replace(/^\s*\/\/.*$/gmu, '')
+
+  assert.match(
+    bodyCode,
+    /sessions\.byId\[sessionId\]\?\.cwd/u,
+    'the body resolves its workspace from the session it is drawn in',
+  )
+  assert.ok(
+    !/remote\.session\.list\(/u.test(bodyCode),
+    'the body must not resolve a workspace from the global session list',
+  )
 })
