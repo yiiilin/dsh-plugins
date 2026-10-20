@@ -11,6 +11,21 @@ See the [root README](../../README.md) for the workspace layout, migration and t
 and [the design note](../../docs/changes/daemon-design.md) for the routing and
 helper-deployment decisions.
 
+## Upgrading from 0.3
+
+The login model is one pairing credential. `username`, `twoFactorEnabled`,
+`totpSecret`, `passkeyOrigin` and `passkeyRpId` are gone from the config schema;
+a profile that still sets them is not rejected, but the plugin warns at mount
+that they no longer do anything. Passkeys registered under 0.3 stop working, and
+every session minted under the old model is revoked once on the first start, so
+each browser pairs again.
+
+Set `config.password` (or `DSH_AUTH_PASS`) before the first 0.4 start: with no
+credential file and no password there is nothing to pair against, and the plugin
+refuses to mount rather than serve a login page nobody can pass. Once
+`daemon/auth/pairing.json` exists the configured password is only a seed and can
+be removed.
+
 ## What it owns
 
 - **The only public listener** (`0.0.0.0:3080` by default). TLS is terminated by
