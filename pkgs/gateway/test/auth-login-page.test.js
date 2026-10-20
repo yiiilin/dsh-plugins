@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { PAIRING_CREDENTIAL_FILE } from '../lib/auth/pairing-credential.js'
+import { renderLoginPage } from '../lib/auth/login-page.js'
 import { createAuth } from '../lib/auth/session.js'
 
 /** A credential distinctive enough that a wrong guess is never a near miss. */
@@ -248,4 +249,25 @@ test('a credential written to pairing.json is what the page accepts, not the con
     await stopAuthServer(server)
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+test('under a prefix the form posts the credential inside the mount', async () => {
+  // A root-absolute action leaves the prefix and reaches whatever answers at the
+  // origin — taking the pairing credential with it. The form and the route that
+  // accepts it have to be derived from the same prefix.
+  const html = renderLoginPage('realm', 'en', '/main/', 'main')
+  const action = html.match(/<form[^>]*action="([^"]+)"/u)?.[1]
+  assert.ok(action !== undefined, 'the form carries an action')
+  assert.ok(
+    action.startsWith('/main/api/auth.login'),
+    `the form posts inside the mount, got ${action}`,
+  )
+
+  // At the origin root the action is still the daemon's own path, not a doubled slash.
+  const rootHtml = renderLoginPage('realm', 'en', '/', '')
+  const rootAction = rootHtml.match(/<form[^>]*action="([^"]+)"/u)?.[1]
+  assert.ok(
+    rootAction.startsWith('/api/auth.login'),
+    `at the origin root the action stays absolute, got ${rootAction}`,
+  )
 })

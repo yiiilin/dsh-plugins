@@ -32,7 +32,7 @@ const ICON_512 = readFileSync(new URL("./pwa/icon-512.png", import.meta.url));
  * @param value - the configured root prefix.
  * @returns the prefix as a path fragment, empty for the origin root.
  */
-function prefixOf(value) {
+export function prefixOf(value) {
   const trimmed = typeof value === "string" ? value.trim().replace(/^\/+|\/+$/gu, "") : "";
   return trimmed === "" ? "" : `/${trimmed}`;
 }

@@ -1,4 +1,4 @@
-import { pwaAssetUrls, pwaBootstrap, pwaHeadMarkup } from "./pwa.js";
+import { prefixOf, pwaAssetUrls, pwaBootstrap, pwaHeadMarkup } from "./pwa.js";
 
 const LOGIN_TEXT = Object.freeze({
   en: Object.freeze({
@@ -118,7 +118,10 @@ export function renderLoginPage(realm, locale = "en", rawRequestUrl = "/", rootP
   const language = LOGIN_TEXT[locale] === undefined ? "en" : locale;
   const text = loginMessages(language);
   const safeRealm = escapeHtml(realm ?? "DeepSeek Harness Authentication");
-  const loginAction = `/api/auth.login?lang=${encodeURIComponent(language)}`;
+  // The form must post where the daemon actually answers, which is inside its own
+  // mount: a root-absolute action would leave the prefix and reach whatever sits at
+  // the origin, taking the pairing credential with it.
+  const loginAction = `${prefixOf(rootPrefix)}/api/auth.login?lang=${encodeURIComponent(language)}`;
   const zhHref = escapeHtml(languageHref(rawRequestUrl, "zh"));
   const enHref = escapeHtml(languageHref(rawRequestUrl, "en"));
   const pwa = pwaAssetUrls(rootPrefix);
