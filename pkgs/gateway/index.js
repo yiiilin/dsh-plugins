@@ -176,20 +176,16 @@ export function apply(ctx, config) {
     }
   }
 
+  // A seed for the pairing credential, never a live credential: on the first start
+  // it is hashed into `daemon/auth/pairing.json`, and every start after that reads
+  // the file alone. Keeping it out of the login path is what lets the operator drop
+  // the plaintext from the launch environment afterwards.
   const password = config.password !== ''
     ? config.password
     : process.env.DSH_AUTH_PASS ?? process.env.AUTH_PASS ?? ''
-  // The same fallback chain the retired gateway used, so an existing deployment keeps
-  // the credentials it already has.
   const username = config.username !== 'admin'
     ? config.username
     : process.env.DSH_AUTH_USER ?? process.env.AUTH_USER ?? config.username
-  if (password === '') {
-    // An empty password rejects every attempt, since `Boolean('')` is false. Serving an
-    // unpassable login page is how a deployment locks itself out: say so once, at
-    // startup, and keep serving.
-    logger.warn('daemon: no password configured (config.password or DSH_AUTH_PASS); the login page will reject every attempt')
-  }
   const auth = createAuth({
     directory: join(homeDir, 'daemon', 'auth'),
     username,

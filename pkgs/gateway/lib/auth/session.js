@@ -21,6 +21,7 @@ import {
   verifyAuthenticationResponse,
 } from '@simplewebauthn/server'
 import { loginErrorMessage, renderLoginPage, selectLoginLocale } from './login-page.js'
+import { PairingCredential } from './pairing-credential.js'
 import { PasskeyStore } from './passkey-store.js'
 import { SessionStore } from './session-store.js'
 import { verifyTotp } from './totp.js'
@@ -37,11 +38,12 @@ const SECURE_COOKIE_NAME = '__Host-dsh_daemon_session'
  * Build the authentication layer.
  *
  * @param options - credentials, storage location and cookie policy.
- * @param options.directory - directory holding the session and passkey stores.
+ * @param options.directory - directory holding the session, passkey and pairing stores.
  * @param options.username - the single accepted user name.
- * @param options.password - the accepted password; empty disables password login.
+ * @param options.password - seeds the pairing credential file when it does not exist
+ *   yet; ignored once it does. Empty and no file is a startup error.
  * @param options.realm - realm shown on the login page.
- * @param options.twoFactorEnabled - require a TOTP code in addition to the password.
+ * @param options.twoFactorEnabled - require a TOTP code in addition to the credential.
  * @param options.totpSecret - base32 TOTP secret; required when two-factor is on.
  * @param options.sessionMaxAgeSeconds - absolute session lifetime.
  * @param options.sessionIdleSeconds - idle timeout.
@@ -65,6 +67,10 @@ export function createAuth({
   now = systemClock,
   logger,
 }) {
+  // First, before any store opens: the pairing credential is read (or bootstrapped
+  // from `password`) here, so a missing or corrupt file stops the mount instead of
+  // surfacing at the first login attempt.
+  const pairing = new PairingCredential({ directory, password, now, logger })
   const sessions = new SessionStore({
     directory,
     maxAgeSeconds: sessionMaxAgeSeconds,
@@ -73,9 +79,10 @@ export function createAuth({
     logger,
   })
   const passkeys = new PasskeyStore({ directory, now, logger })
-  // Compare digests, never the configured text: a config dump must not be
-  // replayable, and equal-length digests keep the comparison constant-time.
-  const passwordDigest = password === '' ? undefined : digest(password)
+  // Compare digests for the user name, never the configured text: a config dump
+  // must not be replayable, and equal-length digests keep the comparison constant-time.
+  // The password is no longer compared here at all — only the hash in the file is,
+  // by `pairing.verify`.
   const usernameDigest = digest(username)
 
   /**
@@ -269,15 +276,14 @@ export function createAuth({
       json(res, 400, { ok: false, error: loginErrorMessage(locale, 'invalidBody') })
       return true
     }
-    if (passwordDigest === undefined) {
-      json(res, 403, { ok: false, error: loginErrorMessage(locale, 'invalid') })
-      return true
-    }
+    // The stored hash is the only source of truth: the configured password seeded
+    // the file once and is not consulted again. The pairing credential travels in
+    // `password`, so the shipped login form keeps working.
+    const credentialOk = await pairing.verify(body.password ?? '')
+    // The user name is still compared, and always: returning early on it would make
+    // the response time distinguish an unknown user from a wrong credential.
     const usernameOk = safeEqual(digest(body.username ?? ''), usernameDigest)
-    const passwordOk = safeEqual(digest(body.password ?? ''), passwordDigest)
-    // Both comparisons always run: returning early on a bad user would make the
-    // response time distinguish an unknown user from a wrong password.
-    if (!usernameOk || !passwordOk) {
+    if (!credentialOk || !usernameOk) {
       json(res, 401, { ok: false, error: loginErrorMessage(locale, 'invalid') })
       return true
     }

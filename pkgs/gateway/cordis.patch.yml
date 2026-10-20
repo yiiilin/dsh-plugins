@@ -26,7 +26,8 @@
         # Empty hides the panel's restart control. Name this deployment's own unit to
         # enable it; a guess would restart the wrong service.
         selfUnit: ''
-        # Login for this listener. Falls back to AUTH_USER / AUTH_PASS when empty, so an
-        # existing deployment keeps the credentials it already has.
+        # Login for this listener. The password seeds daemon/auth/pairing.json on the
+        # first start (DSH_AUTH_PASS / AUTH_PASS do the same); after that the hashed
+        # file is the only source of truth and the plaintext can be removed.
         username: admin
         password: ''

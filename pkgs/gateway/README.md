@@ -15,7 +15,10 @@ helper-deployment decisions.
 
 - **The only public listener** (`0.0.0.0:3080` by default). TLS is terminated by
   an external proxy; this plugin never speaks TLS.
-- **Authentication**: one credential check, one session cookie, optional TOTP.
+- **Authentication**: one pairing credential, one session cookie, optional TOTP.
+  The credential is stored as a scrypt hash in `daemon/auth/pairing.json` (0600);
+  `config.password` / `DSH_AUTH_PASS` only seed that file on the first start, and a
+  corrupt or absent file with no password stops the plugin from mounting.
 - **Routing**: `/<id>/…` proxies to that profile's loopback port, HTTP and
   WebSocket alike.
 - **Profile lifecycle**: create, start, stop, remove, plus `/admin` for operators.
