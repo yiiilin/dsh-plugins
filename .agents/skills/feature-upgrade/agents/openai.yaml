@@ -1,0 +1,5 @@
+interface:
+  display_name: "Feature Upgrade"
+  short_description: "在已有代码上改形状：先扫加深机会，预重构之后再动手"
+policy:
+  allow_implicit_invocation: false

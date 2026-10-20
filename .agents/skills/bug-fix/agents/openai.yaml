@@ -1,0 +1,5 @@
+interface:
+  display_name: "Bug Fix"
+  short_description: "有故障但说不清原因：先建红灯循环，再一路走到回归测试"
+policy:
+  allow_implicit_invocation: false

@@ -1,0 +1,5 @@
+interface:
+  display_name: "New Feature"
+  short_description: "从想法走到可合并的改动，串起 Matt 的 skill 流程"
+policy:
+  allow_implicit_invocation: false

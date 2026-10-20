@@ -12,3 +12,6 @@ node_modules/
 # listed defensively in case a tool falls back to it.
 .dsh/goals/
 .codex/goals/
+# Archify diagram scratch: candidates, renders and screenshot evidence are
+# per-request local artifacts, not repository content.
+.archify/

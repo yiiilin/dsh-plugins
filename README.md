@@ -172,10 +172,8 @@ production port. Do not point mutating test journeys at production.
 - `scripts/migration.mjs`: legacy address migration.
 - `test/`: workspace-level contracts.
 - `docs/`: module notes, compatibility research and verification evidence.
-
-The [doc-driven-development source](.agents/skills/doc-driven-development/SKILL.md)
-keeps human-readable domain/module contracts in a small, uniform documentation
-layout.
+- `.agents/skills/`: project skills — `dev-flow` routes to `new-feature`,
+  `feature-upgrade` and `bug-fix`, which wrap Matt Pocock's engineering flows.
 
 ## Release
 
