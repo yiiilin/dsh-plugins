@@ -179,6 +179,17 @@ export function apply(ctx, config) {
   const password = config.password !== ''
     ? config.password
     : process.env.DSH_AUTH_PASS ?? process.env.AUTH_PASS ?? ''
+  // The credential model is one pairing credential now. These keys belonged to the
+  // retired model; a profile that still sets them is not an error — schemastery
+  // merges unknown keys rather than rejecting them — but ignoring them in silence
+  // would let a deployment believe a second factor is still being enforced.
+  const retiredKeys = ['username', 'twoFactorEnabled', 'totpSecret', 'passkeyOrigin', 'passkeyRpId']
+  const stillConfigured = retiredKeys.filter((key) => Object.hasOwn(config, key))
+  if (stillConfigured.length > 0) {
+    logger.warn?.(
+      `daemon: ignoring ${stillConfigured.join(', ')} — the login model is one pairing credential now, and these no longer do anything`,
+    )
+  }
   const auth = createAuth({
     directory: join(homeDir, 'daemon', 'auth'),
     password,

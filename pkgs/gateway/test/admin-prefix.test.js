@@ -217,3 +217,42 @@ test('the login page served under the mount posts to a path the daemon answers',
     )
   })
 })
+
+test('a profile still carrying the retired credential keys is told they do nothing', async () => {
+  // Removing a key from the schema does not remove it from an existing profile:
+  // schemastery merges unknown keys instead of rejecting them. A deployment that
+  // had `twoFactorEnabled: true` would otherwise lose its second factor with no
+  // line in the log to explain it.
+  const warnings = []
+  const home = await temporaryHome()
+  try {
+    await seedCredential(home)
+    const ctx = {
+      logger: { info: () => true, warn: (message) => { warnings.push(String(message)); return true } },
+      get: () => undefined,
+      effect: (fn) => { const dispose = fn(); if (typeof dispose === 'function') dispose(); return () => {} },
+      on: () => () => {},
+    }
+    apply(ctx, {
+      homeDir: home,
+      registryPath: join(home, 'daemon', 'environments.json'),
+      cacheDir: join(home, 'daemon', 'cache'),
+      host: '127.0.0.1',
+      port: 0,
+      rootEmbedded: false,
+      systemdUnit: '',
+      role: 'main',
+      profile: '',
+      password: '',
+      rootPrefix: 'main',
+      twoFactorEnabled: true,
+      passkeyOrigin: 'https://example.test',
+    })
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+  const notice = warnings.find((line) => line.includes('ignoring'))
+  assert.ok(notice !== undefined, `expected a warning about the retired keys, got ${JSON.stringify(warnings)}`)
+  assert.match(notice, /twoFactorEnabled/u, 'the warning names the key that no longer does anything')
+  assert.match(notice, /passkeyOrigin/u, 'and every retired key it found')
+})
