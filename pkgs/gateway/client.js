@@ -214,8 +214,24 @@ window.__ModuleLoader__.load({
       },
     }
 
+    /**
+     * Request one of this daemon's own routes.
+     *
+     * The path is resolved against `document.baseURI`, not the origin: the GUI is
+     * served under an environment prefix (`/main/`, `/env-6-13/`), and a
+     * root-absolute path escapes it — the request lands on the prefix-less route,
+     * which is answered by the login page instead of the admin API. The leading
+     * slash is stripped before resolving because `new URL('/admin/state', base)`
+     * resolves against the *origin root* and would put the bug straight back.
+     *
+     * Resolving here rather than at each call site is what covers all six of them,
+     * including the two that build the path from an environment id.
+     */
     const call = async (path, options) => {
-      const response = await fetch(path, { credentials: 'same-origin', ...options })
+      const response = await fetch(new URL(path.replace(/^\//u, ''), document.baseURI), {
+        credentials: 'same-origin',
+        ...options,
+      })
       const text = await response.text()
       try {
         return JSON.parse(text)

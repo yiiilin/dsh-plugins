@@ -5,6 +5,26 @@ import { join } from "node:path";
 export const SESSION_STORE_VERSION = 1;
 export const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/u;
 export const SESSION_PERSIST_INTERVAL_MS = 30_000;
+/**
+ * Identity of the credential model a session is minted under.
+ *
+ * A session says who may come back without presenting the credential again, so it
+ * is only worth anything while that credential still exists. When the way in
+ * changes, sessions minted under the old one have to stop being accepted — the
+ * old credential would otherwise still be in force, through a cookie.
+ *
+ * This number is that identity. Every record carries the epoch it was minted
+ * under, and the store file records the epoch it was last written under, so a
+ * restart can tell "these records predate the current model" without any other
+ * marker: a mismatch revokes the whole set once, and the rewritten file carries
+ * the new number so the next start does not revoke again.
+ *
+ * Bump it whenever the credential model changes. Epoch 1 is the pairing
+ * credential that replaced password/TOTP/passkey: every record written before it
+ * carries 0 (or nothing at all), so all of them stop being honoured by exactly
+ * this comparison.
+ */
+export const SESSION_AUTH_EPOCH = 1;
 /** A browser cookie is re-issued once this fraction of its lifetime has passed. */
 export const SESSION_COOKIE_RENEW_DIVISOR = 3;
 /** Deadline of a session whose configuration disables every lifetime bound. */
@@ -61,21 +81,29 @@ function publicSession(record, currentId) {
  * idleTimeoutSeconds`, so a browser that keeps being used never has to log in
  * again. `maxAgeSeconds` is an optional ceiling that activity cannot extend;
  * zero leaves the idle window as the only bound.
+ *
+ * Records belong to an authentication epoch (see `SESSION_AUTH_EPOCH`): one
+ * minted under a credential model that is no longer in force is never accepted,
+ * and a store loaded over a file from another epoch revokes the whole set once
+ * and records the epoch now in force, so the revocation is a single event rather
+ * than something every restart repeats.
  */
 export class SessionStore {
   records = new Map();
   #directory;
   #file;
+  #epoch;
   #maxAgeMs;
   #idleTimeoutMs;
   #now;
   #logger;
   #lastPersistAt = 0;
 
-  constructor({ directory, maxAgeSeconds, idleTimeoutSeconds, now = () => Date.now(), logger } = {}) {
+  constructor({ directory, epoch = SESSION_AUTH_EPOCH, maxAgeSeconds, idleTimeoutSeconds, now = () => Date.now(), logger } = {}) {
     if (typeof directory !== "string" || directory === "") throw new Error("session store directory is required");
     this.#directory = directory;
     this.#file = join(directory, "sessions.json");
+    this.#epoch = Number.isSafeInteger(epoch) && epoch >= 0 ? epoch : SESSION_AUTH_EPOCH;
     this.#maxAgeMs = Math.max(0, Number(maxAgeSeconds) || 0) * 1000;
     this.#idleTimeoutMs = Math.max(0, Number(idleTimeoutSeconds) || 0) * 1000;
     this.#now = now;
@@ -91,6 +119,19 @@ export class SessionStore {
       chmodSync(this.#file, 0o600);
       const parsed = JSON.parse(readFileSync(this.#file, "utf8"));
       if (parsed === null || typeof parsed !== "object" || parsed.version !== SESSION_STORE_VERSION || !Array.isArray(parsed.sessions)) return;
+      // The file's own epoch is the durable marker: it says which credential model
+      // the records inside were minted under. A different one means the model that
+      // issued them is gone, so they are revoked here — in memory and on disk, at
+      // once — instead of being loaded and refused request by request. The rewrite
+      // stores the current epoch, which is what keeps the next restart from
+      // revoking a set that was already dealt with.
+      if (parsed.epoch !== this.#epoch) {
+        this.revokeAll();
+        this.#logger?.info?.(
+          `daemon: revoked ${parsed.sessions.length} session(s) minted under authentication epoch ${parsed.epoch === undefined ? "(unversioned)" : String(parsed.epoch)}; current epoch is ${this.#epoch}`,
+        );
+        return;
+      }
       for (const value of parsed.sessions) {
         const record = normalizeSessionRecord(value);
         if (record !== null) this.records.set(record.id, record);
@@ -175,7 +216,7 @@ export class SessionStore {
     const temporary = `${this.#file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
     try {
       mkdirSync(this.#directory, { recursive: true, mode: 0o700 });
-      writeFileSync(temporary, `${JSON.stringify({ version: SESSION_STORE_VERSION, sessions: [...this.records.values()] })}\n`, {
+      writeFileSync(temporary, `${JSON.stringify({ version: SESSION_STORE_VERSION, epoch: this.#epoch, sessions: [...this.records.values()] })}\n`, {
         encoding: "utf8",
         mode: 0o600,
       });
@@ -210,7 +251,14 @@ export class SessionStore {
     return changed;
   }
 
-  create({ username, address, userAgent, secure = false, authEpoch = 0 } = {}) {
+  /**
+   * Mint a session under the store's current authentication epoch.
+   *
+   * The epoch is the store's, never the caller's: a caller that could choose it
+   * could mint a record the store would then refuse, and the store's own value is
+   * the only one that matches what the next start will read back.
+   */
+  create({ username, address, userAgent, secure = false } = {}) {
     const now = this.#now();
     let id;
     do {
@@ -218,7 +266,7 @@ export class SessionStore {
     } while (this.records.has(id));
     const record = {
       id,
-      authEpoch: Number.isSafeInteger(authEpoch) && authEpoch >= 0 ? authEpoch : 0,
+      authEpoch: this.#epoch,
       username: typeof username === "string" ? username.slice(0, 256) : "admin",
       issuedAt: now,
       lastSeenAt: now,
@@ -233,11 +281,14 @@ export class SessionStore {
     return record;
   }
 
-  /** Touch one session and return it, or null when it is expired/revoked. */
+  /** Touch one session and return it, or null when it is expired/revoked/stale. */
   touch(id, issuedAt) {
     const now = this.#now();
     const record = this.records.get(id);
-    if (record === undefined || record.issuedAt !== issuedAt || this.#expired(record, now)) {
+    // The epoch is checked here, at the only place a cookie is accepted, so a
+    // record that somehow outlived its model is refused on the very request that
+    // presents it rather than lingering until the next restart.
+    if (record === undefined || record.issuedAt !== issuedAt || record.authEpoch !== this.#epoch || this.#expired(record, now)) {
       if (record !== undefined) {
         this.records.delete(id);
         this.persist();

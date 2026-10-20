@@ -20,6 +20,10 @@ helper-deployment decisions.
   The credential is stored as a scrypt hash in `daemon/auth/pairing.json` (0600);
   `config.password` / `DSH_AUTH_PASS` only seed that file on the first start, and a
   corrupt or absent file with no password stops the plugin from mounting.
+  Sessions are minted under an authentication epoch: changing the credential model
+  (bumping `SESSION_AUTH_EPOCH`) revokes every session the previous model issued —
+  once, at the next start — so a browser has to pair again rather than keep a
+  credential that no longer exists alive through its cookie.
 - **Routing**: `/<id>/…` proxies to that profile's loopback port, HTTP and
   WebSocket alike.
 - **Profile lifecycle**: create, start, stop, remove, plus `/admin` for operators.

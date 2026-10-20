@@ -10,7 +10,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -46,6 +46,31 @@ async function temporaryDirectory() {
 /** A store rooted in a temporary directory and reading the test's clock. */
 function openStore(directory, clock, options = {}) {
   return new SessionStore({ directory, now: clock.now, ...options })
+}
+
+/** Path of the store's file inside a store directory. */
+function sessionFilePath(directory) {
+  return join(directory, 'sessions.json')
+}
+
+/**
+ * Rewrite the store's file into the shape the retired credential model left behind.
+ *
+ * The old model wrote no authentication epoch on the file and stamped every record
+ * with epoch 0. Simulating the upgrade at the file — the durable artefact — rather
+ * than through a private seam is what makes "the old sessions are gone after a
+ * restart" a claim about a real deployment.
+ */
+async function downgradeToPreviousModel(directory) {
+  const parsed = JSON.parse(await readFile(sessionFilePath(directory), 'utf8'))
+  delete parsed.epoch
+  parsed.sessions = parsed.sessions.map((record) => ({ ...record, authEpoch: 0 }))
+  await writeFile(sessionFilePath(directory), `${JSON.stringify(parsed)}\n`, { mode: 0o600 })
+}
+
+/** Read the store's file as a plain object. */
+async function readSessionFile(directory) {
+  return JSON.parse(await readFile(sessionFilePath(directory), 'utf8'))
 }
 
 // --- the store: creating a session -------------------------------------------
@@ -266,6 +291,107 @@ test('revoking every session clears the store for good', async () => {
   }
 })
 
+// --- the store: a changed credential model -----------------------------------
+
+test('sessions minted under the previous credential model are revoked by the restart', async () => {
+  // A session says "this browser may come back without presenting the credential",
+  // so it is only worth something while that credential is the one in force. The
+  // model changed; a cookie minted under the old one must not survive the upgrade,
+  // and it must not come back when the file is reloaded.
+  const directory = await temporaryDirectory()
+  try {
+    const clock = manualClock()
+    const options = { maxAgeSeconds: 3600, idleTimeoutSeconds: 60 }
+    const before = openStore(directory, clock, options)
+    const old = before.create({ username: 'admin' })
+    assert.notEqual(before.touch(old.id, old.issuedAt), null, 'the session works under the model that minted it')
+
+    await downgradeToPreviousModel(directory)
+
+    const after = openStore(directory, clock, options)
+    assert.equal(after.touch(old.id, old.issuedAt), null, 'the old cookie is refused after the restart')
+    assert.deepEqual(after.list(), [], 'and nothing from the old model is listed')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('the revocation is recorded, so a later restart does not sign everyone out again', async () => {
+  // The trap: a marker that lives only in memory would revoke every session on
+  // every start, and nobody would ever stay logged in. The revocation itself has to
+  // be durable — the file it rewrites says which model the remaining records belong
+  // to, and a session minted after the upgrade must survive the next restart.
+  const directory = await temporaryDirectory()
+  try {
+    const clock = manualClock()
+    const options = { maxAgeSeconds: 3600, idleTimeoutSeconds: 60 }
+    const before = openStore(directory, clock, options)
+    before.create({})
+    await downgradeToPreviousModel(directory)
+
+    const upgraded = openStore(directory, clock, options)
+    assert.deepEqual(upgraded.list(), [], 'the old model left nothing behind')
+    const fresh = upgraded.create({})
+
+    const restarted = openStore(directory, clock, options)
+    assert.notEqual(
+      restarted.touch(fresh.id, fresh.issuedAt),
+      null,
+      'a session minted after the upgrade survives the restart: the marker moved with the revocation',
+    )
+    assert.deepEqual(restarted.list().map((session) => session.id), [fresh.id])
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('a record carrying an older epoch is refused even inside a current store file', async () => {
+  // The file-level marker is what handles an upgrade at rest; the record-level one
+  // is what refuses a stale cookie on the request that presents it, without waiting
+  // for a restart. Both are needed: a file whose marker is current can still hold a
+  // record that was written under the old model.
+  const directory = await temporaryDirectory()
+  try {
+    const clock = manualClock()
+    const options = { maxAgeSeconds: 3600, idleTimeoutSeconds: 60 }
+    const store = openStore(directory, clock, options)
+    const record = store.create({})
+
+    const parsed = await readSessionFile(directory)
+    parsed.sessions = parsed.sessions.map((one) => ({ ...one, authEpoch: 0 }))
+    await writeFile(sessionFilePath(directory), `${JSON.stringify(parsed)}\n`, { mode: 0o600 })
+
+    const restarted = openStore(directory, clock, options)
+    assert.equal(restarted.touch(record.id, record.issuedAt), null, 'the stale record is not accepted')
+    assert.deepEqual(restarted.list(), [], 'and it is dropped rather than reported as live')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('a file written before epochs existed counts as the previous model', async () => {
+  // The realistic upgrade path: the old process wrote `{version, sessions}` with no
+  // epoch at all, and the new one has to treat that as "not mine" rather than
+  // guessing the records are current.
+  const directory = await temporaryDirectory()
+  try {
+    const clock = manualClock()
+    const options = { maxAgeSeconds: 3600, idleTimeoutSeconds: 60 }
+    const before = openStore(directory, clock, options)
+    const old = before.create({})
+    await downgradeToPreviousModel(directory)
+    const parsed = await readSessionFile(directory)
+    delete parsed.epoch
+    await writeFile(sessionFilePath(directory), `${JSON.stringify(parsed)}\n`, { mode: 0o600 })
+
+    const after = openStore(directory, clock, options)
+    assert.equal(after.touch(old.id, old.issuedAt), null)
+    assert.deepEqual(after.list(), [])
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 // --- the store: persistence --------------------------------------------------
 
 test('a session survives a restart and is still accepted afterwards', async () => {
@@ -468,6 +594,53 @@ test('a request carrying a malformed session cookie is refused', async () => {
     assert.equal(stillValid.authenticated, true, 'the junk cookies left the real session alone')
   } finally {
     await stopAuthServer(server)
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// --- the auth layer: a changed credential model ------------------------------
+
+test('a cookie minted before the credential model changed is refused on the next request', async () => {
+  // The upgrade as a browser experiences it: it holds a cookie from the retired
+  // model, the daemon restarts on the pairing credential, and the very next request
+  // is unauthenticated. Pairing again is the only way back in, which is the point —
+  // a session minted under a credential that no longer exists must not keep it in
+  // force.
+  const directory = await temporaryDirectory()
+  const clock = manualClock()
+  const options = {
+    directory,
+    password: 'secret',
+    sessionMaxAgeSeconds: 3600,
+    sessionIdleSeconds: 60,
+    now: clock.now,
+  }
+  const first = createAuth(options)
+  const started = await startAuthServer(first)
+  let cookie
+  try {
+    cookie = sessionValue(await login(started.origin, 'secret'))
+    assert.equal((await authState(started.origin, cookie)).authenticated, true, 'the session works before the upgrade')
+  } finally {
+    await stopAuthServer(started.server)
+  }
+
+  try {
+    await downgradeToPreviousModel(directory)
+
+    const upgraded = createAuth(options)
+    const restarted = await startAuthServer(upgraded)
+    try {
+      assert.equal((await authState(restarted.origin, cookie)).authenticated, false, 'the old cookie is refused')
+      assert.equal((await authState(restarted.origin, cookie)).username, undefined, 'and it names no user')
+
+      const fresh = sessionValue(await login(restarted.origin, 'secret'))
+      assert.notEqual(fresh, cookie, 'the browser had to pair again')
+      assert.equal((await authState(restarted.origin, fresh)).authenticated, true, 'and the new session is accepted')
+    } finally {
+      await stopAuthServer(restarted.server)
+    }
+  } finally {
     await rm(directory, { recursive: true, force: true })
   }
 })

@@ -189,6 +189,32 @@ export function apply(ctx, config) {
     logger,
   })
 
+  /** The harness mount as a path fragment: empty at the origin root, else `/main`. */
+  const mountPrefix = String(config.rootPrefix).trim().replace(/^\/+|\/+$/gu, '')
+  const mount = mountPrefix === '' ? '' : `/${mountPrefix}`
+
+  /**
+   * The admin path a request addresses, with the harness mount stripped.
+   *
+   * One origin carries two surfaces: this process's own routes (`/admin`,
+   * `/api/auth.*`) and the harness, mounted under `config.rootPrefix`. The panel is
+   * a client plugin *inside* the harness, so it resolves its requests against the
+   * page it is on and calls `<mount>/admin/…`. Those calls name this process's own
+   * API — the mount is where its UI is served, not a different authority — so the
+   * mount is stripped before the admin router sees the path.
+   *
+   * Only `/admin` is rewritten: everything else under the mount belongs to the
+   * harness and is proxied untouched.
+   *
+   * @param path - the request path, without its query string.
+   * @returns the admin path, or the path unchanged.
+   */
+  const adminPath = (path) => {
+    if (mount === '' || !path.startsWith(`${mount}/`)) return path
+    const rest = path.slice(mount.length)
+    return rest === '/admin' || rest.startsWith('/admin/') ? rest : path
+  }
+
   /**
    * Answer daemon-owned paths and gate everything else behind a session.
    *
@@ -215,7 +241,11 @@ export function apply(ctx, config) {
       res.end('daemon: starting\n')
       return true
     }
-    const path = url.split('?')[0]
+    const queryAt = url.indexOf('?')
+    const path = queryAt === -1 ? url : url.slice(0, queryAt)
+    const search = queryAt === -1 ? '' : url.slice(queryAt)
+    // The same admin route, addressed through the mount the panel is served from.
+    const ownPath = adminPath(path)
     // The login page's own assets, ahead of the session gate: they are what the page
     // a visitor without a session is served refers to, so gating them would make the
     // browser parse the login HTML as a manifest and fail silently. Both the route and
@@ -239,8 +269,8 @@ export function apply(ctx, config) {
         return true
       }
     }
-    if (path === '/admin' || path.startsWith('/admin/')) {
-      return await admin(req, res, url)
+    if (ownPath === '/admin' || ownPath.startsWith('/admin/')) {
+      return await admin(req, res, `${ownPath}${search}`)
     }
     return false
   }

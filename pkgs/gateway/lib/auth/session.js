@@ -6,8 +6,10 @@
  * list; none of those answer "who may reach this origin", so they are not here.
  *
  * There is exactly one way in — the pairing credential in `pairing.json` — and
- * exactly one thing it buys: a session cookie. The session store keeps its
- * on-disk format, so existing session files survive the change.
+ * exactly one thing it buys: a session cookie. Sessions are minted under an
+ * authentication epoch (`SESSION_AUTH_EPOCH` in the store), so changing the way in
+ * invalidates the cookies the previous model handed out instead of leaving them to
+ * stand for a credential that no longer exists.
  *
  * Wire format matches the shipped login page: it posts JSON to `/api/auth.login`
  * and reloads on `{ ok: true }`, so a failure is JSON too — never a rendered
