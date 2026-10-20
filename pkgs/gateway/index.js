@@ -61,15 +61,10 @@ export const Config = z.object({
   cacheDir: z.string().default(''),
 
   /** Login for this daemon's own listener, independent of every other node. */
-  username: z.string().default('admin'),
   password: z.string().default(''),
   realm: z.string().default('dsh-daemon'),
-  twoFactorEnabled: z.boolean().default(false),
-  totpSecret: z.string().default(''),
   sessionMaxAgeSeconds: z.natural().default(2_592_000),
   sessionIdleSeconds: z.natural().default(0),
-  passkeyOrigin: z.string().default(''),
-  passkeyRpId: z.string().default(''),
 
   /** Serve this process's own harness behind the daemon. */
   rootEmbedded: z.boolean().default(true),
@@ -183,20 +178,12 @@ export function apply(ctx, config) {
   const password = config.password !== ''
     ? config.password
     : process.env.DSH_AUTH_PASS ?? process.env.AUTH_PASS ?? ''
-  const username = config.username !== 'admin'
-    ? config.username
-    : process.env.DSH_AUTH_USER ?? process.env.AUTH_USER ?? config.username
   const auth = createAuth({
     directory: join(homeDir, 'daemon', 'auth'),
-    username,
     password,
     realm: config.realm,
-    twoFactorEnabled: config.twoFactorEnabled,
-    totpSecret: config.totpSecret,
     sessionMaxAgeSeconds: config.sessionMaxAgeSeconds,
     sessionIdleSeconds: config.sessionIdleSeconds,
-    passkeyOrigin: config.passkeyOrigin,
-    passkeyRpId: config.passkeyRpId,
     logger,
   })
 

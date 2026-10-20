@@ -100,7 +100,6 @@ function mount(home, config = {}) {
     systemdUnit: '',
     role: 'main',
     profile: '',
-    username: 'admin',
     password: '',
     ...config,
   })
@@ -371,21 +370,21 @@ test('mounting refuses a corrupt credential file instead of waiting for the firs
 test('the correct pairing credential buys a session and the wrong one does not', async () => {
   const directory = await temporaryDirectory()
   await writeCredential(directory, CREDENTIAL)
-  const auth = createAuth({ directory, username: 'admin', password: '', sessionMaxAgeSeconds: 3600, sessionIdleSeconds: 60 })
+  const auth = createAuth({ directory, password: '', sessionMaxAgeSeconds: 3600, sessionIdleSeconds: 60 })
   const { server, origin } = await startAuthServer(auth)
   try {
-    const accepted = await attemptLogin(origin, { username: 'admin', password: CREDENTIAL })
+    const accepted = await attemptLogin(origin, { password: CREDENTIAL })
     assert.equal(accepted.status, 200, 'the pairing credential was accepted')
     const [cookie] = cookies(accepted)
     assert.ok(cookie?.startsWith('dsh_daemon_session='), `expected a session cookie, got ${JSON.stringify(cookies(accepted))}`)
     const value = cookie.slice('dsh_daemon_session='.length).split(';')[0]
     assert.equal((await authState(origin, value)).authenticated, true, 'the issued cookie stands for a live session')
 
-    const refused = await attemptLogin(origin, { username: 'admin', password: 'not the credential' })
+    const refused = await attemptLogin(origin, { password: 'not the credential' })
     assert.equal(refused.status, 401, 'the wrong credential was refused')
     assert.deepEqual(cookies(refused), [], 'a refusal hands out no session')
 
-    const empty = await attemptLogin(origin, { username: 'admin', password: '' })
+    const empty = await attemptLogin(origin, { password: '' })
     assert.equal(empty.status, 401, 'an empty credential is refused like any other')
     assert.deepEqual(cookies(empty), [])
   } finally {
@@ -435,12 +434,12 @@ test('the federation token cannot pair and the pairing credential cannot federat
     verifyToken: (token) => (token === environment.token ? environment : undefined),
     logger: { info() {}, warn() {} },
   })
-  const auth = createAuth({ directory, username: 'admin', password: CREDENTIAL, sessionMaxAgeSeconds: 3600, sessionIdleSeconds: 60 })
+  const auth = createAuth({ directory, password: CREDENTIAL, sessionMaxAgeSeconds: 3600, sessionIdleSeconds: 60 })
   const { server, origin } = await startAuthServer(auth)
   try {
     const withToken = await attemptLogin(
       origin,
-      { username: 'admin', password: environment.token },
+      { password: environment.token },
       { 'x-dsh-federation': environment.token },
     )
     assert.equal(withToken.status, 401, 'the federation token is not a pairing credential, even in the federation header')

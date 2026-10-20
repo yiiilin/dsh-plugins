@@ -5,8 +5,9 @@
  * surface also carried a mobile preview, a settings editor and a paired-client
  * list; none of those answer "who may reach this origin", so they are not here.
  *
- * The stores are reused unchanged, so existing session files, passkey records and
- * TOTP secrets keep their on-disk formats.
+ * There is exactly one way in — the pairing credential in `pairing.json` — and
+ * exactly one thing it buys: a session cookie. The session store keeps its
+ * on-disk format, so existing session files survive the change.
  *
  * Wire format matches the shipped login page: it posts JSON to `/api/auth.login`
  * and reloads on `{ ok: true }`, so a failure is JSON too — never a rendered
@@ -15,16 +16,9 @@
  * @module @yiln-dsh/dsh-gateway/auth
  */
 
-import { createHash, timingSafeEqual } from 'node:crypto'
-import {
-  generateAuthenticationOptions,
-  verifyAuthenticationResponse,
-} from '@simplewebauthn/server'
 import { loginErrorMessage, renderLoginPage, selectLoginLocale } from './login-page.js'
 import { PairingCredential } from './pairing-credential.js'
-import { PasskeyStore } from './passkey-store.js'
 import { SessionStore } from './session-store.js'
-import { verifyTotp } from './totp.js'
 
 /** The system clock, used unless a caller injects its own. */
 const systemClock = () => Date.now()
@@ -38,13 +32,10 @@ const SECURE_COOKIE_NAME = '__Host-dsh_daemon_session'
  * Build the authentication layer.
  *
  * @param options - credentials, storage location and cookie policy.
- * @param options.directory - directory holding the session, passkey and pairing stores.
- * @param options.username - the single accepted user name.
+ * @param options.directory - directory holding the session and pairing stores.
  * @param options.password - seeds the pairing credential file when it does not exist
  *   yet; ignored once it does. Empty and no file is a startup error.
  * @param options.realm - realm shown on the login page.
- * @param options.twoFactorEnabled - require a TOTP code in addition to the credential.
- * @param options.totpSecret - base32 TOTP secret; required when two-factor is on.
  * @param options.sessionMaxAgeSeconds - absolute session lifetime.
  * @param options.sessionIdleSeconds - idle timeout.
  * @param options.now - clock the stores read their timestamps from; defaults to
@@ -55,15 +46,10 @@ const SECURE_COOKIE_NAME = '__Host-dsh_daemon_session'
  */
 export function createAuth({
   directory,
-  username,
   password,
   realm,
-  twoFactorEnabled = false,
-  totpSecret = '',
   sessionMaxAgeSeconds = 2_592_000,
   sessionIdleSeconds = 604_800,
-  passkeyOrigin = '',
-  passkeyRpId = '',
   now = systemClock,
   logger,
 }) {
@@ -78,12 +64,6 @@ export function createAuth({
     now,
     logger,
   })
-  const passkeys = new PasskeyStore({ directory, now, logger })
-  // Compare digests for the user name, never the configured text: a config dump
-  // must not be replayable, and equal-length digests keep the comparison constant-time.
-  // The password is no longer compared here at all — only the hash in the file is,
-  // by `pairing.verify`.
-  const usernameDigest = digest(username)
 
   /**
    * Decide whether a request carries a live session.
@@ -126,137 +106,16 @@ export function createAuth({
       res.end()
       return true
     }
-    if (path === '/api/auth.passkey.login.options') {
-      await passkeyOptions(req, res)
-      return true
-    }
-    if (path === '/api/auth.passkey.login.verify') {
-      await passkeyVerify(req, res, secure)
-      return true
-    }
     if (path === '/api/auth.state') {
       const record = session(req, secure)
       json(res, 200, {
         ok: true,
         authenticated: record !== undefined,
         username: record?.username,
-        twoFactorEnabled,
-        passkeyAvailable: passkeys.hasAny(),
       })
       return true
     }
     return false
-  }
-
-  /**
-   * Resolve the WebAuthn origin and RP ID for a request.
-   *
-   * A passkey is bound to the origin the browser shows, so behind a proxy that
-   * terminates TLS the derived origin would be the wrong one. A configured
-   * `passkeyOrigin` therefore wins, and the RP ID follows it rather than the
-   * request's Host header.
-   */
-  function passkeyContext(req, secure) {
-    const host = String(req.headers.host ?? '')
-    if (host === '') throw new Error('a valid Host is required for passkeys')
-    const origin = passkeyOrigin !== ''
-      ? passkeyOrigin
-      : new URL(`${secure ? 'https' : 'http'}://${host}`).origin
-    const rpId = String(passkeyRpId === '' ? new URL(origin).hostname : passkeyRpId).trim()
-    if (rpId === '') throw new Error('passkey RP configuration is invalid')
-    return { origin, rpId }
-  }
-
-  async function passkeyOptions(req, res) {
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' }, { allow: 'POST' })
-      return
-    }
-    if (!passkeys.hasAny()) {
-      json(res, 404, { ok: false, error: 'No passkeys are registered' })
-      return
-    }
-    try {
-      const secure = isSecure(req)
-      const { origin, rpId } = passkeyContext(req, secure)
-      const options = await generateAuthenticationOptions({
-        rpID: rpId,
-        allowCredentials: passkeys.list().map((entry) => ({ id: entry.id, transports: entry.transports })),
-        userVerification: 'required',
-        timeout: 60_000,
-      })
-      passkeys.createChallenge({
-        purpose: 'login',
-        challenge: options.challenge,
-        rpId,
-        origin,
-        address: req.socket?.remoteAddress,
-      })
-      json(res, 200, { ok: true, challenge: options.challenge, options })
-    } catch (error) {
-      logger?.warn?.(`daemon: passkey options failed: ${error.message}`)
-      json(res, 400, { ok: false, error: error.message })
-    }
-  }
-
-  async function passkeyVerify(req, res, secure) {
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' }, { allow: 'POST' })
-      return
-    }
-    let body
-    try {
-      body = await readJson(req)
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid request body' })
-      return
-    }
-    const pending = passkeys.consumeChallenge(body.challenge, 'login', { address: req.socket?.remoteAddress })
-    const credentialId = body.response?.id
-    const credential = typeof credentialId === 'string' && pending !== null
-      ? passkeys.credential(credentialId)
-      : null
-    if (pending === null || credential === null) {
-      json(res, 401, { ok: false, error: 'Passkey verification failed' })
-      return
-    }
-    let verification
-    try {
-      verification = await verifyAuthenticationResponse({
-        response: body.response,
-        expectedChallenge: pending.challenge,
-        expectedOrigin: pending.origin,
-        expectedRPID: pending.rpId,
-        credential,
-        requireUserVerification: true,
-      })
-    } catch (error) {
-      // The browser only learns "failed"; the reason belongs in the log, because
-      // a mismatched origin and a stale counter are fixed in different places.
-      logger?.warn?.(`daemon: passkey verify threw for ${credentialId.slice(0, 12)} (origin=${pending.origin}): ${error.message}`)
-      json(res, 401, { ok: false, error: 'Passkey verification failed' })
-      return
-    }
-    if (!verification.verified) {
-      logger?.warn?.(`daemon: passkey refused for ${credentialId.slice(0, 12)} (origin=${pending.origin} rpId=${pending.rpId})`)
-      json(res, 401, { ok: false, error: 'Passkey verification failed' })
-      return
-    }
-    const info = verification.authenticationInfo
-    if (!passkeys.updateAuthentication(credentialId, info.newCounter, info.credentialDeviceType, info.credentialBackedUp)) {
-      json(res, 503, { ok: false, error: 'Passkey state could not be persisted' })
-      return
-    }
-    // A passkey proves identity on its own, so it mints a session without the
-    // password — which is what makes it the recovery path when the password is
-    // unusable.
-    const record = sessions.create({
-      username,
-      address: req.socket?.remoteAddress,
-      userAgent: req.headers['user-agent'],
-      secure,
-    })
-    json(res, 200, { ok: true, username }, { 'set-cookie': [sessionCookie(record, secure)] })
   }
 
   async function login(req, res, url, secure) {
@@ -279,24 +138,12 @@ export function createAuth({
     // The stored hash is the only source of truth: the configured password seeded
     // the file once and is not consulted again. The pairing credential travels in
     // `password`, so the shipped login form keeps working.
-    const credentialOk = await pairing.verify(body.password ?? '')
-    // The user name is still compared, and always: returning early on it would make
-    // the response time distinguish an unknown user from a wrong credential.
-    const usernameOk = safeEqual(digest(body.username ?? ''), usernameDigest)
-    if (!credentialOk || !usernameOk) {
+    if (!(await pairing.verify(body.password ?? ''))) {
       json(res, 401, { ok: false, error: loginErrorMessage(locale, 'invalid') })
       return true
     }
-    if (twoFactorEnabled) {
-      const code = String(body.otp ?? '').replace(/\s+/gu, '')
-      if (totpSecret === '' || !verifyTotp(totpSecret, code)) {
-        json(res, 401, { ok: false, error: loginErrorMessage(locale, 'invalid') })
-        return true
-      }
-    }
 
     const record = sessions.create({
-      username,
       address: req.socket.remoteAddress,
       userAgent: req.headers['user-agent'],
       secure,
@@ -318,21 +165,11 @@ export function createAuth({
   return {
     handle,
     session,
-    sessions,
-    passkeys,
-    twoFactorEnabled,
-    realm,
     /** Render the login page for a request that has no session. */
     loginPage(req) {
-      return renderLoginPage(realm, twoFactorEnabled, selectLoginLocale(req), req.url ?? '/', passkeys.hasAny())
+      return renderLoginPage(realm, selectLoginLocale(req), req.url ?? '/')
     },
   }
-}
-
-function isSecure(req) {
-  if (req.socket?.encrypted === true) return true
-  const forwarded = req.headers['x-forwarded-proto']
-  return typeof forwarded === 'string' && forwarded.split(',')[0].trim() === 'https'
 }
 
 function json(res, status, body, headers = {}) {
@@ -342,14 +179,6 @@ function json(res, status, body, headers = {}) {
     ...headers,
   })
   res.end(JSON.stringify(body))
-}
-
-function digest(value) {
-  return createHash('sha256').update(String(value), 'utf8').digest()
-}
-
-function safeEqual(left, right) {
-  return left.length === right.length && timingSafeEqual(left, right)
 }
 
 function readCookie(req, name) {

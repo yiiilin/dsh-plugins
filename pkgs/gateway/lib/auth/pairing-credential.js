@@ -2,7 +2,7 @@
  * The pairing credential: the one password that binds a browser to this machine.
  *
  * The password itself is never written down. What reaches the disk is a scrypt
- * hash and its salt, in `pairing.json` beside the session and passkey stores:
+ * hash and its salt, in `pairing.json` beside the session store:
  * the first start hashes the configured password and writes the file, and every
  * start after that reads the file alone. A configured password is therefore a
  * seed, not a login fallback — leaving `DSH_AUTH_PASS` in the environment does

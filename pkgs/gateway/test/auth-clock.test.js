@@ -50,11 +50,11 @@ async function stopAuthServer(server) {
 }
 
 /** Sign in and return the response, which carries the session cookie. */
-async function login(origin, username, password) {
+async function login(origin, password) {
   const response = await fetch(`${origin}/api/auth.login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ password }),
   })
   assert.equal(response.status, 200, 'the credentials were accepted')
   return response
@@ -94,7 +94,6 @@ test('a session carries the timestamp of the injected clock', async () => {
   const directory = await temporaryDirectory()
   const auth = createAuth({
     directory,
-    username: 'admin',
     password: 'secret',
     sessionMaxAgeSeconds: 3600,
     sessionIdleSeconds: 60,
@@ -102,7 +101,7 @@ test('a session carries the timestamp of the injected clock', async () => {
   })
   const { server, origin } = await startAuthServer(auth)
   try {
-    const { issuedAt } = sessionValue(await login(origin, 'admin', 'secret'))
+    const { issuedAt } = sessionValue(await login(origin, 'secret'))
     assert.equal(issuedAt, FIXED_NOW, 'the session is stamped with the injected clock')
     assert.ok(
       Math.abs(Date.now() - issuedAt) > 60_000,
@@ -122,7 +121,6 @@ test('a session stops being accepted once the injected clock passes its idle tim
   let now = FIXED_NOW
   const auth = createAuth({
     directory,
-    username: 'admin',
     password: 'secret',
     sessionMaxAgeSeconds: 3600,
     sessionIdleSeconds: 60,
@@ -130,7 +128,7 @@ test('a session stops being accepted once the injected clock passes its idle tim
   })
   const { server, origin } = await startAuthServer(auth)
   try {
-    const value = sessionValue(await login(origin, 'admin', 'secret'))
+    const value = sessionValue(await login(origin, 'secret'))
     const fresh = await authState(origin, `${value.id}.${value.issuedAt}`)
     assert.equal(fresh.authenticated, true, 'the fresh session is accepted')
 
@@ -147,11 +145,11 @@ test('without an injected clock a session is stamped with the system time', asyn
   // The default has to stay what it always was: a deployment that says nothing
   // about time gets the wall clock.
   const directory = await temporaryDirectory()
-  const auth = createAuth({ directory, username: 'admin', password: 'secret' })
+  const auth = createAuth({ directory, password: 'secret' })
   const { server, origin } = await startAuthServer(auth)
   try {
     const before = Date.now()
-    const { issuedAt } = sessionValue(await login(origin, 'admin', 'secret'))
+    const { issuedAt } = sessionValue(await login(origin, 'secret'))
     const after = Date.now()
     assert.ok(
       issuedAt >= before && issuedAt <= after,

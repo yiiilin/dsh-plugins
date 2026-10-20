@@ -345,11 +345,11 @@ async function stopAuthServer(server) {
 }
 
 /** Sign in and return the response, which carries the session cookie. */
-async function login(origin, username, password) {
+async function login(origin, password) {
   const response = await fetch(`${origin}/api/auth.login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ password }),
   })
   assert.equal(response.status, 200, 'the credentials were accepted')
   return response
@@ -385,7 +385,6 @@ test('a request carrying a valid session cookie is accepted', async () => {
   const clock = manualClock()
   const auth = createAuth({
     directory,
-    username: 'admin',
     password: 'secret',
     sessionMaxAgeSeconds: 3600,
     sessionIdleSeconds: 60,
@@ -393,7 +392,7 @@ test('a request carrying a valid session cookie is accepted', async () => {
   })
   const { server, origin } = await startAuthServer(auth)
   try {
-    const cookie = sessionValue(await login(origin, 'admin', 'secret'))
+    const cookie = sessionValue(await login(origin, 'secret'))
     const state = await authState(origin, cookie)
     assert.equal(state.ok, true)
     assert.equal(state.authenticated, true, 'the cookie the layer issued is recognised')
@@ -409,7 +408,6 @@ test('a request carrying an invalid session cookie is refused', async () => {
   const clock = manualClock()
   const auth = createAuth({
     directory,
-    username: 'admin',
     password: 'secret',
     sessionMaxAgeSeconds: 3600,
     sessionIdleSeconds: 60,
@@ -417,7 +415,7 @@ test('a request carrying an invalid session cookie is refused', async () => {
   })
   const { server, origin } = await startAuthServer(auth)
   try {
-    const cookie = sessionValue(await login(origin, 'admin', 'secret'))
+    const cookie = sessionValue(await login(origin, 'secret'))
     const at = cookie.indexOf('.')
     const id = cookie.slice(0, at)
     const issuedAt = Number(cookie.slice(at + 1))
@@ -443,7 +441,6 @@ test('a request carrying a malformed session cookie is refused', async () => {
   const clock = manualClock()
   const auth = createAuth({
     directory,
-    username: 'admin',
     password: 'secret',
     sessionMaxAgeSeconds: 3600,
     sessionIdleSeconds: 60,
@@ -453,7 +450,7 @@ test('a request carrying a malformed session cookie is refused', async () => {
   try {
     // Signed in, so a real session exists: the refusals below are about the
     // cookie's form, not about the store being empty.
-    const cookie = sessionValue(await login(origin, 'admin', 'secret'))
+    const cookie = sessionValue(await login(origin, 'secret'))
     const id = cookie.slice(0, cookie.indexOf('.'))
 
     const absent = await authState(origin, undefined)

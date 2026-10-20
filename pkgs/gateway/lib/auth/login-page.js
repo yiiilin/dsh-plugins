@@ -5,11 +5,9 @@ const LOGIN_TEXT = Object.freeze({
     htmlLang: "en",
     title: "DeepSeek Harness - Sign in",
     heading: "DeepSeek Harness",
-    username: "Username",
-    password: "Password",
-    otp: "Authenticator code",
+    credential: "Pairing credential",
     submit: "Sign in",
-    invalid: "Invalid username, password, or authenticator code",
+    invalid: "That pairing credential is not correct.",
     networkError: "Unable to sign in. Please try again.",
     methodNotAllowed: "Method not allowed",
     contentType: "Content-Type must be application/json",
@@ -17,21 +15,14 @@ const LOGIN_TEXT = Object.freeze({
     language: "Language",
     chinese: "中文",
     english: "English",
-    rateLimited: "Too many login attempts",
-    passkey: "Use a passkey",
-    passkeyBusy: "Waiting for passkey...",
-    passkeyUnsupported: "Passkeys require a supported browser and HTTPS.",
-    passkeyCancelled: "Passkey sign-in did not complete: this browser or device offered no passkey for this site, or the prompt was dismissed or timed out.",
-    passkeyError: "Unable to sign in with a passkey. Please try again.",  }),
+  }),
   zh: Object.freeze({
     htmlLang: "zh-CN",
     title: "DeepSeek Harness - 登录",
     heading: "DeepSeek Harness",
-    username: "用户名",
-    password: "密码",
-    otp: "验证码",
+    credential: "配对凭据",
     submit: "登录",
-    invalid: "用户名、密码或验证码无效",
+    invalid: "配对凭据不正确。",
     networkError: "登录失败，请稍后重试。",
     methodNotAllowed: "请求方法不被允许",
     contentType: "请求内容类型必须是 application/json",
@@ -39,12 +30,7 @@ const LOGIN_TEXT = Object.freeze({
     language: "语言",
     chinese: "中文",
     english: "English",
-    rateLimited: "登录尝试次数过多",
-    passkey: "使用通行密钥",
-    passkeyBusy: "正在等待通行密钥...",
-    passkeyUnsupported: "通行密钥需要支持的浏览器和 HTTPS。",
-    passkeyCancelled: "通行密钥登录未完成：该浏览器/设备没有可用的通行密钥（或提示被取消、超时）。请确认通行密钥就存在这台设备或已同步到此，再重试。",
-    passkeyError: "通行密钥登录失败，请重试。",  }),
+  }),
 });
 
 function languageOfTag(value) {
@@ -112,18 +98,19 @@ export function loginErrorMessage(locale, key) {
   return loginMessages(locale)[key] ?? LOGIN_TEXT.en[key] ?? key;
 }
 
-/** Render the self-contained, password-manager-friendly login document. */
-export function renderLoginPage(realm, twoFactorEnabled = false, locale = "en", rawRequestUrl = "/", passkeyAvailable = false) {
+/**
+ * Render the self-contained login document.
+ *
+ * One field, because there is one credential: the pairing credential is posted in
+ * the `password` member of the JSON body, which is the wire format `login()` reads.
+ */
+export function renderLoginPage(realm, locale = "en", rawRequestUrl = "/") {
   const language = LOGIN_TEXT[locale] === undefined ? "en" : locale;
   const text = loginMessages(language);
   const safeRealm = escapeHtml(realm ?? "DeepSeek Harness Authentication");
   const loginAction = `/api/auth.login?lang=${encodeURIComponent(language)}`;
   const zhHref = escapeHtml(languageHref(rawRequestUrl, "zh"));
   const enHref = escapeHtml(languageHref(rawRequestUrl, "en"));
-  const otpField = twoFactorEnabled ? `
-    <label for="otp">${text.otp}</label>
-    <input id="otp" name="totp" type="text" inputmode="numeric" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" pattern="[0-9]{6}" maxlength="6" required>
-  ` : "";
   return `<!doctype html>
 <html lang="${text.htmlLang}">
 <head>
@@ -145,8 +132,6 @@ export function renderLoginPage(realm, twoFactorEnabled = false, locale = "en", 
     input:focus { border-color: var(--accent); }
     button { width: 100%; height: 42px; margin-top: 20px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
     button:disabled { opacity: .65; cursor: default; }
-     button.passkey { margin-top: 10px; border: 1px solid var(--line); background: transparent; color: var(--text); }
-     button.passkey:hover { border-color: var(--accent); }
     .language { display: flex; justify-content: flex-end; gap: 10px; margin: 0 0 18px; font-size: 12px; }
     .language a { color: var(--muted); text-decoration: none; }
     .language a:hover, .language a[aria-current="page"] { color: var(--text); text-decoration: underline; }
@@ -161,14 +146,10 @@ export function renderLoginPage(realm, twoFactorEnabled = false, locale = "en", 
     </nav>
     <h1>${text.heading}</h1>
     <p>${safeRealm}</p>
-    <label for="username">${text.username}</label>
-    <input id="username" name="username" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" autofocus required>
-    <label for="password">${text.password}</label>
-    <input id="password" name="password" type="password" autocomplete="current-password" required>
-    ${otpField}
+    <label for="credential">${text.credential}</label>
+    <input id="credential" name="password" type="password" autocomplete="current-password" autofocus required>
     <button type="submit">${text.submit}</button>
-    ${passkeyAvailable ? `<button id="passkey" class="passkey" type="button">${text.passkey}</button>` : ""}
-    <div id="error" data-default-error="${escapeHtml(text.invalid)}" data-network-error="${escapeHtml(text.networkError)}" data-passkey-error="${escapeHtml(text.passkeyError)}" data-passkey-cancelled="${escapeHtml(text.passkeyCancelled)}">${text.invalid}</div>
+    <div id="error" data-default-error="${escapeHtml(text.invalid)}" data-network-error="${escapeHtml(text.networkError)}">${text.invalid}</div>
   </form>
   <script data-dsh-auth-pwa="1">${PWA_BOOTSTRAP}</script>
   <script>
@@ -176,54 +157,6 @@ export function renderLoginPage(realm, twoFactorEnabled = false, locale = "en", 
     const error = document.getElementById("error");
     const defaultError = error.dataset.defaultError;
     const networkError = error.dataset.networkError;
-    const passkeyButton = document.getElementById("passkey");
-    const passkeyError = ${JSON.stringify(text.passkeyError)};
-    const passkeyBusy = ${JSON.stringify(text.passkeyBusy)};
-    const passkeyUnsupported = ${JSON.stringify(text.passkeyUnsupported)};
-    const passkeyCancelled = ${JSON.stringify(text.passkeyCancelled)};
-
-    function decodeBase64url(value) {
-      const normalized = String(value).replace(/-/g, "+").replace(/_/g, "/");
-      const binary = atob(normalized + "=".repeat((4 - normalized.length % 4) % 4));
-      const bytes = new Uint8Array(binary.length);
-      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-      return bytes.buffer;
-    }
-
-    function encodeBase64url(value) {
-      const bytes = new Uint8Array(value);
-      let binary = "";
-      for (const byte of bytes) binary += String.fromCharCode(byte);
-      return btoa(binary).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/g, "");
-    }
-
-    function requestOptions(value) {
-      return {
-        ...value,
-        challenge: decodeBase64url(value.challenge),
-        allowCredentials: value.allowCredentials?.map((entry) => ({
-          ...entry,
-          id: decodeBase64url(entry.id),
-        })),
-      };
-    }
-
-    function serializeAssertion(credential) {
-      const response = credential.response;
-      return {
-        id: encodeBase64url(credential.rawId),
-        rawId: encodeBase64url(credential.rawId),
-        type: credential.type,
-        response: {
-          clientDataJSON: encodeBase64url(response.clientDataJSON),
-          authenticatorData: encodeBase64url(response.authenticatorData),
-          signature: encodeBase64url(response.signature),
-          ...(response.userHandle ? { userHandle: encodeBase64url(response.userHandle) } : {}),
-        },
-        clientExtensionResults: credential.getClientExtensionResults?.() ?? {},
-        ...(credential.authenticatorAttachment ? { authenticatorAttachment: credential.authenticatorAttachment } : {}),
-      };
-    }
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -235,9 +168,7 @@ export function renderLoginPage(realm, twoFactorEnabled = false, locale = "en", 
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            username: document.getElementById("username").value,
-            password: document.getElementById("password").value,
-            otp: document.getElementById("otp")?.value ?? ""
+            password: document.getElementById("credential").value
           })
         });
         const data = await response.json();
@@ -252,44 +183,6 @@ export function renderLoginPage(realm, twoFactorEnabled = false, locale = "en", 
         error.textContent = networkError;
         error.style.display = "block";
         button.disabled = false;
-      }
-    });
-
-    passkeyButton?.addEventListener("click", async () => {
-      error.style.display = "none";
-      if (typeof window.PublicKeyCredential !== "function" || !navigator.credentials?.get) {
-        error.textContent = passkeyUnsupported;
-        error.style.display = "block";
-        return;
-      }
-      const submitButton = form.querySelector("button[type=submit]");
-      passkeyButton.disabled = true;
-      passkeyButton.textContent = passkeyBusy;
-      submitButton.disabled = true;
-      try {
-        const optionsResponse = await fetch("/api/auth.passkey.login.options", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: "{}",
-        });
-        const optionsData = await optionsResponse.json();
-        if (!optionsResponse.ok || !optionsData.ok) throw new Error(optionsData.error || passkeyError);
-        const credential = await navigator.credentials.get({ publicKey: requestOptions(optionsData.options) });
-        if (!credential) throw new Error(passkeyCancelled);
-        const verifyResponse = await fetch("/api/auth.passkey.login.verify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ challenge: optionsData.challenge, response: serializeAssertion(credential) }),
-        });
-        const verifyData = await verifyResponse.json();
-        if (!verifyResponse.ok || !verifyData.ok) throw new Error(verifyData.error || passkeyError);
-        window.location.reload();
-      } catch (cause) {
-        error.textContent = cause?.name === "NotAllowedError" ? passkeyCancelled : passkeyError;
-        error.style.display = "block";
-        passkeyButton.disabled = false;
-        passkeyButton.textContent = ${JSON.stringify(text.passkey)};
-        submitButton.disabled = false;
       }
     });
   </script>

@@ -29,5 +29,4 @@
         # Login for this listener. The password seeds daemon/auth/pairing.json on the
         # first start (DSH_AUTH_PASS / AUTH_PASS do the same); after that the hashed
         # file is the only source of truth and the plaintext can be removed.
-        username: admin
         password: ''

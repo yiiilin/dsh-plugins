@@ -15,7 +15,8 @@ helper-deployment decisions.
 
 - **The only public listener** (`0.0.0.0:3080` by default). TLS is terminated by
   an external proxy; this plugin never speaks TLS.
-- **Authentication**: one pairing credential, one session cookie, optional TOTP.
+- **Authentication**: one pairing credential, one session cookie. That credential is
+  the only way in: the login page asks for nothing else.
   The credential is stored as a scrypt hash in `daemon/auth/pairing.json` (0600);
   `config.password` / `DSH_AUTH_PASS` only seed that file on the first start, and a
   corrupt or absent file with no password stops the plugin from mounting.
