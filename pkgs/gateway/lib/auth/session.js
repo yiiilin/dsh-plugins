@@ -42,6 +42,9 @@ const SECURE_COOKIE_NAME = '__Host-dsh_daemon_session'
  *   the system clock. Injecting one makes "when does a session expire" a
  *   deterministic question instead of a waiting game.
  * @param options.logger - diagnostic sink.
+ * @param options.rootPrefix - the mount prefix the daemon serves its own UI under.
+ *   The login page is reached at arbitrary paths, so its PWA asset URLs are built
+ *   from this value — the same value the asset routes are built from.
  * @returns the authentication surface used by the entry router.
  */
 export function createAuth({
@@ -51,6 +54,7 @@ export function createAuth({
   sessionMaxAgeSeconds = 2_592_000,
   sessionIdleSeconds = 604_800,
   now = systemClock,
+  rootPrefix = '',
   logger,
 }) {
   // First, before any store opens: the pairing credential is read (or bootstrapped
@@ -167,7 +171,7 @@ export function createAuth({
     session,
     /** Render the login page for a request that has no session. */
     loginPage(req) {
-      return renderLoginPage(realm, selectLoginLocale(req), req.url ?? '/')
+      return renderLoginPage(realm, selectLoginLocale(req), req.url ?? '/', rootPrefix)
     },
   }
 }

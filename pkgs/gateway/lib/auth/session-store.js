@@ -269,4 +269,3 @@ export class SessionStore {
   }
 }
 
-export { normalizeSessionRecord, sanitizeUserAgent };

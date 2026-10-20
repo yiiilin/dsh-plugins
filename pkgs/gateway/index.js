@@ -24,6 +24,7 @@ import { dirname, join, resolve } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import { createAdmin } from './lib/admin.js'
 import { createAuth } from './lib/auth/session.js'
+import { sendPwaAsset } from './lib/auth/pwa.js'
 import { startEntry } from './lib/entry.js'
 import { createTunnelAgent } from './lib/federation/agent.js'
 import { createTunnelHub, createTunnelServer, tokenOf, TUNNEL_PATH } from './lib/federation/hub.js'
@@ -184,6 +185,7 @@ export function apply(ctx, config) {
     realm: config.realm,
     sessionMaxAgeSeconds: config.sessionMaxAgeSeconds,
     sessionIdleSeconds: config.sessionIdleSeconds,
+    rootPrefix: config.rootPrefix,
     logger,
   })
 
@@ -214,6 +216,11 @@ export function apply(ctx, config) {
       return true
     }
     const path = url.split('?')[0]
+    // The login page's own assets, ahead of the session gate: they are what the page
+    // a visitor without a session is served refers to, so gating them would make the
+    // browser parse the login HTML as a manifest and fail silently. Both the route and
+    // the page's declared href are derived from `config.rootPrefix`.
+    if (sendPwaAsset(req, res, path, config.rootPrefix)) return true
     // An environment prefix is not a daemon-owned path: route it instead of gating it.
     // The edge has its own login, and this node has already authenticated whoever is
     // asking before the request got here.

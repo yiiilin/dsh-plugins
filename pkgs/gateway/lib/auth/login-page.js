@@ -1,4 +1,4 @@
-import { PWA_BOOTSTRAP, PWA_HEAD_MARKUP } from "./pwa.js";
+import { pwaAssetUrls, pwaBootstrap, pwaHeadMarkup } from "./pwa.js";
 
 const LOGIN_TEXT = Object.freeze({
   en: Object.freeze({
@@ -103,22 +103,35 @@ export function loginErrorMessage(locale, key) {
  *
  * One field, because there is one credential: the pairing credential is posted in
  * the `password` member of the JSON body, which is the wire format `login()` reads.
+ *
+ * The PWA assets are declared at the daemon's mount prefix, not at the origin root:
+ * the page is served at whatever path the visitor asked for, so only a
+ * prefix-absolute URL is stable. `pwaAssetUrls` is the same function the routes are
+ * built from, which is what keeps the declaration and the served asset in agreement.
+ *
+ * @param realm - realm shown under the heading.
+ * @param locale - `en` or `zh`; anything else falls back to English.
+ * @param rawRequestUrl - the URL the page was requested at, kept by the language links.
+ * @param rootPrefix - the daemon's configured mount prefix.
  */
-export function renderLoginPage(realm, locale = "en", rawRequestUrl = "/") {
+export function renderLoginPage(realm, locale = "en", rawRequestUrl = "/", rootPrefix = "") {
   const language = LOGIN_TEXT[locale] === undefined ? "en" : locale;
   const text = loginMessages(language);
   const safeRealm = escapeHtml(realm ?? "DeepSeek Harness Authentication");
   const loginAction = `/api/auth.login?lang=${encodeURIComponent(language)}`;
   const zhHref = escapeHtml(languageHref(rawRequestUrl, "zh"));
   const enHref = escapeHtml(languageHref(rawRequestUrl, "en"));
+  const pwa = pwaAssetUrls(rootPrefix);
+  const manifestHref = escapeHtml(pwa.manifest);
+  const iconHref = escapeHtml(pwa.icon);
   return `<!doctype html>
 <html lang="${text.htmlLang}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
-  <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  ${PWA_HEAD_MARKUP}
+  <link rel="manifest" href="${manifestHref}">
+  <link rel="icon" type="image/png" sizes="192x192" href="${iconHref}">
+  ${pwaHeadMarkup(rootPrefix)}
   <title>${text.title}</title>
   <style>
     :root { color-scheme: dark; --bg: #0a0d14; --panel: #121826; --line: #334155; --text: #e2e8f0; --muted: #94a3b8; --accent: #3b82f6; }
@@ -151,7 +164,7 @@ export function renderLoginPage(realm, locale = "en", rawRequestUrl = "/") {
     <button type="submit">${text.submit}</button>
     <div id="error" data-default-error="${escapeHtml(text.invalid)}" data-network-error="${escapeHtml(text.networkError)}">${text.invalid}</div>
   </form>
-  <script data-dsh-auth-pwa="1">${PWA_BOOTSTRAP}</script>
+  <script data-dsh-auth-pwa="1">${pwaBootstrap(rootPrefix)}</script>
   <script>
     const form = document.getElementById("login");
     const error = document.getElementById("error");
@@ -189,5 +202,3 @@ export function renderLoginPage(realm, locale = "en", rawRequestUrl = "/") {
 </body>
 </html>`;
 }
-
-export const loginLocales = Object.freeze(Object.keys(LOGIN_TEXT));
