@@ -25,6 +25,9 @@ import { PasskeyStore } from './passkey-store.js'
 import { SessionStore } from './session-store.js'
 import { verifyTotp } from './totp.js'
 
+/** The system clock, used unless a caller injects its own. */
+const systemClock = () => Date.now()
+
 /** Cookie carrying the daemon session. */
 const COOKIE_NAME = 'dsh_daemon_session'
 /** `__Host-` forces a secure, host-only cookie when the daemon is reached over TLS. */
@@ -42,6 +45,9 @@ const SECURE_COOKIE_NAME = '__Host-dsh_daemon_session'
  * @param options.totpSecret - base32 TOTP secret; required when two-factor is on.
  * @param options.sessionMaxAgeSeconds - absolute session lifetime.
  * @param options.sessionIdleSeconds - idle timeout.
+ * @param options.now - clock the stores read their timestamps from; defaults to
+ *   the system clock. Injecting one makes "when does a session expire" a
+ *   deterministic question instead of a waiting game.
  * @param options.logger - diagnostic sink.
  * @returns the authentication surface used by the entry router.
  */
@@ -56,15 +62,17 @@ export function createAuth({
   sessionIdleSeconds = 604_800,
   passkeyOrigin = '',
   passkeyRpId = '',
+  now = systemClock,
   logger,
 }) {
   const sessions = new SessionStore({
     directory,
     maxAgeSeconds: sessionMaxAgeSeconds,
     idleTimeoutSeconds: sessionIdleSeconds,
+    now,
     logger,
   })
-  const passkeys = new PasskeyStore({ directory, logger })
+  const passkeys = new PasskeyStore({ directory, now, logger })
   // Compare digests, never the configured text: a config dump must not be
   // replayable, and equal-length digests keep the comparison constant-time.
   const passwordDigest = password === '' ? undefined : digest(password)
