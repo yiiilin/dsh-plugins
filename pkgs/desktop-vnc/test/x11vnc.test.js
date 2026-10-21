@@ -482,3 +482,25 @@ test('an unchanged retarget is a no-op for the owned child', async () => {
   assert.equal(handle.terminated, 0)
   assert.equal(vnc.status().running, true)
 })
+
+test('the RFB server presents the display cookie it was given', async () => {
+  // Access control is on for the nested display. A server that does not carry the
+  // cookie exits with "Authorization required", and the panel's websocket is
+  // answered with a 503 — a failure that looks like the server missing entirely.
+  const { probe } = controllableProbe(false)
+  const { spawn, specs } = recordingSpawn()
+  const vnc = createX11VncController({
+    spawn,
+    resolveExecutable: async () => '/usr/bin/x11vnc',
+    config: { display: ':0', rfbPort: 5900 },
+    probe,
+  })
+
+  vnc.setAuthority('/tmp/dsh-desktop-vnc-1/Xauthority')
+  await vnc.ensure()
+
+  const spec = specs.at(-1)
+  assert.ok(spec !== undefined, 'the server was started')
+  assert.equal(spec.env?.XAUTHORITY, '/tmp/dsh-desktop-vnc-1/Xauthority', 'the cookie travels with the server')
+  assert.equal(spec.env?.DISPLAY, ':0', 'and it mirrors the display it was told to')
+})

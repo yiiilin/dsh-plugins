@@ -359,3 +359,33 @@ test('setDisplay() refuses a value that could read as a flag', () => {
   assert.equal(service.setDisplay(':95'), ':95')
   assert.equal(service.setDisplay('nope'), ':95')
 })
+
+test('the screenshot tool presents the display cookie it was given', async () => {
+  // The nested display runs with access control on, so a capture that does not
+  // carry the cookie is refused with "no authorization protocol specified" — the
+  // panel sees a 503 and shows nothing, with no hint that a permission was the
+  // reason.
+  const specs = []
+  const service = createCaptureService({
+    spawn: (spec) => {
+      specs.push(spec)
+      return {
+        stdout: [],
+        stderr: [],
+        done: Promise.resolve({ code: 0 }),
+        terminate() {},
+        waitForExit: () => Promise.resolve(),
+      }
+    },
+    resolveExecutable: async (command) => `/usr/bin/${command}`,
+    config: { display: ':200' },
+  })
+  const removed = service.setAuthority('/tmp/dsh-desktop-vnc-1/Xauthority')
+  assert.equal(removed, '/tmp/dsh-desktop-vnc-1/Xauthority', 'the authority is adopted')
+  await service.capture().catch(() => undefined)
+
+  const spec = specs.at(-1)
+  assert.ok(spec !== undefined, 'a capture was attempted')
+  assert.equal(spec.env?.XAUTHORITY, '/tmp/dsh-desktop-vnc-1/Xauthority', 'the cookie travels with the tool')
+  assert.equal(spec.env?.DISPLAY, ':200', 'and it draws from the nested display')
+})

@@ -149,6 +149,10 @@ export function createCaptureService({
   // Mutable: the browser stack picks the nested display lazily, so the routes
   // retarget this service through setDisplay() once it is known.
   let display = safeDisplay(config.display)
+  // The display's access control is on, so the screenshot tool has to present the
+  // same cookie the browser does. Without this every capture is refused with
+  // "no authorization protocol specified", which reaches the panel as a 503.
+  let authority = null
   const defaultQuality = clampInt(config.jpegQuality, MIN_QUALITY, MAX_QUALITY, 72)
 
   let executablePromise = null
@@ -193,6 +197,7 @@ export function createCaptureService({
       handle = spawn({
         argv: importArgv(executable, { display, quality: q }),
         cwd: '/tmp',
+        ...(authority === null ? {} : { env: { DISPLAY: display, XAUTHORITY: authority } }),
         stdio: {
           stdin: 'ignore',
           // Raw bytes, not the UTF-8 text a collect reader would hand back.
@@ -254,6 +259,11 @@ export function createCaptureService({
      * Returns the sanitized display actually stored; an unusable value keeps
      * the previous display rather than silently reverting to `:0`.
      */
+    setAuthority: (value) => {
+      if (typeof value !== 'string' || value.trim() === '') return authority
+      authority = value.trim()
+      return authority
+    },
     setDisplay: (value) => {
       if (typeof value !== 'string') return display
       const trimmed = value.trim()

@@ -149,6 +149,9 @@ export function createX11VncController({
   // first ensure(). `displayFor` remembers which display the owned child was
   // started against, so a retarget can retire a now-wrong process.
   let display = normalizeDisplay(config.display)
+  // The cookie the display trusts. Set alongside the display, once the browser
+  // stack has picked its nested one.
+  let authority = null
   let displayFor = null
   const port = normalizePort(config.rfbPort)
   const cwd = typeof config.cwd === 'string' && config.cwd !== '' ? config.cwd : tmpdir()
@@ -283,6 +286,36 @@ export function createX11VncController({
    * @param {unknown} value the display the panel should see.
    * @returns {string} the display the controller now targets.
    */
+  /**
+   * Point the server at the Xauthority its display trusts.
+   *
+   * Access control is on for that display, so the RFB server presents the same
+   * cookie the browser does; without it x11vnc exits with "Authorization
+   * required" and the panel's websocket is answered with a 503.
+   *
+   * @param value - the file the browser stack wrote, or nothing to leave it unset.
+   * @returns the authority now in force.
+   */
+  const setAuthority = (value) => {
+    if (typeof value !== 'string' || value.trim() === '') return authority
+    const next = value.trim()
+    if (next === authority) return authority
+    authority = next
+    // A different cookie means the running server trusts an older one: retire it
+    // and let the next ensure() start it again against this file.
+    if (handle !== null) {
+      const stale = handle
+      requestedStops.add(stale)
+      clearHandle()
+      try {
+        stale.terminate?.()
+      } catch {
+        // Already gone.
+      }
+    }
+    return authority
+  }
+
   const setDisplay = (value) => {
     const next = normalizeDisplay(value, display)
     if (next === display) return display
@@ -336,6 +369,10 @@ export function createX11VncController({
       started = spawn({
         argv: x11vncArgv(executable, { display, port }),
         cwd,
+        // The display's access control is on, so the RFB server presents the same
+        // cookie the browser does. Without it x11vnc exits with
+        // "Authorization required", and the panel's websocket gets a 503.
+        ...(authority === null ? {} : { env: { DISPLAY: display, XAUTHORITY: authority } }),
         stdio: {
           stdin: 'ignore',
           stdout: { maxBytes: LOG_CAPTURE_BYTES },
@@ -406,6 +443,7 @@ export function createX11VncController({
     /** The display x11vnc currently mirrors (v2: the nested display). */
     display: () => display,
     setDisplay,
+    setAuthority,
     /** Plugin unload: stop the one process this controller started. */
     dispose: async () => {
       terminated = true

@@ -187,6 +187,13 @@ export async function resolvePanelDisplay({
   }
   vnc?.setDisplay?.(nested)
   capture?.setDisplay?.(nested)
+  // The display's access control is on: the screenshot tool presents the same
+  // cookie the browser does, or every frame is refused.
+  if (typeof result?.authority === 'string') {
+    capture?.setAuthority?.(result.authority)
+    // The RFB server draws from the same display, so it needs the same cookie.
+    vnc?.setAuthority?.(result.authority)
+  }
   return { display: nested }
 }
 

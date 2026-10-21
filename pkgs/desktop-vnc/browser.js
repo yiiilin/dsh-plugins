@@ -708,6 +708,10 @@ export function createBrowserStack({
       degraded: state.mode === 'xvfb',
       fallback: state.mode === 'xvfb' ? XVFB_EXECUTABLE : null,
       profileDir: state.profileDir,
+      // The cookie this display trusts. Anything else that draws into it — the
+      // screenshot tool, the RFB server — has to present it now that access
+      // control is on.
+      authority: state.authFile,
       ok: disabled ? true : chromiumRunning,
     }
     if (error !== undefined) result.error = error
