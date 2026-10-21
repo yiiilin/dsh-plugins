@@ -192,10 +192,15 @@ export function apply(ctx, config) {
   const retiredEnvironmentKeys = ['DSH_AUTH_PASS', 'AUTH_PASS']
   const stillConfigured = [
     ...retiredKeys.filter((key) => Object.hasOwn(config, key)),
-    ...['password', ...retiredEnvironmentKeys].filter((key) => {
-      const value = key === 'password' ? config.password : process.env[key]
-      return typeof value === 'string' && value !== ''
-    }),
+    // Presence only: the value is never read here. A password that is set at all is
+    // worth reporting, and reading it to decide would put the plaintext in a variable
+    // for no reason — `''` is the one exception, because the shipped patch carried
+    // `password: ''` for years and warning on that would fire on every install.
+    // `Object.hasOwn` proves presence without touching the value; an empty string is
+    // the one case not worth a warning, because the shipped patch carried
+    // `password: ''` for years and warning on it would fire on every install.
+    ...(Object.hasOwn(config, 'password') && config.password !== '' ? ['password'] : []),
+    ...retiredEnvironmentKeys.filter((key) => Object.hasOwn(process.env, key) && process.env[key] !== ''),
   ]
   if (stillConfigured.length > 0) {
     logger.warn?.(

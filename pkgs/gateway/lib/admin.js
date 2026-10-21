@@ -68,8 +68,9 @@ export function createAdmin({
       machineId: environment.machineId,
       online,
       lastSeen,
-      // The token is a secret: show enough to tell two apart, never the whole value.
-      tokenHint: `${environment.token.slice(0, 6)}…`,
+      // No fragment of the token leaves this node. A six-character prefix used to be
+      // sent so the panel could tell two environments apart, but the panel stopped
+      // rendering it, and a slice of a secret that nothing reads is only a leak.
     }
   }
 

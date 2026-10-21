@@ -20,11 +20,12 @@ that they no longer do anything. Passkeys registered under 0.3 stop working, and
 every session minted under the old model is revoked once on the first start, so
 each browser pairs again.
 
-Set `config.password` (or `DSH_AUTH_PASS`) before the first 0.4 start: with no
-credential file and no password there is nothing to pair against, and the plugin
-refuses to mount rather than serve a login page nobody can pass. Once
-`daemon/auth/pairing.json` exists the configured password is only a seed and can
-be removed.
+**Do not set a password in the profile or the environment.** A 0.3 or 0.4
+deployment seeded `daemon/auth/pairing.json` from one, which meant keeping a
+plaintext copy around to generate a hash once; 0.5 has no such path, and the
+key does nothing. If no credential file exists, the login page offers first-time
+setup instead of the plugin refusing to mount — see the 0.5 section below for
+what that trade-off costs.
 
 ## Upgrading from 0.4 to 0.5
 
@@ -36,7 +37,10 @@ credential now has exactly one source: the scrypt hash in that file.
 
 A profile that still sets the key, or an environment that still sets either
 variable, is not rejected — schemastery merges unknown keys rather than rejecting
-them — but the plugin warns at mount that they have no effect. Silence would let an
+them — but the plugin warns at mount that they have no effect. The check compares
+the value to the empty string and nothing else: never seeded, never logged, never
+authenticated against. Removing the key is what actually deletes the plaintext;
+the daemon cannot delete a line from a profile it does not own. Silence would let an
 operator believe the configured password still decides who can log in.
 
 Nothing to do for an existing deployment: a `pairing.json` written by 0.4 keeps
