@@ -68,6 +68,7 @@ window.__ModuleLoader__.load({
       'password.submit': '确定',
       'password.cancel': '取消',
       'error.hint': '请确认 x11vnc 已安装且端口未被占用',
+      'error.component': '依赖组件不健康：{detail}',
       'error.asset': '无法加载 VNC 客户端资源',
       'error.state': '无法读取桌面服务状态',
       'clipboard.pasted': '已粘贴剪贴板内容',
@@ -96,6 +97,7 @@ window.__ModuleLoader__.load({
       'password.submit': 'Submit',
       'password.cancel': 'Cancel',
       'error.hint': 'Check that x11vnc is installed and the port is free',
+      'error.component': 'A required component is unhealthy: {detail}',
       'error.asset': 'Could not load the VNC client assets',
       'error.state': 'Could not read the desktop service state',
       'clipboard.pasted': 'Clipboard content pasted',
@@ -624,7 +626,10 @@ window.__ModuleLoader__.load({
      * Nulling the ref first makes the RFB's own `disconnect` event a no-op, so a
      * deliberate teardown never reads as an unexpected failure.
      */
-    function teardownRfb(rfbRef) {
+    function teardownRfb(rfbRef, clipboardCleanupRef) {
+      const detach = clipboardCleanupRef?.current
+      if (clipboardCleanupRef !== undefined) clipboardCleanupRef.current = null
+      if (typeof detach === 'function') detach()
       const rfb = rfbRef.current
       rfbRef.current = null
       if (rfb === null || rfb === undefined || typeof rfb.disconnect !== 'function') return
@@ -632,6 +637,70 @@ window.__ModuleLoader__.load({
         rfb.disconnect()
       } catch (error) {
         console.warn('desktop-vnc: disconnecting the viewer failed', error)
+      }
+    }
+
+    /**
+     * Name the component that is keeping the panel from working, if one is.
+     *
+     * The daemon reports what it knows rather than a verdict: whether Xephyr came
+     * up, whether chromium is running, and — when the browser stack had to fall
+     * back — the reason it gave. Turning that into one sentence here keeps the
+     * user from having to guess which of three binaries is missing.
+     *
+     * @param desktop - the state document read from the daemon.
+     * @returns the readable reason, or null when nothing is wrong.
+     */
+    function componentFailure(desktop) {
+      const browser = desktop?.browser
+      if (browser === null || typeof browser !== 'object') return null
+      if (browser.enabled === false) return null
+      const warning = browser.warning
+      // The stack fell back and said why: that reason names the binary.
+      if (typeof warning === 'string' && warning !== '') return warning
+      // No fallback reported, but a piece is not running: name the piece itself.
+      if (browser.xephyr !== true) return 'Xephyr'
+      if (browser.chromium !== true) return 'chromium'
+      return null
+    }
+
+    /**
+     * Put text on the system clipboard, if this browser lets us.
+     *
+     * The async Clipboard API needs a secure context and, in most browsers, a user
+     * gesture; a remote-side copy satisfies neither on its own. The older
+     * `execCommand` path still works without a gesture in more cases, so it is the
+     * fallback rather than the exception. A failure is not fatal: the session keeps
+     * working, the user just has to copy again by hand.
+     *
+     * @param text - the text the remote side put on its clipboard.
+     * @returns whether the text reached the clipboard.
+     */
+    function writeClipboard(text) {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText !== undefined) {
+        return navigator.clipboard.writeText(text).then(() => true, () => legacyWriteClipboard(text))
+      }
+      return Promise.resolve(legacyWriteClipboard(text))
+    }
+
+    /** The `execCommand` fallback, for contexts where the Clipboard API refuses. */
+    function legacyWriteClipboard(text) {
+      if (typeof document === 'undefined' || typeof document.createElement !== 'function') return false
+      const area = document.createElement('textarea')
+      area.value = text
+      // Off-screen rather than hidden: a `display:none` field cannot be selected.
+      area.setAttribute('readonly', '')
+      area.style.position = 'fixed'
+      area.style.top = '-1000px'
+      area.style.opacity = '0'
+      document.body.appendChild(area)
+      try {
+        area.select()
+        return document.execCommand('copy') === true
+      } catch {
+        return false
+      } finally {
+        document.body.removeChild(area)
       }
     }
 
@@ -650,6 +719,8 @@ window.__ModuleLoader__.load({
         const [prompt, setPrompt] = React.useState(null)
         const [password, setPassword] = React.useState('')
         const [failure, setFailure] = React.useState(null)
+        // The detail substituted into a failure key that has a `{detail}` slot.
+        const [failureDetail, setFailureDetail] = React.useState(null)
         const [fullscreen, setFullscreen] = React.useState(false)
         const [note, setNote] = React.useState(null)
 
@@ -677,6 +748,8 @@ window.__ModuleLoader__.load({
          * `automatic` records whether the attempt in flight was not user-started.
          */
         const lifeRef = React.useRef({ live: false, sequence: 0, connected: false, automatic: false })
+        // Detaches the paste listener when the viewer is torn down.
+        const clipboardCleanupRef = React.useRef(null)
 
         // The seat supplies this reader for every tab body; without it (a bare
         // unit render) the page simply treats itself as visible. Called
@@ -715,7 +788,7 @@ window.__ModuleLoader__.load({
             life.live = false
             life.sequence += 1
             busyRef.current = false
-            teardownRfb(rfbRef)
+            teardownRfb(rfbRef, clipboardCleanupRef)
           }
         }, [sessionId])
 
@@ -727,7 +800,7 @@ window.__ModuleLoader__.load({
         React.useEffect(() => {
           if (typeof connection?.generation?.subscribe !== 'function') return undefined
           return connection.generation.subscribe(() => {
-            teardownRfb(rfbRef)
+            teardownRfb(rfbRef, clipboardCleanupRef)
             busyRef.current = false
             autoAttemptsRef.current = AUTO_RETRY_LIMIT + 1
             setPrompt(null)
@@ -759,7 +832,7 @@ window.__ModuleLoader__.load({
             life.sequence += 1
             life.connected = false
             busyRef.current = false
-            teardownRfb(rfbRef)
+            teardownRfb(rfbRef, clipboardCleanupRef)
             setPrompt(null)
             setFailure(null)
             if (hadViewer) {
@@ -900,8 +973,40 @@ window.__ModuleLoader__.load({
             setPrompt(null)
             setFailure('error.hint')
             setState((current2) => reduceVncState(current2, 'failed'))
-            teardownRfb(rfbRef)
+            teardownRfb(rfbRef, clipboardCleanupRef)
           })
+          // Clipboard, both directions. noVNC carries the text over the same
+          // connection: a server-side copy arrives as a `clipboard` event, and a
+          // paste from this side goes out through `clipboardPasteFrom`. Neither
+          // path exists until the connection is up, so both are attached here
+          // rather than at construction.
+          rfb.addEventListener('clipboard', (event) => {
+            if (!current()) return
+            const text = event?.detail?.text
+            if (typeof text !== 'string' || text === '') return
+            // Writing the system clipboard needs a user gesture in most browsers
+            // and may be refused outright; a refusal must not break the session.
+            void Promise.resolve(writeClipboard(text)).catch(() => undefined)
+          })
+          // Ctrl/Cmd+V while the viewer has focus pastes into the remote side. The
+          // listener is on the container, not the document, so a paste meant for
+          // the rest of the page keeps working.
+          const onPaste = (event) => {
+            if (!current()) return
+            const text = event?.clipboardData?.getData?.('text/plain')
+            if (typeof text !== 'string' || text === '') return
+            event.preventDefault()
+            try {
+              rfb.clipboardPasteFrom(text)
+            } catch (error) {
+              console.warn('desktop-vnc: sending the clipboard to the remote side failed', error)
+            }
+          }
+          const container = hostRef.current
+          container?.addEventListener?.('paste', onPaste)
+          clipboardCleanupRef.current = () => {
+            container?.removeEventListener?.('paste', onPaste)
+          }
         }
 
         /**
@@ -918,6 +1023,15 @@ window.__ModuleLoader__.load({
               typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch.bind(window) : fetch,
             )
             if (!life.live || sequence !== life.sequence) return
+            // Name the component rather than saying "something failed": the state
+            // carries the reason the browser stack fell back or refused, which is
+            // what tells the user whether Xephyr, chromium or x11vnc is missing.
+            const reason = componentFailure(desktop)
+            if (reason !== null) {
+              setFailureDetail(reason)
+              setFailure('error.component')
+              return
+            }
             if (desktop.vncRunning === false) setFailure('error.hint')
           } catch {
             if (!life.live || sequence !== life.sequence) return
@@ -930,7 +1044,7 @@ window.__ModuleLoader__.load({
           life.sequence += 1
           life.connected = false
           busyRef.current = false
-          teardownRfb(rfbRef)
+          teardownRfb(rfbRef, clipboardCleanupRef)
           setPrompt(null)
           setFailure(null)
           setState((current) => reduceVncState(current, 'closed'))
@@ -955,7 +1069,7 @@ window.__ModuleLoader__.load({
           // Declining the password ends the automatic assistance: reopening the
           // prompt on its own would be a dialog the user just dismissed.
           autoAttemptsRef.current = AUTO_RETRY_LIMIT + 1
-          teardownRfb(rfbRef)
+          teardownRfb(rfbRef, clipboardCleanupRef)
           // Back to the connect button: the user declined to authenticate.
           setState(VNC_INITIAL_STATE)
         }
@@ -1007,7 +1121,7 @@ window.__ModuleLoader__.load({
         const overlayHint = state === 'idle'
           ? t('guide.description')
           : state === 'error'
-            ? t(failure ?? 'error.hint')
+            ? applyParams(t(failure ?? 'error.hint'), { detail: failureDetail ?? '' })
             : null
 
         return React.createElement('div', {
@@ -1209,6 +1323,9 @@ window.__ModuleLoader__.load({
         classifyDisconnect,
         wsUrlFor,
         rfbModuleUrl,
+        writeClipboard,
+        legacyWriteClipboard,
+        componentFailure,
         applyParams,
         setRfbModuleImporter,
         createTabDefinition,

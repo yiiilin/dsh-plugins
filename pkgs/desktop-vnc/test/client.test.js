@@ -423,3 +423,87 @@ test("exposes a page component factory that needs no DOM at import time", () => 
   // not touch `document`, which the assertions above already proved by running
   // the factory inside a sandbox whose only global is `window`.
 });
+
+test("clipboard text from the remote side reaches the system clipboard", async () => {
+  // The remote side sends text over the same connection; the panel must put it on
+  // the system clipboard or a copy inside the browser is lost to the user. The
+  // bundle runs in the vm sandbox, so the globals it reads have to be the sandbox's.
+  const written = []
+  const { __test } = loadFactory({
+    navigator: { clipboard: { writeText: async (text) => { written.push(text) } } },
+    document: {
+      baseURI: "http://127.0.0.1:3080/main/",
+      head: { append() {} },
+      body: { appendChild() {}, removeChild() {} },
+      // No `execCommand`: this case must go through the Clipboard API, and a
+      // working fallback would hide a broken primary path.
+      createElement: () => ({ style: {}, setAttribute() {}, select() {} }),
+      addEventListener() {},
+      removeEventListener() {},
+      fullscreenElement: null,
+    },
+  })
+  const ok = await __test.writeClipboard("copied inside the remote browser")
+  assert.equal(ok, true, "the text reached the clipboard")
+  assert.deepEqual(written, ["copied inside the remote browser"], "the exact text was written")
+})
+
+test("a refused Clipboard API falls back rather than losing the copy", async () => {
+  // The async API needs a secure context and often a user gesture; a remote-side
+  // copy has neither. Refusing must not be the end of it.
+  const appended = []
+  const { __test } = loadFactory({
+    navigator: { clipboard: { writeText: async () => { throw new Error("denied") } } },
+    document: {
+      baseURI: "http://127.0.0.1:3080/main/",
+      head: { append() {} },
+      body: { appendChild: (el) => appended.push(el), removeChild: () => {} },
+      createElement: () => ({ style: {}, setAttribute() {}, select() {}, value: "" }),
+      execCommand: (name) => name === "copy",
+      addEventListener() {},
+      removeEventListener() {},
+      fullscreenElement: null,
+    },
+  })
+  assert.equal(await __test.writeClipboard("fallback text"), true, "the fallback carried the text")
+  assert.equal(appended.length, 1, "a scratch field was used, and removed")
+})
+
+/**
+ * Replace the browser globals the bundle reads, and return a restore function.
+ *
+ * `navigator` is a getter on the Node global, so plain assignment throws; a
+ * property descriptor is the only way to stand in for it.
+ */
+function stubGlobals(values) {
+  const saved = new Map()
+  for (const [name, value] of Object.entries(values)) {
+    saved.set(name, Object.getOwnPropertyDescriptor(globalThis, name))
+    Object.defineProperty(globalThis, name, { value, configurable: true, writable: true })
+  }
+  return () => {
+    for (const [name, descriptor] of saved) {
+      if (descriptor === undefined) delete globalThis[name]
+      else Object.defineProperty(globalThis, name, descriptor)
+    }
+  }
+}
+
+test("names the component that is keeping the panel from working", () => {
+  // "Something failed" leaves the user guessing between three binaries. The state
+  // says which one, so the panel can say it too.
+  const { __test } = exportsOf()
+  const healthy = { browser: { enabled: true, xephyr: true, chromium: true, warning: undefined } }
+  assert.equal(__test.componentFailure(healthy), null, "a healthy stack names nothing")
+
+  // The stack fell back and said why: that reason already names the binary.
+  const fellBack = { browser: { enabled: true, xephyr: false, chromium: true, warning: "Xephyr 未安装（Xephyr not installed）" } }
+  assert.match(String(__test.componentFailure(fellBack)), /Xephyr/u)
+
+  // No reason given, but a piece is not running: name the piece.
+  assert.equal(__test.componentFailure({ browser: { enabled: true, xephyr: true, chromium: false } }), "chromium")
+  assert.equal(__test.componentFailure({ browser: { enabled: true, xephyr: false, chromium: false } }), "Xephyr")
+
+  // A panel that is switched off is not an unhealthy one.
+  assert.equal(__test.componentFailure({ browser: { enabled: false } }), null)
+})
