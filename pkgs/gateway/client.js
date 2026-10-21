@@ -31,6 +31,33 @@ window.__ModuleLoader__.load({
       switcherOffline: '（离线）',
       switcherTitle: '切换环境：打开另一台机器上的 dsh',
       switcherFailed: '无法读取环境列表',
+      tabEnvironment: '环境',
+      tabCredential: '凭据',
+      tabSessions: '会话',
+      credentialSection: '更换配对凭据',
+      credentialHint: '凭据是进入这台 dsh 的钥匙。更换后，除当前会话外的其它会话都会退出登录。',
+      credentialCurrent: '当前凭据',
+      credentialNew: '新凭据',
+      credentialConfirm: '确认新凭据',
+      credentialSubmit: '更换凭据',
+      credentialSubmitting: '更换中…',
+      credentialChanged: '凭据已更换，其它会话已退出登录。',
+      credentialCurrentRequired: '请先填写当前凭据。',
+      credentialEmpty: '新凭据不能为空。',
+      credentialTooShort: '新凭据至少 {count} 个字符。',
+      credentialMismatch: '两次输入的新凭据不一致。',
+      credentialWrongCurrent: '当前凭据不正确。',
+      credentialFailed: '更换失败：{message}',
+      sessionsSection: '跨节点会话',
+      sessionsPartial: '有节点没有应答，下表不完整。',
+      sessionsLoading: '读取会话中…',
+      sessionsUnreachable: '无法读取会话列表。',
+      sessionsUnreadable: '这个节点没有应答，它的会话未知。',
+      sessionsEmptyNode: '这个节点上没有会话。',
+      sessionCurrent: '当前会话',
+      colNode: '节点', colAddress: '客户端地址', colClient: '客户端类型',
+      colLastSeen: '最后活动', colIssued: '签发时间', colExpires: '过期时间', colSessionId: '标识',
+      nodeSelf: '本机', nodeTimeout: '超时', nodeError: '报错',
     }
 
     const EN = {
@@ -58,6 +85,33 @@ window.__ModuleLoader__.load({
       switcherOffline: ' (offline)',
       switcherTitle: 'Switch environment: open the dsh on another machine',
       switcherFailed: 'Could not read the environment list',
+      tabEnvironment: 'Environments',
+      tabCredential: 'Credential',
+      tabSessions: 'Sessions',
+      credentialSection: 'Change the pairing credential',
+      credentialHint: 'The credential is the key to this dsh. Changing it signs out every session except this one.',
+      credentialCurrent: 'Current credential',
+      credentialNew: 'New credential',
+      credentialConfirm: 'Confirm the new credential',
+      credentialSubmit: 'Change credential',
+      credentialSubmitting: 'Changing…',
+      credentialChanged: 'Credential changed. Other sessions were signed out.',
+      credentialCurrentRequired: 'Enter the current credential first.',
+      credentialEmpty: 'The new credential must not be empty.',
+      credentialTooShort: 'The new credential must be at least {count} characters.',
+      credentialMismatch: 'The two new entries do not match.',
+      credentialWrongCurrent: 'The current credential is not correct.',
+      credentialFailed: 'Could not change the credential: {message}',
+      sessionsSection: 'Sessions across nodes',
+      sessionsPartial: 'Some nodes did not answer, so this table is incomplete.',
+      sessionsLoading: 'Reading sessions…',
+      sessionsUnreachable: 'Could not read the session list.',
+      sessionsUnreadable: 'This node did not answer, so its sessions are unknown.',
+      sessionsEmptyNode: 'No sessions on this node.',
+      sessionCurrent: 'this session',
+      colNode: 'Node', colAddress: 'Client address', colClient: 'Client type',
+      colLastSeen: 'Last activity', colIssued: 'Issued', colExpires: 'Expires', colSessionId: 'ID',
+      nodeSelf: 'This host', nodeTimeout: 'timed out', nodeError: 'error',
     }
 
     /**
@@ -212,6 +266,39 @@ window.__ModuleLoader__.load({
         border: '1px solid rgba(128,128,128,.35)', background: 'transparent', color: 'inherit',
         textOverflow: 'ellipsis',
       },
+      /** The tab strip: one underline under the open page. */
+      tabs: { display: 'flex', alignItems: 'center', gap: 4, borderBottom: `1px solid ${HAIRLINE}` },
+      tab: {
+        height: 28, padding: '0 10px', fontSize: 12, cursor: 'pointer', borderRadius: 0,
+        border: 'none', borderBottom: '2px solid transparent', background: 'transparent',
+        color: SECONDARY, display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap',
+      },
+      tabActive: {
+        height: 28, padding: '0 10px', fontSize: 12, cursor: 'pointer', borderRadius: 0,
+        border: 'none', borderBottom: `2px solid ${INK}`, background: 'transparent',
+        color: INK, fontWeight: 600, display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap',
+      },
+      /** The credential form: one labelled field per line, nothing beside it. */
+      fieldColumn: { display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 360 },
+      field: { display: 'flex', flexDirection: 'column', gap: 6 },
+      fieldLabel: { fontSize: 12, color: SECONDARY },
+      /** The session table: hairline rows on the same white surface as the cards. */
+      tableBox: { background: '#fff', border: `1px solid ${HAIRLINE}`, borderRadius: 12, overflow: 'auto' },
+      table: { width: '100%', borderCollapse: 'collapse' },
+      th: {
+        textAlign: 'left', fontSize: 11, fontWeight: 600, color: SECONDARY, padding: '8px 10px',
+        borderBottom: `1px solid ${HAIRLINE}`, background: '#fafbfc', whiteSpace: 'nowrap',
+      },
+      td: {
+        fontSize: 11, color: INK, padding: '8px 10px',
+        borderBottom: `1px solid ${HAIRLINE}`, verticalAlign: 'top',
+      },
+      /** A node that did not answer: red like the error text, but a tag, not a sentence. */
+      tagDanger: {
+        border: '1px solid rgba(220,38,38,.3)', color: '#dc2626', borderRadius: 4,
+        flexShrink: 0, padding: '1px 6px', fontSize: 11, lineHeight: '16px', whiteSpace: 'nowrap',
+      },
+      warn: { fontSize: 12, color: '#b45309' },
     }
 
     /**
@@ -224,8 +311,8 @@ window.__ModuleLoader__.load({
      * slash is stripped before resolving because `new URL('/admin/state', base)`
      * resolves against the *origin root* and would put the bug straight back.
      *
-     * Resolving here rather than at each call site is what covers all six of them,
-     * including the two that build the path from an environment id.
+     * Resolving here rather than at each call site is what covers every one of them,
+     * including the ones that build the path from an environment id.
      */
     const call = async (path, options) => {
       const response = await fetch(new URL(path.replace(/^\//u, ''), document.baseURI), {
@@ -234,9 +321,187 @@ window.__ModuleLoader__.load({
       })
       const text = await response.text()
       try {
-        return JSON.parse(text)
+        const parsed = JSON.parse(text)
+        // The status is not in the body, and the credential form has to tell a wrong
+        // current credential (403) from a rejected new one (400) without reading the
+        // daemon's English prose. Annotating the parsed object keeps one helper.
+        return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+          ? { ...parsed, status: response.status }
+          : parsed
       } catch {
-        return { ok: false, error: `HTTP ${response.status}: ${text.slice(0, 200)}` }
+        return { ok: false, status: response.status, error: `HTTP ${response.status}: ${text.slice(0, 200)}` }
+      }
+    }
+
+    /**
+     * The three pages the panel offers.
+     *
+     * Ids, not indices: the open tab is component state, and reordering the strip must
+     * never silently change which page is showing.
+     */
+    const PANEL_TABS = [
+      { id: 'environment', labelKey: 'tabEnvironment' },
+      { id: 'credential', labelKey: 'tabCredential' },
+      { id: 'sessions', labelKey: 'tabSessions' },
+    ]
+
+    /** The page the panel opens on: the environment list, unchanged. */
+    const DEFAULT_TAB = 'environment'
+
+    /**
+     * The shortest new credential the daemon will accept.
+     *
+     * `PAIRING_CREDENTIAL_MIN_LENGTH` on the daemon is the authority; the form repeats
+     * the number only so an obviously short entry is refused without a round trip.
+     * `panel-tabs.test.js` holds the two equal, so this copy cannot drift from the rule.
+     */
+    const CREDENTIAL_MIN_LENGTH = 12
+
+    /**
+     * What is wrong with the credential form, as a dictionary key; `null` when it is
+     * worth submitting.
+     *
+     * Judged here, before anything is sent: a mismatch or a short entry is a typo, not
+     * a question for the server, and the answer belongs next to the field. Nothing is
+     * compared against the credential in force — the page does not have it.
+     *
+     * @param form - `{ current, password, confirm }` as typed.
+     * @returns a key of the panel's dictionary, or `null`.
+     */
+    const credentialProblem = (form) => {
+      const current = String(form?.current ?? '')
+      const password = String(form?.password ?? '')
+      const confirm = String(form?.confirm ?? '')
+      if (current === '') return 'credentialCurrentRequired'
+      if (password === '') return 'credentialEmpty'
+      if (password.length < CREDENTIAL_MIN_LENGTH) return 'credentialTooShort'
+      if (confirm !== password) return 'credentialMismatch'
+      return null
+    }
+
+    /**
+     * Ask the daemon to replace the pairing credential.
+     *
+     * The form is judged first, so an invalid entry never reaches the network. The
+     * answer is reduced to what the page shows: success, or which refusal it was. No
+     * part of the credential is read back, because the endpoint returns none.
+     *
+     * @param form - `{ current, password, confirm }` as typed.
+     * @param post - sends one change; resolved with the parsed answer.
+     * @returns `{ phase: 'invalid' | 'done' | 'failed', problem?, status?, error? }`.
+     */
+    const changeCredential = async (form, post) => {
+      const problem = credentialProblem(form)
+      if (problem !== null) return { phase: 'invalid', problem }
+      const answer = await post({
+        current: form.current,
+        password: form.password,
+        confirm: form.confirm,
+      })
+      if (answer?.ok === true) return { phase: 'done' }
+      return { phase: 'failed', status: answer?.status, error: answer?.error }
+    }
+
+    /**
+     * The line under the credential form, for one outcome.
+     *
+     * The status is what separates a wrong current credential (403) from a rejected
+     * new one (400) without reading the daemon's prose, which is English whatever the
+     * reader's language is. The carried message is kept for the cases the panel has no
+     * copy for, because a reason in the wrong language beats no reason.
+     */
+    const credentialOutcomeText = (t, outcome) => {
+      if (outcome?.phase === 'done') return t('credentialChanged')
+      if (outcome?.phase === 'invalid') {
+        return t(outcome.problem).replace('{count}', String(CREDENTIAL_MIN_LENGTH))
+      }
+      if (outcome?.status === 403) return t('credentialWrongCurrent')
+      return t('credentialFailed').replace('{message}', outcome?.error ?? '')
+    }
+
+    /** The dictionary key for a node state that stopped it answering. */
+    const nodeStateKey = (state) => (
+      state === 'offline' ? 'offline' : state === 'timeout' ? 'nodeTimeout' : 'nodeError'
+    )
+
+    /**
+     * The name a node is shown under.
+     *
+     * The registry's label wins. A node that answered without one — this host, whose id
+     * is the reserved `self` — gets the panel's own name for it rather than an id that
+     * means nothing to a reader.
+     */
+    const nodeDisplayName = (node, selfLabel) => {
+      if (typeof node?.label === 'string' && node.label !== '') return node.label
+      if (node?.id === 'self') return selfLabel
+      return String(node?.id ?? '')
+    }
+
+    /** A timestamp in the reader's locale, or an em dash when there is none. */
+    const formatTime = (value) => (
+      typeof value === 'number' && Number.isFinite(value) ? new Date(value).toLocaleString() : '—'
+    )
+
+    /**
+     * Turn a `/admin/sessions` answer into the rows the table draws.
+     *
+     * One entry per session, plus one entry for every node that produced no rows. That
+     * second kind is the point of this function: the answer omits `sessions` entirely
+     * on a node that did not answer, so a renderer that only walked the session lists
+     * would draw an offline machine exactly like a machine nobody is signed in on.
+     * Unreadable nodes therefore become `unreadable` entries carrying their state and
+     * error, and a node that answered with nothing becomes an `empty` entry — two
+     * different things, said differently.
+     *
+     * @param payload - the parsed `/admin/sessions` body.
+     * @returns `{ partial, entries }`; `partial` is true when any node did not answer.
+     */
+    const sessionView = (payload) => {
+      const nodes = Array.isArray(payload?.nodes) ? payload.nodes : []
+      const entries = []
+      for (const node of nodes) {
+        const id = String(node?.id ?? '')
+        const label = typeof node?.label === 'string' ? node.label : undefined
+        // A node that is not `ok` has no session list at all, whatever else the answer
+        // carries: its rows are unknown, not empty.
+        if (node?.state !== 'ok' || !Array.isArray(node?.sessions)) {
+          entries.push({
+            kind: 'unreadable',
+            node: {
+              id,
+              label,
+              state: String(node?.state ?? 'error'),
+              error: String(node?.error ?? ''),
+            },
+          })
+          continue
+        }
+        if (node.sessions.length === 0) {
+          entries.push({ kind: 'empty', node: { id, label, state: 'ok' } })
+          continue
+        }
+        for (const session of node.sessions) {
+          entries.push({
+            kind: 'session',
+            node: { id, label, state: 'ok' },
+            session: {
+              id: String(session?.id ?? ''),
+              address: String(session?.address ?? ''),
+              userAgent: String(session?.userAgent ?? ''),
+              issuedAt: session?.issuedAt,
+              lastSeenAt: session?.lastSeenAt,
+              expiresAt: session?.expiresAt,
+              current: session?.current === true,
+            },
+          })
+        }
+      }
+      return {
+        // The daemon's flag is trusted, but an unreadable node is proof on its own: an
+        // incomplete table that claims to be complete is the failure this view exists
+        // to prevent.
+        partial: payload?.partial === true || nodes.some((node) => node?.state !== 'ok'),
+        entries,
       }
     }
 
@@ -257,13 +522,23 @@ window.__ModuleLoader__.load({
     h('circle', { key: 'c', cx: 7, cy: 7, r: 0.9, fill: 'currentColor', stroke: 'none' }),
     h('circle', { key: 'd', cx: 7, cy: 17, r: 0.9, fill: 'currentColor', stroke: 'none' }))
 
-    /** Panel page: the environment list, and the form that adds one. */
+    /** Panel page: the environment list, the credential form and the session table. */
     const makePanelPage = (t) => function DaemonPanelPage() {
+      // Which page is open. Component state only: a reload opens on the environment
+      // list again, and the address bar never learns about it.
+      const [tab, setTab] = useState(DEFAULT_TAB)
       const [state, setState] = useState({ phase: 'loading', self: undefined, environments: [] })
       const [busy, setBusy] = useState('')
       const [flash, setFlash] = useState('')
       const [token, setToken] = useState('')
       const [label, setLabel] = useState('')
+      // The credential form and its outcome. Nothing about the credential in force is
+      // held here: the page never receives it, so it cannot show it.
+      const [form, setForm] = useState({ current: '', password: '', confirm: '' })
+      const [credential, setCredential] = useState({ phase: 'idle' })
+      // The session table. `idle` means "not asked yet": the request is made the first
+      // time the page is opened, so a panel nobody opens costs no node a probe.
+      const [sessions, setSessions] = useState({ phase: 'idle', partial: false, entries: [] })
 
       const load = useCallback(async () => {
         try {
@@ -355,23 +630,76 @@ window.__ModuleLoader__.load({
         }
       }, [load, t])
 
+      /**
+       * Read the session table.
+       *
+       * Read-only, and asked once per panel: the aggregation costs every unreachable
+       * node one relay timeout, so the request is made when the page is opened and on
+       * an explicit refresh, never on a timer.
+       */
+      const loadSessions = useCallback(async () => {
+        setSessions((previous) => ({ ...previous, phase: 'loading' }))
+        try {
+          const result = await call('/admin/sessions')
+          if (result?.ok === true) setSessions({ phase: 'ready', ...sessionView(result) })
+          else setSessions({ phase: 'failed', partial: false, entries: [], error: result?.error })
+        } catch (error) {
+          setSessions({ phase: 'failed', partial: false, entries: [], error: String(error) })
+        }
+      }, [])
+
+      // The table is fetched the first time its page is opened: a panel nobody opens
+      // must not cost every node a probe.
+      useEffect(() => {
+        if (tab === 'sessions' && sessions.phase === 'idle') void loadSessions()
+      }, [tab, sessions.phase, loadSessions])
+
+      /**
+       * Submit the credential form.
+       *
+       * `changeCredential` refuses an invalid form before `post` is called, so a typo
+       * never becomes a request. On success the fields are cleared: what was typed is
+       * the credential, and it does not stay on screen after it has been accepted.
+       */
+      const submitCredential = useCallback(async () => {
+        setCredential({ phase: 'sending' })
+        try {
+          const outcome = await changeCredential(form, (body) => call('/admin/credential', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+          }))
+          if (outcome.phase === 'done') setForm({ current: '', password: '', confirm: '' })
+          setCredential(outcome)
+        } catch (error) {
+          setCredential({ phase: 'failed', error: String(error) })
+        }
+      }, [form])
+
       const role = state.self?.role ?? 'main'
-      const children = [h('div', { key: 'title', style: styles.titleRow },
-      h('span', { style: styles.titleText }, t('title')),
-      h('button', { style: styles.button, disabled: busy !== '', onClick: () => void load() }, t('refresh'))),
-    h('p', { key: 'hint', style: styles.hint }, t('hint'))]
-      if (flash !== '') children.push(h('div', { key: 'flash', style: styles.ok }, flash))
 
-      if (token !== '') {
-        children.push(h('div', { key: 'token', style: styles.tokenBox },
-          h('div', { style: styles.tokenTitle }, t('tokenOnce')),
-          h('code', { style: styles.tokenCode }, token),
-          h('p', { style: styles.hint }, t('tokenHint'))))
-      }
+      /**
+       * The environment page, exactly as it was before the tabs existed: the list, the
+       * create form and the one-time token box.
+       */
+      const environmentPage = () => {
+        const parts = []
+        if (flash !== '') parts.push(h('div', { key: 'flash', style: styles.ok }, flash))
 
-      if (state.phase === 'failed') children.push(h('div', { key: 'error', style: styles.error }, t('unreachable')))
+        if (token !== '') {
+          parts.push(h('div', { key: 'token', style: styles.tokenBox },
+            h('div', { style: styles.tokenTitle }, t('tokenOnce')),
+            h('code', { style: styles.tokenCode }, token),
+            h('p', { style: styles.hint }, t('tokenHint'))))
+        }
 
-      if (role === 'main') {
+        if (state.phase === 'failed') parts.push(h('div', { key: 'error', style: styles.error }, t('unreachable')))
+
+        if (role !== 'main') {
+          parts.push(h('div', { key: 'edge', style: styles.note }, t('edgeNote')))
+          return parts
+        }
+
         // One card per environment, matching how the Plugin Market draws its records:
         // name and metadata on the left, actions as pills on the right.
         const cards = state.environments.map((entry) => h('div', { key: entry.id, style: styles.card },
@@ -402,7 +730,7 @@ window.__ModuleLoader__.load({
                 ? null
                 : new Date(entry.lastSeen).toLocaleString()].filter(Boolean).join(' · '))))
 
-        children.push(h('div', { key: 'list' },
+        parts.push(h('div', { key: 'list' },
           h('div', { style: styles.sectionTitle }, t('sectionEnvironments')),
           state.environments.length === 0
             ? h('div', { style: styles.note }, t('empty'))
@@ -416,14 +744,136 @@ window.__ModuleLoader__.load({
             }),
             h('button', { key: 'b', style: styles.buttonPrimary, disabled: busy !== '', onClick: () => void create() },
               busy === 'create' ? t('creating') : t('create')))))
-      } else {
-        children.push(h('div', { key: 'edge', style: styles.note }, t('edgeNote')))
+        return parts
       }
 
+      /** One labelled credential field. Password inputs: what is typed is a secret. */
+      const credentialField = (name, labelKey) => h('label', { key: name, style: styles.field },
+        h('span', { style: styles.fieldLabel }, t(labelKey)),
+        h('input', {
+          style: styles.input,
+          type: 'password',
+          name,
+          autoComplete: name === 'current' ? 'current-password' : 'new-password',
+          value: form[name],
+          disabled: credential.phase === 'sending',
+          onChange: (event) => setForm((previous) => ({ ...previous, [name]: event.target.value })),
+        }))
+
+      /**
+       * The credential page: three fields and their outcome, and nothing about the
+       * credential in force — the page never receives it, so it has nothing to show.
+       */
+      const credentialPage = () => {
+        const parts = [
+          h('div', { key: 'title', style: styles.sectionTitle }, t('credentialSection')),
+          h('p', { key: 'hint', style: styles.hint }, t('credentialHint')),
+          h('div', { key: 'form', style: styles.fieldColumn },
+            credentialField('current', 'credentialCurrent'),
+            credentialField('password', 'credentialNew'),
+            credentialField('confirm', 'credentialConfirm'),
+            h('button', {
+              key: 'submit',
+              type: 'button',
+              style: styles.buttonPrimary,
+              disabled: credential.phase === 'sending',
+              onClick: () => void submitCredential(),
+            }, credential.phase === 'sending' ? t('credentialSubmitting') : t('credentialSubmit'))),
+        ]
+        // A failure is shown as the reason, a success as the one line it is.
+        if (credential.phase === 'done' || credential.phase === 'invalid' || credential.phase === 'failed') {
+          parts.push(h('div', {
+            key: 'outcome',
+            style: credential.phase === 'done' ? styles.ok : styles.error,
+          }, credentialOutcomeText(t, credential)))
+        }
+        return parts
+      }
+
+      /** One row of the session table. */
+      const sessionRow = (entry, index) => {
+        if (entry.kind === 'session') {
+          return h('tr', { key: `s${index}` },
+            h('td', { style: styles.td }, nodeDisplayName(entry.node, t('nodeSelf'))),
+            h('td', { style: styles.td }, entry.session.address),
+            h('td', { style: styles.td, title: entry.session.userAgent }, entry.session.userAgent),
+            h('td', { style: styles.td }, formatTime(entry.session.lastSeenAt)),
+            h('td', { style: styles.td }, formatTime(entry.session.issuedAt)),
+            h('td', { style: styles.td }, formatTime(entry.session.expiresAt)),
+            h('td', { style: styles.td },
+              h('code', { style: styles.mono }, entry.session.id),
+              entry.session.current ? h('span', { style: styles.tagOk }, t('sessionCurrent')) : null))
+        }
+        const name = nodeDisplayName(entry.node, t('nodeSelf'))
+        if (entry.kind === 'empty') {
+          return h('tr', { key: `e${index}` },
+            h('td', { style: styles.td }, name),
+            h('td', { style: styles.td, colSpan: 6 },
+              h('span', { style: styles.dim }, t('sessionsEmptyNode'))))
+        }
+        // Unreadable. The node is named, its state is a tag, and the reason is in the
+        // row — never an empty session list, which would say "nobody is signed in
+        // there", the one thing this node did not tell us.
+        return h('tr', { key: `u${index}` },
+          h('td', { style: styles.td },
+            name,
+            ' ',
+            h('span', { style: styles.tagDanger }, t(nodeStateKey(entry.node.state)))),
+          h('td', { style: styles.td, colSpan: 6 },
+            h('span', { style: styles.error }, t('sessionsUnreadable')),
+            entry.node.error === '' ? null : h('span', { style: styles.dim }, ` — ${entry.node.error}`)))
+      }
+
+      /** The session page: one table, read-only, with every node accounted for. */
+      const sessionsPage = () => {
+        const parts = [h('div', { key: 'title', style: styles.sectionTitle }, t('sessionsSection'))]
+        // Say the table is incomplete before drawing it, not after.
+        if (sessions.partial) parts.push(h('div', { key: 'partial', style: styles.warn }, t('sessionsPartial')))
+        if (sessions.phase === 'failed') {
+          parts.push(h('div', { key: 'error', style: styles.error }, t('sessionsUnreachable')))
+          return parts
+        }
+        if (sessions.phase !== 'ready') {
+          parts.push(h('div', { key: 'loading', style: styles.dim }, t('sessionsLoading')))
+          return parts
+        }
+        const columns = ['colNode', 'colAddress', 'colClient', 'colLastSeen', 'colIssued', 'colExpires', 'colSessionId']
+        parts.push(h('div', { key: 'table', style: styles.tableBox },
+          h('table', { style: styles.table },
+            h('thead', null,
+              h('tr', null, columns.map((key) => h('th', { key, style: styles.th }, t(key))))),
+            h('tbody', null, sessions.entries.map(sessionRow)))))
+        return parts
+      }
+
+      const tabs = h('div', { key: 'tabs', style: styles.tabs },
+        PANEL_TABS.map((entry) => h('button', {
+          key: entry.id,
+          type: 'button',
+          'aria-pressed': tab === entry.id,
+          style: tab === entry.id ? styles.tabActive : styles.tab,
+          onClick: () => setTab(entry.id),
+        }, t(entry.labelKey))))
+
+      const head = [
+        h('div', { key: 'title', style: styles.titleRow },
+          h('span', { key: 'text', style: styles.titleText }, t('title')),
+          // Nothing on the credential page is read from the daemon, so there is
+          // nothing there to refresh.
+          tab === 'credential'
+            ? null
+            : h('button', {
+              key: 'refresh',
+              style: styles.button,
+              disabled: busy !== '',
+              onClick: () => { if (tab === 'sessions') void loadSessions(); else void load() },
+            }, t('refresh'))),
+        h('p', { key: 'hint', style: styles.hint }, t('hint')),
+        tabs,
+      ]
+      const body = tab === 'credential' ? credentialPage() : tab === 'sessions' ? sessionsPage() : environmentPage()
 
       // Mirrors the market's markup: a query container holding a head and a body.
-      const head = [children[0], children[1]]
-      const body = children.slice(2)
       return h('div', { style: styles.root },
         h('div', { style: styles.head }, head),
         h('div', { style: styles.wrap }, body))
@@ -518,6 +968,25 @@ window.__ModuleLoader__.load({
       }, makeSwitcher(t))), 'daemon: environment switcher')
     }
 
-    return { name: 'daemon-client', inject: ['locale', 'slots'], apply, __test: { call, ZH, EN } }
+    return {
+      name: 'daemon-client',
+      inject: ['locale', 'slots'],
+      apply,
+      __test: {
+        call,
+        ZH,
+        EN,
+        PANEL_TABS,
+        DEFAULT_TAB,
+        CREDENTIAL_MIN_LENGTH,
+        credentialProblem,
+        changeCredential,
+        credentialOutcomeText,
+        nodeStateKey,
+        nodeDisplayName,
+        formatTime,
+        sessionView,
+      },
+    }
   },
 })

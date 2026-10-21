@@ -85,11 +85,11 @@ function loadClient({ baseURI, fetch }) {
 }
 
 /**
- * The six requests the panel makes, in the shapes its call sites build them.
+ * The panel's requests, in the shapes its call sites build them.
  *
- * Two of the six are `GET /admin/state` — the panel page and the sidebar switcher —
- * so there are four distinct paths behind six call sites. Every one of them used to
- * be root-absolute.
+ * Two of them are `GET /admin/state` — the panel page and the sidebar switcher — so
+ * there are six distinct paths behind eight call sites. Every one of them used to be
+ * root-absolute.
  */
 const PANEL_REQUESTS = [
   {
@@ -121,6 +121,22 @@ const PANEL_REQUESTS = [
     path: '/admin/environments/edge1/token',
     options: { method: 'POST' },
     expected: 'http://127.0.0.1:3080/main/admin/environments/edge1/token',
+  },
+  {
+    callSite: 'change the pairing credential',
+    path: '/admin/credential',
+    options: {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ current: 'old', password: 'new', confirm: 'new' }),
+    },
+    expected: 'http://127.0.0.1:3080/main/admin/credential',
+  },
+  {
+    callSite: 'session table',
+    path: '/admin/sessions',
+    options: undefined,
+    expected: 'http://127.0.0.1:3080/main/admin/sessions',
   },
   {
     callSite: 'sidebar switcher',
