@@ -21,8 +21,14 @@
  *
  * The layer also reports which sessions exist ({@link createAuth} returns
  * `sessions`): "who is signed in" is a question about authentication, and the store
- * already holds the answer. The view is read-only — revoking a session is a write
- * across nodes and is not part of this surface.
+ * already holds the answer. The view is read-only — revoking a named session is a
+ * write across nodes and is not part of this surface.
+ *
+ * The one write this surface does own is {@link createAuth}'s `changeCredential`: the
+ * pairing credential can be replaced by a caller that presents both the current and the
+ * new value, and because a credential change must take effect at once, every session
+ * except the asking one is revoked with it. The two halves belong to two stores this
+ * module holds, so neither is reachable from the caller that asks for the change.
  *
  * Wire format matches the shipped login page: it posts JSON to `/api/auth.login`
  * and reloads on `{ ok: true }`, so a failure is JSON too — never a rendered
@@ -275,6 +281,75 @@ export function createAuth({
         expiresAt: session.expiresAt,
         current: session.current,
       }))
+    },
+    /**
+     * Replace the pairing credential, on behalf of one signed-in session.
+     *
+     * Both halves of a change live here because they belong to two stores this module
+     * holds and to nobody else: the new credential is written (and the in-memory hash
+     * swapped) by the credential store, and every *other* session is withdrawn by the
+     * session store. Neither store is reachable from the caller, so a change cannot be
+     * half-applied by a caller that stopped paying attention, and there is no order a
+     * caller could choose in which the file says one thing and the sessions another.
+     *
+     * **The current credential is required, and is checked first.** A session is not
+     * enough: sessions live for a long time by default, so a caller that could change
+     * the credential on a session alone would turn one login into a permanent takeover.
+     * The check runs before the new value is looked at, so a caller who does not hold
+     * the current credential learns nothing about the rules for the new one.
+     *
+     * The new value is judged by the shared rule (`pairingCredentialProblem`), not by a
+     * copy of it, and the confirmation is checked here as well as in the form: a request
+     * that skips the form is not a reason to accept one entry as if it had been typed
+     * twice. Every refusal happens before anything is written, so a rejected change
+     * leaves the file exactly as it was.
+     *
+     * On success every session except `keepId` is revoked. The asking session has just
+     * proved it holds both the old and the new credential, so signing it out would buy
+     * nothing and cost a login; every other session is exactly what a leaked credential
+     * left behind, and those must not survive the change by even one request.
+     *
+     * Nothing about the credential is returned — not its age, not a fragment, not
+     * whether the new value differs from the old one. The caller learns success or which
+     * input was refused, and nothing else.
+     *
+     * @param options - the request to carry out.
+     * @param options.keepId - id of the session asking; the only one left in force.
+     *   Omitted means every session is revoked, which is the safe direction: the caller
+     *   that cannot name itself does not get to keep a session alive.
+     * @param options.current - the credential in force now, as submitted.
+     * @param options.password - the proposed new credential.
+     * @param options.confirm - the proposal again, as the form's typo guard.
+     * @returns `{ ok: true }`, or `{ ok: false, reason }` with `reason` one of
+     *   `'invalid'` (the current credential is wrong), `'empty'`, `'tooShort'`,
+     *   `'mismatch'` or `'writeFailed'`.
+     */
+    async changeCredential({ keepId, current, password, confirm } = {}) {
+      if (!(await pairing.verify(current ?? ''))) return { ok: false, reason: 'invalid' }
+      const problem = pairingCredentialProblem(password)
+      if (problem !== undefined) return { ok: false, reason: problem }
+      if (password !== (confirm ?? '')) return { ok: false, reason: 'mismatch' }
+      try {
+        await pairing.set(password)
+      } catch (error) {
+        // The write is atomic, so a failure here left the previous record on disk and
+        // in memory: reporting it is the whole of the recovery, and no session is
+        // withdrawn on a change that did not happen.
+        logger?.warn?.(`daemon: could not change the pairing credential: ${error.message}`)
+        return { ok: false, reason: 'writeFailed' }
+      }
+      if (!store.revokeAllExcept(keepId)) {
+        // The credential is already replaced, so reporting a failed change here would be
+        // worse than useless: the caller would retry with a current credential that no
+        // longer exists. The records are gone in memory either way, so every other
+        // browser is refused from this request on; only the file on disk still names
+        // them, and only a restart could read it back. Saying that out loud is the one
+        // recovery this layer has.
+        logger?.warn?.(
+          'daemon: the pairing credential changed but the session store could not be rewritten; a restart could revive the sessions this change revoked',
+        )
+      }
+      return { ok: true }
     },
     /**
      * Render the login page for a request that has no session.

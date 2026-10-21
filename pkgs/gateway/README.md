@@ -76,6 +76,47 @@ A *corrupt* `pairing.json` is still a startup failure: the plugin refuses to mou
 rather than serve a page that accepts nothing. Only absence is a state the page
 can lead out of.
 
+## Changing the credential
+
+`POST /admin/credential` replaces the pairing credential for an already signed-in
+caller. The body is `{ current, password, confirm }` — the credential in force, the
+new one, and the new one again — and the answer is either `{ ok: true }` or
+`{ ok: false, error }`.
+
+**The current credential is required, and a session is not enough.** Sessions live
+for a long time by default, so a change authorised by a session alone would turn
+one login into a permanent takeover: anyone at an unlocked browser could replace
+the login credential and lock the operator out. A wrong or missing `current` is
+refused with 403 — not 401, because the session is genuine; what is missing is the
+proof, and a 401 would invite the browser to "log in again", the one thing a
+failed change must not do.
+
+The new value is judged by the same rule as first-time setup — non-empty, at least
+`PAIRING_CREDENTIAL_MIN_LENGTH` (12) characters, and the two entries equal — and
+`confirm` is checked by the endpoint as well as by the form, because a request
+that skips the page is not a reason to accept one entry as if it had been typed
+twice. Every refusal happens before anything is written, so a rejected change
+leaves the file byte-for-byte as it was.
+
+On success the file is rewritten (atomically, 0600), the in-memory hash is swapped,
+and **every session except the caller's own is revoked** — in the store, before the
+answer is written, so the change is in force on the next request rather than at the
+next restart. The caller has just proved it holds both the old and the new
+credential, so signing it out would cost a login and buy nothing; every other
+session is exactly what a leaked credential would have left behind. The revocation
+is persisted, so a restart does not read the withdrawn records back.
+
+Nothing about the credential is returned: no last-changed time, no mask, no
+fragment, and no statement about whether the new value differs from the old. The
+response body is exactly `{ ok: true }`, which is also why there is no `GET` on the
+route — it would have nothing to answer with that the ticket permits showing.
+
+The route is answered on both roles: an edge has its own login, and an operator who
+suspects that machine's credential leaked should be able to fix it there rather
+than from the main node. It sits behind the same session gate as the rest of
+`/admin`, and a request that arrives over a tunnel carries no session, so a peer
+node cannot change this daemon's credential.
+
 ## What it owns
 
 - **The only public listener** (`0.0.0.0:3080` by default). TLS is terminated by
@@ -93,7 +134,10 @@ can lead out of.
   credential that no longer exists alive through its cookie.
   The layer also reports the live sessions (`sessions(currentId)`), which is what the
   panel's session table reads: id, client address, client type, issue, last-seen and
-  expiry times, and which one is asking. The view is read-only.
+  expiry times, and which one is asking. That view is read-only. The one write the
+  layer owns is `changeCredential(...)`, which writes the file, swaps the hash and
+  revokes every other session; both stores are its own, so a caller cannot half-apply
+  a change or reach either store to do it another way.
 - **The session overview**: `GET /admin/sessions` answers every node's live sessions as
   one per-node envelope, `{ ok, partial, nodes: [{ id, role, state, label?, sessions?,
   error? }] }`. This node is `id: "self"`; every registered environment gets its own

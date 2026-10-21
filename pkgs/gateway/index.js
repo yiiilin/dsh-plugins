@@ -500,6 +500,10 @@ export function apply(ctx, config) {
     // aggregates it with what the other nodes answer. Wrapped rather than passed by
     // reference so the method keeps its own `this`-free closure contract.
     sessions: (currentId) => auth.sessions(currentId),
+    // The change itself belongs to the auth layer for the same reason: it writes the
+    // credential file and revokes sessions, and both stores are its own. This router
+    // only decides the shape of the request and the words of the refusal.
+    changeCredential: (request) => auth.changeCredential(request),
     logger,
   })
 

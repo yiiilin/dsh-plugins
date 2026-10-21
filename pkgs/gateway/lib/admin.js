@@ -6,9 +6,17 @@
  * response — an unhandled rejection would take the whole daemon, and with it the panel
  * the operator needs to see what broke.
  *
+ * Two routes are answered on both roles because neither is about federation: the session
+ * overview (`GET /admin/sessions`) and the credential change (`POST /admin/credential`).
+ * An edge has its own login and its own sessions, so an operator who suspects that
+ * machine's credential leaked must be able to fix it there rather than from the main
+ * node. Both answer through the auth layer, which owns the stores; this router only
+ * decides the request shape and the words of the refusal.
+ *
  * @module @yiln-dsh/dsh-gateway/admin
  */
 
+import { PAIRING_CREDENTIAL_MIN_LENGTH } from './auth/pairing-credential.js'
 import { deriveId, freshToken, normalizeEnvironment } from './registry.js'
 
 /** How long a tunnel status stays cached, so a panel refresh is not a probe storm. */
@@ -31,8 +39,8 @@ const RELAY_TIMEOUT_MS = 30_000
 const SELF_NODE_ID = 'self'
 
 export function createAdmin({
-  registry, hub, config, profileSelf, inventory, readModel, readModelRows, writeModel, sessions, logger,
-  relayTimeoutMs = RELAY_TIMEOUT_MS,
+  registry, hub, config, profileSelf, inventory, readModel, readModelRows, writeModel, sessions,
+  changeCredential, logger, relayTimeoutMs = RELAY_TIMEOUT_MS,
 }) {
   /** id -> `{ at, value }` for the last known connection state. */
   const statusCache = new Map()
@@ -190,6 +198,63 @@ export function createAdmin({
       // Answered on both roles: an edge's answer is what the main node relays into its
       // own table, and it is also what a session view read on the edge directly shows.
       json(res, 200, await overview(sessionId))
+      return true
+    }
+
+    if (pathname === '/admin/credential') {
+      // Both roles own their own login, so both can change their own credential: an
+      // edge is reached directly as well as through its tunnel, and an operator who
+      // suspects the credential leaked should not have to go to the main node to fix it.
+      if (method !== 'POST') {
+        json(res, 405, { ok: false, error: `${method} is not supported on ${pathname}` }, { allow: 'POST' })
+        return true
+      }
+      // The change is made *by a browser that stays signed in*, so the asking session is
+      // not optional: without one there is nothing to keep, and a caller that cannot name
+      // itself is not the operator at the panel. A request with no session reaches this
+      // router only when it came in over a tunnel — a peer node, not the person whose
+      // credential this is.
+      if (sessionId === undefined) {
+        json(res, 403, { ok: false, error: 'changing the pairing credential requires a signed-in session' })
+        return true
+      }
+      const body = await readJson(req)
+      const result = await changeCredential({
+        // The session that asked. Passed through so the auth layer can leave exactly it
+        // in force: nothing here filters sessions after the fact, because after a bulk
+        // revoke the caller's own record is already gone.
+        keepId: sessionId,
+        // The same member names the setup form posts, so one client shape covers both
+        // flows that set a credential.
+        current: body.current,
+        password: body.password,
+        confirm: body.confirm,
+      })
+      if (result.ok === true) {
+        // Success says only that it succeeded. No fragment, no timestamp, no hint: the
+        // panel has no business holding any part of the credential, and a value here
+        // would end up in a browser's memory and a screenshot.
+        json(res, 200, { ok: true })
+        return true
+      }
+      if (result.reason === 'invalid') {
+        // 403, not 401: the session is genuine and authenticated the request — what is
+        // missing is the proof that the caller holds the credential it is replacing. A
+        // 401 would invite a browser to treat this as "log in again", which is the one
+        // thing a failed change must not do.
+        json(res, 403, { ok: false, error: 'the current pairing credential is not correct' })
+        return true
+      }
+      if (result.reason === 'empty' || result.reason === 'tooShort' || result.reason === 'mismatch') {
+        const error = result.reason === 'empty'
+          ? 'the new pairing credential must not be empty'
+          : result.reason === 'tooShort'
+            ? `the new pairing credential must be at least ${PAIRING_CREDENTIAL_MIN_LENGTH} characters`
+            : 'the new pairing credential and its confirmation do not match'
+        json(res, 400, { ok: false, error })
+        return true
+      }
+      json(res, 500, { ok: false, error: 'the pairing credential could not be written' })
       return true
     }
 

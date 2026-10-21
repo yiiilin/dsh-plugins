@@ -302,9 +302,32 @@ export class SessionStore {
     return existed;
   }
 
-  revokeAll() {
-    this.records.clear();
+  /**
+   * Revoke every session except one.
+   *
+   * The exception is not a convenience offered to a caller: it is the difference between
+   * "this browser signs in again" and "this browser has just proved it holds both the old
+   * and the new credential". Everything that withdraws sessions in bulk on behalf of a
+   * live session keeps its own record, and it has to do so here — after {@link revokeAll}
+   * that record is already gone, and re-inserting a copy would resurrect a session the
+   * store had stopped honouring.
+   *
+   * An id that names nothing, including `undefined`, revokes every record, so the bulk
+   * clearing below is this method rather than a second implementation that could drift.
+   *
+   * @param keepId - id of the session to leave in force.
+   * @returns whether the store was written, like {@link revokeAll}.
+   */
+  revokeAllExcept(keepId) {
+    for (const id of [...this.records.keys()]) {
+      if (id !== keepId) this.records.delete(id);
+    }
     return this.persist();
+  }
+
+  /** Revoke every session: the same clearing, with nothing to keep. */
+  revokeAll() {
+    return this.revokeAllExcept(undefined);
   }
 
   list(currentId) {
