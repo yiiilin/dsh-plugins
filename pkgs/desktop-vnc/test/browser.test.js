@@ -29,6 +29,7 @@ import {
   parseDisplay,
   pickFreeDisplay,
   socketPathFor,
+  writeXauthority,
   xephyrArgv,
   xvfbArgv,
 } from '../browser.js'
@@ -199,11 +200,22 @@ test('lock and socket paths follow the X11 convention', () => {
 })
 
 test('pickFreeDisplay takes the first number with no lock and no socket', async () => {
-  const occupied = new Set([':90', ':91'])
+  const first = NESTED_DISPLAY_MIN
+  const occupied = new Set([`:${first}`, `:${first + 1}`])
   const { probe, probed } = displayProbe(occupied)
-  assert.equal(await pickFreeDisplay({ probe }), ':92')
+  assert.equal(await pickFreeDisplay({ probe }), `:${first + 2}`)
   // It stops at the first free number instead of scanning the whole range.
-  assert.deepEqual(probed, [':90', ':91', ':92'])
+  assert.deepEqual(probed, [`:${first}`, `:${first + 1}`, `:${first + 2}`])
+})
+
+test('the nested display range stays clear of where test tooling starts X servers', () => {
+  // `:90` and its neighbours are what headless harnesses conventionally claim. A
+  // panel that took the first free number there shared a display with whatever
+  // else on the machine wanted one.
+  assert.ok(
+    NESTED_DISPLAY_MIN > 120,
+    `the range must start above the conventional test band, got ${NESTED_DISPLAY_MIN}`,
+  )
 })
 
 test('pickFreeDisplay reports a full range instead of a doomed display', async () => {
@@ -216,7 +228,7 @@ test('pickFreeDisplay reports a full range instead of a doomed display', async (
 })
 
 test('pickFreeDisplay honours an explicit range and survives a throwing probe', async () => {
-  assert.equal(await pickFreeDisplay({ probe: async () => false, min: 100, max: 102 }), ':100')
+  assert.equal(await pickFreeDisplay({ probe: async () => false, min: 300, max: 302 }), ':300')
 
   let calls = 0
   const flaky = async () => {
@@ -226,7 +238,7 @@ test('pickFreeDisplay honours an explicit range and survives a throwing probe', 
   }
   // An unreadable probe is not proof of occupancy: the start attempt reports the
   // real failure rather than this one hiding it.
-  assert.equal(await pickFreeDisplay({ probe: flaky }), ':90')
+  assert.equal(await pickFreeDisplay({ probe: flaky }), `:${NESTED_DISPLAY_MIN}`)
 })
 
 test('xephyrArgv is the frozen, desktop-visible server invocation', () => {
@@ -235,30 +247,41 @@ test('xephyrArgv is the frozen, desktop-visible server invocation', () => {
     width: 1280,
     height: 800,
     title: 'DSH Desktop Browser',
+    authFile: '/tmp/dsh-desktop-vnc-1/Xauthority',
   })
   assert.deepEqual(argv, [
     '/usr/bin/Xephyr',
     ':96',
     '-screen', '1280x800x24',
-    '-ac',
+    '-auth', '/tmp/dsh-desktop-vnc-1/Xauthority',
     '-br',
     '-noreset',
     '-title', 'DSH Desktop Browser',
     '-resizeable',
   ])
+  // Access control stays on. The display is a general-purpose one that other
+  // tools on this machine also use, so `-ac` let any local process draw onto the
+  // view the panel mirrors.
+  assert.equal(argv.includes('-ac'), false, 'access control must not be disabled')
 })
 
 test('xvfbArgv is the headless fallback, with no title and no tcp listener', () => {
-  const argv = xvfbArgv('/usr/bin/Xvfb', { display: ':96', width: 1024, height: 768 })
+  const argv = xvfbArgv('/usr/bin/Xvfb', {
+    display: ':96',
+    width: 1024,
+    height: 768,
+    authFile: '/tmp/dsh-desktop-vnc-1/Xauthority',
+  })
   assert.deepEqual(argv, [
     '/usr/bin/Xvfb',
     ':96',
     '-screen', '1024x768x24',
-    '-ac',
+    '-auth', '/tmp/dsh-desktop-vnc-1/Xauthority',
     '-br',
     '-noreset',
     '-nolisten', 'tcp',
   ])
+  assert.equal(argv.includes('-ac'), false, 'access control must not be disabled')
   // The fallback must never claim to be the visible server.
   assert.equal(argv.includes('-title'), false)
   assert.equal(argv.includes('-resizeable'), false)
@@ -327,7 +350,7 @@ test('ensure() starts Xephyr with DISPLAY set, then chromium in the nested displ
   assert.equal(result.xephyr, true)
   assert.equal(result.desktopVisible, true)
   assert.equal(result.mode, 'xephyr')
-  assert.equal(result.display, ':90')
+  assert.equal(result.display, `:${NESTED_DISPLAY_MIN}`)
   assert.deepEqual(result.started, { xephyr: true, chromium: true })
 
   assert.equal(specs.length, 2)
@@ -336,10 +359,11 @@ test('ensure() starts Xephyr with DISPLAY set, then chromium in the nested displ
   // land on :0 instead of failing with "cannot open host display".
   const server = specs[0]
   assert.equal(commandName(server.argv), XEPHYR_EXECUTABLE)
-  assert.equal(server.argv[1], ':90')
+  assert.equal(server.argv[1], `:${NESTED_DISPLAY_MIN}`)
   assert.deepEqual(server.argv.slice(2), [
     '-screen', '1280x800x24',
-    '-ac', '-br', '-noreset',
+    '-auth', join('/tmp/dsh-test', 'dsh-desktop-vnc-777', 'Xauthority'),
+    '-br', '-noreset',
     '-title', DEFAULT_WINDOW_TITLE,
     '-resizeable',
   ])
@@ -348,7 +372,9 @@ test('ensure() starts Xephyr with DISPLAY set, then chromium in the nested displ
   // ② Chromium, rendering inside the nested display, not the host one.
   const browser = specs[1]
   assert.equal(commandName(browser.argv), 'chromium')
-  assert.equal(browser.env.DISPLAY, ':90')
+  assert.equal(browser.env.DISPLAY, `:${NESTED_DISPLAY_MIN}`)
+  // The browser presents the same cookie the server was told to trust.
+  assert.equal(browser.env.XAUTHORITY, join('/tmp/dsh-test', 'dsh-desktop-vnc-777', 'Xauthority'))
   assert.ok(browser.argv.includes('--no-sandbox'))
   assert.ok(browser.argv.includes(`--user-data-dir=${join('/tmp/dsh-test', 'dsh-desktop-vnc-777', 'profile')}`))
   assert.ok(browser.argv.includes('--window-size=1280,800'))
@@ -388,7 +414,7 @@ test('status() reports the owned pids once the stack is up', async () => {
   await stack.ensure()
   const status = stack.status()
   assert.equal(status.running, true)
-  assert.equal(status.display, ':90')
+  assert.equal(status.display, `:${NESTED_DISPLAY_MIN}`)
   assert.equal(status.xephyr, true)
   assert.equal(status.chromium, true)
   assert.equal(status.desktopVisible, true)
@@ -415,7 +441,8 @@ test('an explicit nestedDisplay is used verbatim instead of auto-picking', async
 })
 
 test('auto-pick skips occupied nested displays', async () => {
-  const displays = displayProbe([':90', ':91', ':92'])
+  const first = NESTED_DISPLAY_MIN
+  const displays = displayProbe([`:${first}`, `:${first + 1}`, `:${first + 2}`])
   const { stack, specs } = makeStack({
     probe: displays.probe,
     resolveExecutable: async (command) => `/usr/bin/${command}`,
@@ -423,9 +450,9 @@ test('auto-pick skips occupied nested displays', async () => {
   })
 
   const result = await stack.ensure()
-  assert.equal(result.display, ':93')
-  assert.equal(specs[0].argv[1], ':93')
-  assert.equal(specs[1].env.DISPLAY, ':93')
+  assert.equal(result.display, `:${first + 3}`)
+  assert.equal(specs[0].argv[1], `:${first + 3}`)
+  assert.equal(specs[1].env.DISPLAY, `:${first + 3}`)
 })
 
 test('a full nested range fails with a readable reason and starts nothing', async () => {
@@ -474,7 +501,7 @@ test('concurrent ensure() calls start exactly one Xephyr and one chromium', asyn
   assert.equal(specs.length, 2, 'four racing callers share one start')
   for (const result of results) {
     assert.equal(result.ok, true)
-    assert.equal(result.display, ':90')
+    assert.equal(result.display, `:${NESTED_DISPLAY_MIN}`)
   }
 })
 
@@ -612,7 +639,7 @@ test('a missing Xephyr falls back to Xvfb and reports the desktop as invisible',
   assert.equal(result.mode, 'xvfb')
   assert.equal(result.degraded, true)
   assert.equal(result.fallback, XVFB_EXECUTABLE)
-  assert.equal(result.display, ':90')
+  assert.equal(result.display, `:${NESTED_DISPLAY_MIN}`)
   assert.deepEqual(result.started, { xephyr: false, chromium: true })
   // The Xephyr reason travels in `error` even though the start succeeded.
   assert.match(result.error, /Xephyr 未安装/)
@@ -621,7 +648,7 @@ test('a missing Xephyr falls back to Xvfb and reports the desktop as invisible',
   assert.equal(specs.length, 2)
   assert.equal(commandName(specs[0].argv), XVFB_EXECUTABLE)
   assert.equal(specs[0].env, undefined, 'the headless fallback needs no host display')
-  assert.equal(specs[1].env.DISPLAY, ':90')
+  assert.equal(specs[1].env.DISPLAY, `:${NESTED_DISPLAY_MIN}`)
 
   const status = stack.status()
   assert.equal(status.running, true)
@@ -691,7 +718,7 @@ test('both servers missing fails with both readable reasons and spawns no chromi
   const result = await stack.ensure()
   assert.equal(result.ok, false)
   assert.equal(result.browser, false)
-  assert.equal(result.display, ':90')
+  assert.equal(result.display, `:${NESTED_DISPLAY_MIN}`)
   assert.match(result.error, /Xephyr 未安装/)
   assert.match(result.error, /Xvfb 未安装/)
   assert.equal(specs.length, 0)
@@ -744,4 +771,48 @@ test('browser.enabled=false starts nothing and reports the host display', async 
   assert.equal(status.enabled, false)
   assert.equal(status.running, false)
   assert.equal(status.display, ':0')
+})
+
+test('the Xauthority it writes is one xauth itself would have written', async () => {
+  // The format is unforgiving and silent when wrong: a cookie written with the
+  // wrong family byte or an empty address is still a valid file, it just never
+  // matches, and the symptom is every client being refused with no hint why.
+  const { mkdtemp, readFile, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const directory = await mkdtemp(join(tmpdir(), 'dsh-xauth-'))
+  const path = join(directory, 'Xauthority')
+  const cookie = Buffer.alloc(16, 0x5a)
+  try {
+    writeXauthority(path, '211', cookie)
+    const record = await readFile(path)
+
+    // Family is `FamilyLocal`, and it is the one field stored little-endian.
+    assert.deepEqual([...record.subarray(0, 2)], [0x01, 0x00], 'family is FamilyLocal, little-endian')
+    // The address is the host name, never empty: a blank address matches no host.
+    const addressLength = record.readUInt16BE(2)
+    assert.ok(addressLength > 0, 'the address is not empty')
+    const address = record.subarray(4, 4 + addressLength).toString('latin1')
+    assert.equal(address, (await import('node:os')).hostname(), 'the address is this host')
+
+    // Then the display number, the cookie name, and the cookie — all big-endian.
+    let at = 4 + addressLength
+    const numberLength = record.readUInt16BE(at)
+    at += 2
+    assert.equal(record.subarray(at, at + numberLength).toString('latin1'), '211', 'the display number')
+    at += numberLength
+    const nameLength = record.readUInt16BE(at)
+    at += 2
+    assert.equal(record.subarray(at, at + nameLength).toString('latin1'), 'MIT-MAGIC-COOKIE-1', 'the cookie name')
+    at += nameLength
+    const cookieLength = record.readUInt16BE(at)
+    at += 2
+    assert.deepEqual([...record.subarray(at, at + cookieLength)], [...cookie], 'the cookie itself')
+
+    // Owner-only: the cookie is a credential, not a hint.
+    const { stat } = await import('node:fs/promises')
+    assert.equal((await stat(path)).mode & 0o777, 0o600, 'the file is readable only by its owner')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 })

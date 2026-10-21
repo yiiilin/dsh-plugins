@@ -30,19 +30,31 @@
  * @module @yiln-dsh/dsh-desktop-vnc/browser
  */
 
-import { existsSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+/** `FamilyLocal` in an Xauthority record; the only field stored little-endian. */
+const FAMILY_LOCAL = 1
 
 /** The nested X server that puts a real, desktop-visible window on `:0`. */
 export const XEPHYR_EXECUTABLE = 'Xephyr'
 /** Headless fallback used only when Xephyr cannot be started at all. */
 export const XVFB_EXECUTABLE = 'Xvfb'
-/** Low end of the nested display range the contract reserves. */
-export const NESTED_DISPLAY_MIN = 90
-/** High end of the nested display range the contract reserves. */
-export const NESTED_DISPLAY_MAX = 120
+/**
+ * Low end of the nested display range this stack claims.
+ *
+ * High on purpose. `:90` and its neighbours are where headless test tooling
+ * conventionally starts its own X servers, so a panel that took the first free
+ * number there shared a display with whatever else on the machine wanted one —
+ * and, because access control used to be off, anything could draw onto the view
+ * the panel mirrors. Starting well above that range keeps this display ours.
+ */
+export const NESTED_DISPLAY_MIN = 200
+/** High end of the nested display range this stack claims. */
+export const NESTED_DISPLAY_MAX = 250
 /** Default window title, also the human handle for the window on the desktop. */
 export const DEFAULT_WINDOW_TITLE = 'DSH Desktop Browser'
 /** Chromium's default landing page when the config leaves `startUrl` empty. */
@@ -148,15 +160,60 @@ export function describeSpawnError(error, executable) {
 }
 
 /**
+ * Write an Xauthority file holding one cookie for one display.
+ *
+ * Xephyr reads this to decide which clients may open a window on its display, and
+ * Chromium presents the same cookie through `XAUTHORITY`. The file is per stack,
+ * written 0600, and removed with the profile directory, so it is not a shared
+ * credential another process can read its way in with.
+ *
+ * The binary layout is the MIT-MAGIC-COOKIE-1 record: a big-endian length and
+ * bytes for the address family (left empty, meaning "any"), then the display
+ * number as text, then the name `MIT-MAGIC-COOKIE-1`, then the cookie itself.
+ *
+ * @param path - where to write the file.
+ * @param display - the display number, without the colon.
+ * @param cookie - 16 random bytes.
+ * @returns the path, for the caller to pass to both children.
+ */
+export function writeXauthority(path, display, cookie, host = hostname()) {
+  const field = (buffer) => {
+    const length = Buffer.allocUnsafe(2)
+    length.writeUInt16BE(buffer.length, 0)
+    return Buffer.concat([length, buffer])
+  }
+  // The family is the one field `xauth` stores little-endian: `FamilyLocal` is 1,
+  // written as `01 00`. Everything after it — and every length — is big-endian.
+  const family = Buffer.allocUnsafe(2)
+  family.writeUInt16LE(FAMILY_LOCAL, 0)
+  const record = Buffer.concat([
+    family,
+    // The address is the host name, not empty: a blank address matches no host, so
+    // the cookie would be written and then never accepted.
+    field(Buffer.from(host, 'latin1')),
+    field(Buffer.from(String(display), 'latin1')),
+    field(Buffer.from('MIT-MAGIC-COOKIE-1', 'latin1')),
+    field(cookie),
+  ])
+  writeFileSync(path, record, { mode: 0o600 })
+  chmodSync(path, 0o600)
+  return path
+}
+
+/**
  * The argv that makes `:N` a real, resizable window on the host desktop.
  * `DISPLAY` for the *host* desktop travels in the spawn spec's environment.
  */
-export function xephyrArgv(executable, { display, width, height, title = DEFAULT_WINDOW_TITLE }) {
+export function xephyrArgv(executable, { display, width, height, title = DEFAULT_WINDOW_TITLE, authFile } = {}) {
   return [
     executable,
     display,
     '-screen', `${width}x${height}x24`,
-    '-ac',
+    // Access control stays ON and is narrowed to this stack's own cookie. The
+    // display is a general-purpose one that other tools on this machine also
+    // start things on, so `-ac` let any local process draw onto what the panel
+    // mirrors — which is how an unrelated RDP client took over the view once.
+    ...(authFile === undefined ? [] : ['-auth', authFile]),
     '-br',
     '-noreset',
     '-title', title,
@@ -165,12 +222,12 @@ export function xephyrArgv(executable, { display, width, height, title = DEFAULT
 }
 
 /** The argv for the headless fallback; Xvfb has no window and no title. */
-export function xvfbArgv(executable, { display, width, height }) {
+export function xvfbArgv(executable, { display, width, height, authFile } = {}) {
   return [
     executable,
     display,
     '-screen', `${width}x${height}x24`,
-    '-ac',
+    ...(authFile === undefined ? [] : ['-auth', authFile]),
     '-br',
     '-noreset',
     '-nolisten', 'tcp',
@@ -345,6 +402,9 @@ export function createBrowserStack({
     server: null,
     browser: null,
     profileDir: null,
+    // The Xauthority this stack's display trusts; shared by the server and the
+    // browser, and removed with the instance directory.
+    authFile: null,
     fallbackReason: null,
   }
 
@@ -491,6 +551,7 @@ export function createBrowserStack({
           width,
           height,
           title: browserConfig.windowTitle,
+          authFile: state.authFile ?? undefined,
         }),
         { DISPLAY: hostDisplay },
       ))
@@ -519,6 +580,7 @@ export function createBrowserStack({
         display: state.display,
         width,
         height,
+        authFile: state.authFile ?? undefined,
       })))
     } catch (error) {
       return { ok: false, error: describeSpawnError(error, XVFB_EXECUTABLE) }
@@ -588,7 +650,10 @@ export function createBrowserStack({
           startUrl: browserConfig.startUrl,
           extraArgs: browserConfig.extraArgs,
         }),
-        { DISPLAY: state.display },
+        {
+          DISPLAY: state.display,
+          ...(state.authFile === null ? {} : { XAUTHORITY: state.authFile }),
+        },
       ))
     } catch (error) {
       return { error: describeSpawnError(error, resolved.executable) }
@@ -671,6 +736,24 @@ export function createBrowserStack({
       state.display = display
     }
 
+    // The cookie has to exist before the display starts: the server is told to
+    // trust exactly this file, and the browser presents it. Both are per instance.
+    if (state.authFile === null) {
+      const authDir = join(baseDir, `dsh-desktop-vnc-${instancePid}`)
+      try {
+        mkdirSync(authDir, { recursive: true, mode: 0o700 })
+        state.authFile = writeXauthority(
+          join(authDir, 'Xauthority'),
+          String(state.display).replace(/^:/u, ''),
+          randomBytes(16),
+        )
+      } catch (error) {
+        const message = `无法创建 Xauthority（${error instanceof Error ? error.message : String(error)}）`
+        note('warn', `desktop-vnc: ${message}`)
+        return snapshot({ error: message })
+      }
+    }
+
     let startedXephyr = false
     if (!alive(state.server)) {
       const server = await startServer()
@@ -716,6 +799,7 @@ export function createBrowserStack({
     state.display = null
     state.mode = null
     state.desktopVisible = false
+    state.authFile = null
     state.fallbackReason = null
 
     // Chromium first: it must not outlive the display it draws into.
