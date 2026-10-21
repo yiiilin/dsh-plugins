@@ -159,7 +159,7 @@ Status: ready-for-agent
   在 cookie 该续期时重发它。浏览器 cookie 的 `Max-Age` 原本在登录时算一次，
   而服务端截止时间随活动滑动——活跃用户会在原始窗口关闭时被要求重新配对，
   那是会话本身从未到达的截止点。续期阈值是动态的（已用时间的 1/3 等于原寿命的 1/4）。
-- **`pnpm-lock.yaml` 陈旧**：仍列着五个已不存在的包目录，且没有 `pkgs/gateway` 的 importer。
-  `npm run check` 与 `npm test` 都不读它，所以不影响验证，但它与磁盘现状不符。
+- ~~`pnpm-lock.yaml` 陈旧~~ **已解决**：重新生成后，8 个 importer 与磁盘上的包目录完全一致，
+  `@simplewebauthn/server` 的残留也清掉了（净删 290 行）。
 - **历史文档仍提 passkey/TOTP**：`docs/changes/*` 与 `docs/verifications/*` 里还有引用。
   它们是历史记录，不是当前说明。
