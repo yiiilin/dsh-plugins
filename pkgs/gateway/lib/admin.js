@@ -189,8 +189,9 @@ export function createAdmin({
     }
 
     if (pathname === '/admin/sessions') {
-      // Read-only, and only read-only: there is no route that revokes a session, on this
-      // node or through a tunnel. Withdrawing someone else's session is a write across
+      // This route only reads. The one bulk revocation the daemon offers is the
+      // credential change below, which signs out every session except the caller's;
+      // withdrawing *one* session, on this node or through a tunnel, is a write across
       // nodes and needs a rollback story this surface does not have.
       if (method !== 'GET') {
         json(res, 405, { ok: false, error: `${method} is not supported on ${pathname}: sessions are read-only` }, { allow: 'GET' })

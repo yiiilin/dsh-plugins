@@ -12,8 +12,7 @@ window.__ModuleLoader__.load({
       refresh: '刷新',
       unreachable: '无法读取守护状态（管理接口只接受已登录的请求）。',
       empty: '还没有环境。创建一个，把 token 填到那台机器的 dsh 配置里。',
-      colName: '名称', colPath: '访问路径', colToken: '令牌', colState: '状态', colActions: '操作',
-      online: '在线', offline: '离线', never: '从未连接',
+      online: '在线', offline: '离线',
       open: '打开', rotate: '换令牌', remove: '移除',
       labelLabel: '名称', labelPlaceholder: '例如 6.13',
       rename: '改名', renamePrompt: '新的名称', renamed: '已改名',
@@ -30,7 +29,6 @@ window.__ModuleLoader__.load({
       switcherLocal: '本机',
       switcherOffline: '（离线）',
       switcherTitle: '切换环境：打开另一台机器上的 dsh',
-      switcherFailed: '无法读取环境列表',
       tabEnvironment: '环境',
       tabCredential: '凭据',
       tabSessions: '会话',
@@ -66,8 +64,7 @@ window.__ModuleLoader__.load({
       refresh: 'Refresh',
       unreachable: 'Could not read daemon state (the admin API only answers authenticated requests).',
       empty: 'No environments yet. Create one and put its token in that machine\'s dsh config.',
-      colName: 'Name', colPath: 'Path', colToken: 'Token', colState: 'State', colActions: 'Actions',
-      online: 'online', offline: 'offline', never: 'never connected',
+      online: 'online', offline: 'offline',
       open: 'Open', rotate: 'Rotate token', remove: 'Remove',
       labelLabel: 'Name', labelPlaceholder: 'e.g. 6.13',
       rename: 'Rename', renamePrompt: 'New name', renamed: 'Renamed',
@@ -84,7 +81,6 @@ window.__ModuleLoader__.load({
       switcherLocal: 'This host',
       switcherOffline: ' (offline)',
       switcherTitle: 'Switch environment: open the dsh on another machine',
-      switcherFailed: 'Could not read the environment list',
       tabEnvironment: 'Environments',
       tabCredential: 'Credential',
       tabSessions: 'Sessions',
@@ -114,14 +110,6 @@ window.__ModuleLoader__.load({
       nodeSelf: 'This host', nodeTimeout: 'timed out', nodeError: 'error',
     }
 
-    /**
-     * Panel styles.
-     *
-     * These mirror the Plugin Market's design language — 12px cards on a white surface,
-     * a 1px rgba(0,0,0,.1) hairline, 8px pill actions, 11px metadata, 4px tag chips — so
-     * this page reads as part of the product rather than a form bolted onto it. The
-     * values are the market's computed ones, not an approximation of them.
-     */
     /**
      * Panel styles.
      *
@@ -500,7 +488,7 @@ window.__ModuleLoader__.load({
         // The daemon's flag is trusted, but an unreadable node is proof on its own: an
         // incomplete table that claims to be complete is the failure this view exists
         // to prevent.
-        partial: payload?.partial === true || nodes.some((node) => node?.state !== 'ok'),
+        partial: payload?.partial === true || entries.some((entry) => entry.kind === 'unreadable'),
         entries,
       }
     }
@@ -633,9 +621,10 @@ window.__ModuleLoader__.load({
       /**
        * Read the session table.
        *
-       * Read-only, and asked once per panel: the aggregation costs every unreachable
-       * node one relay timeout, so the request is made when the page is opened and on
-       * an explicit refresh, never on a timer.
+       * Read-only, and asked once per panel: the fan-out is parallel, so an unreachable
+       * node costs one relay timeout in total rather than one per machine — still long
+       * enough that the request is made when the page is opened and on an explicit
+       * refresh, never on a timer.
        */
       const loadSessions = useCallback(async () => {
         setSessions((previous) => ({ ...previous, phase: 'loading' }))

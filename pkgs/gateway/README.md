@@ -164,7 +164,8 @@ node cannot change this daemon's credential.
   `sessions` is present only for `ok` — a node that could not be read has no list to be
   mistaken for a node nobody is signed in on. `partial` is true when any node did not
   answer; the answer itself is still 200. The route is read-only: any method but `GET`
-  is refused with 405, and no route anywhere revokes a session.
+  is refused with 405. Revoking one session has no route — the only bulk revocation
+  is the credential change, which signs out every session but the caller's.
 - **Routing**: `/<id>/…` proxies to that profile's loopback port, HTTP and
   WebSocket alike.
 - **Profile lifecycle**: create, start, stop, remove, plus `/admin` for operators.

@@ -6,7 +6,7 @@ plugin injects and the Cordis services/Slots used by its Host and Client halves.
 
 ## Standalone Packages (current)
 
-`0.3.0` ships eight packages that install independently; there is no aggregate package.
+`0.5.0` ships eight packages that install independently; there is no aggregate package.
 Verified against DSH `0.2.1-rc.2`: the workspace suite passes 361 tests and
 `npm run check` validates all eight.
 

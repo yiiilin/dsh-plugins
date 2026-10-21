@@ -715,3 +715,22 @@ test('keeps the zh and en dictionaries key-for-key', () => {
     assert.notEqual(String(EN[key]).trim(), '', `en.${key} is empty`)
   }
 })
+
+test('a node that says ok but carries no session array still marks the table incomplete', () => {
+  // The daemon omits `sessions` on a non-ok node, so the two usually agree. But the
+  // view must not depend on that: what decides "incomplete" is whether any row
+  // actually came back unreadable, not what the payload claims about itself. A table
+  // that draws an error row while reporting itself complete is the failure this view
+  // exists to prevent.
+  const { sessionView } = loadClient().exported.__test
+  const view = sessionView({
+    ok: true,
+    partial: false,
+    nodes: [{ id: 'n1', role: 'edge', state: 'ok' }],
+  })
+
+  const kinds = [...view.entries].map((entry) => entry.kind)
+  assert.equal(kinds.length, 1, 'exactly one row')
+  assert.equal(kinds[0], 'unreadable', 'the node yields an unreadable row')
+  assert.equal(view.partial, true, 'and the table says so, whatever the payload claimed')
+})

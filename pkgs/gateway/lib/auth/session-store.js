@@ -137,7 +137,7 @@ export class SessionStore {
         if (record !== null) this.records.set(record.id, record);
       }
     } catch (error) {
-      this.#logger?.warn?.("auth-webserver: persistent session store could not be read: %s", error);
+      this.#logger?.warn?.("daemon: the session store could not be read, so no session survives this start: " + String(error));
     }
   }
 
@@ -220,7 +220,7 @@ export class SessionStore {
       } catch {
         // Best-effort cleanup after an interrupted atomic write.
       }
-      this.#logger?.warn?.("auth-webserver: persistent session store could not be written: %s", error);
+      this.#logger?.warn?.("daemon: the session store could not be written, so this change may not survive a restart: " + String(error));
       return false;
     }
   }
