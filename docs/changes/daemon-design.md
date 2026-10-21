@@ -13,7 +13,7 @@
                     ┌─────────────────────────────────────────────┐
    浏览器 ──────────►│ daemon                                      │
    (0.0.0.0:3080)    │  · 唯一公网监听（TLS 由外部反代终止）        │
-                    │  · 登录 / 会话 / TOTP / Passkey             │
+                    │  · 登录 / 会话 / 配对凭据                    │
                     │  · 路由 /<id>/… → 127.0.0.1:<port>          │
                     │  · /admin：profile 管理与 SSH 自动部署       │
                     │  · 监管：启停 profile 子进程                 │
@@ -77,9 +77,7 @@ loopback authority，因此 **profile 无需 `--trusted-host`**。
 | 模块 | 用途 |
 |---|---|
 | `session-store.js` | 会话持久化 |
-| `passkey-store.js` | Passkey |
-| `totp.js` | 两步验证 |
-| `policy.js` | Host/Origin 校验 |
+| `pairing-credential.js` | 配对凭据（scrypt 哈希） |
 | `login-page.js` | 登录页（中英） |
 | `pwa.js` | PWA |
 
