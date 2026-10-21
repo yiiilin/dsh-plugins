@@ -367,6 +367,11 @@ test('a configured password does not create a credential, and mounting says so',
     const notice = warnings.find((line) => line.includes('password'))
     assert.ok(notice !== undefined, `expected a warning about the retired password key, got ${JSON.stringify(warnings)}`)
     assert.match(notice, /ignoring/u, 'the warning is the same one the other retired keys get')
+    // Naming the key is the point; naming its value would put the plaintext in the log,
+    // which is the copy this change exists to remove.
+    for (const line of warnings) {
+      assert.equal(line.includes(CREDENTIAL), false, `no warning may repeat the credential value: ${line}`)
+    }
   } finally {
     await rm(home, { recursive: true, force: true })
   }
