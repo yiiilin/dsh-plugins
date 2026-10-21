@@ -327,19 +327,62 @@ test('a corrupt credential file stops the startup and names the path', async () 
   }
 })
 
-test('a missing file stops the startup and names the path', async () => {
-  // With no seed there is nothing to fall back on, and inventing a credential would
-  // silently lock the operator out. The guided setup that replaces this failure is a
-  // later change; this test pins the behaviour that exists now.
+test('a missing file is a state the store reports, not a failed startup', async () => {
+  // Refusing to start on a machine that has never been paired was a dead end: no
+  // process, so nowhere to set a credential either. The absence is now the state that
+  // the login page leads out of, and the store says so without inventing a credential.
   const directory = await temporaryDirectory()
   try {
     const path = credentialPath(directory)
-    assert.throws(
-      () => new PairingCredential({ directory }),
-      (error) => error instanceof Error && error.message.includes(path),
-      `the error must name the missing path ${path}`,
-    )
+    const store = new PairingCredential({ directory })
+    assert.equal(store.configured, false, 'the store says it holds no credential')
+    assert.equal(await store.verify('anything at all'), false, 'and nothing verifies against nothing')
     assert.equal(await readFile(path, 'utf8').catch(() => undefined), undefined, 'nothing was invented')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('a credential written through the store sets, verifies and persists', async () => {
+  // The write half of the missing-file state: one call hashes the value, writes the
+  // file owner-only, and starts accepting it. A restart has to read it back from the
+  // file, because that is the whole point of storing it there.
+  const directory = await temporaryDirectory()
+  try {
+    const path = credentialPath(directory)
+    const store = new PairingCredential({ directory })
+    await store.set(CREDENTIAL)
+
+    assert.equal(store.configured, true, 'the store now holds a credential')
+    assert.equal(await store.verify(CREDENTIAL), true, 'and the value that set it verifies')
+    assert.equal(await store.verify('not the credential'), false)
+
+    const text = await readFile(path, 'utf8')
+    assert.equal(text.includes(CREDENTIAL), false, 'what reached the disk is a hash, not the credential')
+    assert.equal((await stat(path)).mode & 0o777, 0o600, 'the file is owner-only')
+    assert.equal((await stat(directory)).mode & 0o777, 0o700, 'the directory is owner-only')
+
+    const restarted = new PairingCredential({ directory })
+    assert.equal(restarted.configured, true, 'a restart finds the credential')
+    assert.equal(await restarted.verify(CREDENTIAL), true, 'and the file alone authenticates it')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('the store refuses a value it cannot accept and writes nothing', async () => {
+  // The length rule lives in the storage layer so the two flows that ask for a new
+  // credential cannot drift. A refusal has to leave the directory exactly as it was:
+  // a half-written file would be a credential nobody chose.
+  const directory = await temporaryDirectory()
+  try {
+    const store = new PairingCredential({ directory })
+    for (const value of ['', 'short', 'x'.repeat(11)]) {
+      await assert.rejects(store.set(value), `"${value}" is below the minimum and must be refused`)
+    }
+    assert.deepEqual(await readdir(directory), [], 'no file appeared in the auth directory')
+    assert.equal(store.configured, false, 'and the store still holds no credential')
+    await assert.rejects(store.set(' '), 'a single space is refused as too short')
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -347,18 +390,15 @@ test('a missing file stops the startup and names the path', async () => {
 
 // --- mounting the plugin (the startup path) ---------------------------------
 
-test('a configured password does not create a credential, and mounting says so', async () => {
+test('a configured password never creates a credential, and mounting says so', async () => {
   // The seed is gone, so a deployment that still sets `config.password` would otherwise
   // believe it decides who can log in. The mount has to say it does nothing — and the
-  // file it used to write must stay absent.
+  // file it used to write must stay absent. The daemon mounts anyway, because a missing
+  // file now means "offer setup", not "refuse to start".
   const { home, authDirectory } = await temporaryHome()
   try {
     const warnings = []
-    assert.throws(
-      () => mount(home, { password: CREDENTIAL }, warnings),
-      (error) => error instanceof Error && error.message.includes(credentialPath(authDirectory)),
-      'the configured password does not stand in for the missing file',
-    )
+    mount(home, { password: CREDENTIAL }, warnings)
     assert.equal(
       await readFile(credentialPath(authDirectory), 'utf8').catch(() => undefined),
       undefined,

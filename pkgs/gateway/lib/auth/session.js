@@ -11,6 +11,14 @@
  * store), so changing the way in invalidates the cookies the previous model handed
  * out instead of leaving them to stand for a credential that no longer exists.
  *
+ * When that file does not exist the layer does not fail: the login page becomes the
+ * first-time setup form, and `POST /api/auth.login` writes the credential and signs
+ * the browser in on the same request. The one condition for that shape is the file's
+ * absence — a fresh install and a deleted file are the same state — and the setup
+ * endpoint is deliberately not restricted by source address. That trade-off (LAN-wide
+ * installability bought with an open window whenever the file is gone) is documented
+ * at the top of `pairing-credential.js` and in the package README.
+ *
  * The layer also reports which sessions exist ({@link createAuth} returns
  * `sessions`): "who is signed in" is a question about authentication, and the store
  * already holds the answer. The view is read-only — revoking a session is a write
@@ -24,7 +32,7 @@
  */
 
 import { loginErrorMessage, renderLoginPage, selectLoginLocale } from './login-page.js'
-import { PairingCredential } from './pairing-credential.js'
+import { PAIRING_CREDENTIAL_MIN_LENGTH, PairingCredential, pairingCredentialProblem } from './pairing-credential.js'
 import { SessionStore } from './session-store.js'
 
 /** The system clock, used unless a caller injects its own. */
@@ -61,10 +69,11 @@ export function createAuth({
   rootPrefix = '',
   logger,
 }) {
-  // First, before any store opens: the pairing credential is read here, so a
-  // missing or corrupt file stops the mount instead of surfacing at the first login
-  // attempt. Nothing seeds it — the file is the only source of the credential.
-  const pairing = new PairingCredential({ directory })
+  // First, before any store opens: the pairing credential is read here, so a corrupt
+  // file stops the mount instead of surfacing at the first login attempt. A missing
+  // file does not stop it: that is the state the login page guides the visitor out of
+  // by setting one. Nothing seeds it — the file is the only source of the credential.
+  const pairing = new PairingCredential({ directory, now, logger })
   const store = new SessionStore({
     directory,
     maxAgeSeconds: sessionMaxAgeSeconds,
@@ -142,6 +151,38 @@ export function createAuth({
     return false
   }
 
+  /**
+   * Every answer the login endpoint gives, in the page's language.
+   *
+   * @param locale - the locale the page will read the answer in.
+   * @param res - the response to write.
+   * @param status - HTTP status.
+   * @param key - dictionary key of the message.
+   * @param values - placeholders the message substitutes.
+   */
+  function refuse(locale, res, status, key, values) {
+    json(res, status, { ok: false, error: loginErrorMessage(locale, key, values) })
+    return true
+  }
+
+  /**
+   * Answer the login endpoint: verify a credential, or set one when none exists.
+   *
+   * Which of the two it is has exactly one condition — whether the credential file
+   * exists — so a first install and a deployment whose file was deleted follow the
+   * same path. In the set-up case the request must carry the new credential twice;
+   * a mismatch, an empty value or one below the minimum is refused *before* anything
+   * is written, so a failed attempt leaves no credential behind. On success the file
+   * is written and the browser that submitted it is signed in on the same response,
+   * because asking it to log in again with the credential it just chose is a second
+   * step that buys nothing.
+   *
+   * @param req - the incoming request.
+   * @param res - the response to write.
+   * @param url - the raw request URL, whose `lang` picks the message language.
+   * @param secure - whether the request arrived over TLS.
+   * @returns true, once the endpoint has answered.
+   */
   async function login(req, res, url, secure) {
     const locale = selectLoginLocale(req)
     if (req.method !== 'POST') {
@@ -149,22 +190,38 @@ export function createAuth({
       return true
     }
     if (!String(req.headers['content-type'] ?? '').includes('application/json')) {
-      json(res, 415, { ok: false, error: loginErrorMessage(locale, 'contentType') })
-      return true
+      return refuse(locale, res, 415, 'contentType')
     }
     let body
     try {
       body = await readJson(req)
     } catch {
-      json(res, 400, { ok: false, error: loginErrorMessage(locale, 'invalidBody') })
-      return true
+      return refuse(locale, res, 400, 'invalidBody')
     }
-    // The stored hash is the only source of truth: it is the whole of the
-    // credential, and nothing else can be consulted. The pairing credential travels
-    // in `password`, so the shipped login form keeps working.
-    if (!(await pairing.verify(body.password ?? ''))) {
-      json(res, 401, { ok: false, error: loginErrorMessage(locale, 'invalid') })
-      return true
+    if (body === null || typeof body !== 'object') return refuse(locale, res, 400, 'invalidBody')
+
+    if (!pairing.configured) {
+      const submitted = body.password ?? ''
+      const problem = pairingCredentialProblem(submitted)
+      if (problem === 'empty') return refuse(locale, res, 400, 'empty')
+      if (problem === 'tooShort') {
+        return refuse(locale, res, 400, 'tooShort', { min: PAIRING_CREDENTIAL_MIN_LENGTH })
+      }
+      // The confirmation is the form's guard against a typo locking the operator out.
+      // It is checked here too, because a request that skips the page is not a reason
+      // to accept one entry as if it had been typed twice.
+      if (submitted !== (body.confirm ?? '')) return refuse(locale, res, 400, 'mismatch')
+      try {
+        await pairing.set(submitted)
+      } catch (error) {
+        logger?.warn?.(`daemon: could not write the pairing credential: ${error.message}`)
+        return refuse(locale, res, 500, 'setupFailed')
+      }
+    } else if (!(await pairing.verify(body.password ?? ''))) {
+      // The stored hash is the only source of truth: it is the whole of the
+      // credential, and nothing else can be consulted. The pairing credential travels
+      // in `password`, so the shipped login form keeps working.
+      return refuse(locale, res, 401, 'invalid')
     }
 
     const record = store.create({
@@ -219,9 +276,18 @@ export function createAuth({
         current: session.current,
       }))
     },
-    /** Render the login page for a request that has no session. */
+    /**
+     * Render the login page for a request that has no session.
+     *
+     * The page's shape is decided here and nowhere else: `pairing.configured` is
+     * "does the credential file exist", so the setup form appears exactly while it
+     * does not. There is no other marker and no stored flag — a deleted file and a
+     * fresh install are deliberately the same state.
+     */
     loginPage(req) {
-      return renderLoginPage(realm, selectLoginLocale(req), req.url ?? '/', rootPrefix)
+      return renderLoginPage(realm, selectLoginLocale(req), req.url ?? '/', rootPrefix, {
+        setup: !pairing.configured,
+      })
     },
   }
 }
