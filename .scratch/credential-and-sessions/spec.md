@@ -1,6 +1,6 @@
 # 配对凭据自助管理与联邦会话总览
 
-Status: ready-for-agent
+Status: done
 
 ## Problem Statement
 
