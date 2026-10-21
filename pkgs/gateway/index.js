@@ -288,8 +288,13 @@ export function apply(ctx, config) {
     // asking before the request got here.
     const routed = path.slice(1).split('/')[0]
     if (routed !== '' && registry.find(routed) !== undefined) return false
+    // Kept outside the gate so `/admin` can tell which session is asking: the session
+    // overview marks that row `current`, and without it the panel cannot tell the
+    // operator's own browser apart from any other. Undefined means nothing
+    // authenticated this request — a tunnel-authenticated call is nobody's session.
+    let record
     if (sessionRequired(path)) {
-      const record = auth.session(req, secure, res)
+      record = auth.session(req, secure, res)
       if (record === undefined) {
         if (path.startsWith('/api/')) {
           res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
@@ -302,7 +307,7 @@ export function apply(ctx, config) {
       }
     }
     if (daemonPath === '/admin' || daemonPath.startsWith('/admin/')) {
-      return await admin(req, res, `${daemonPath}${search}`)
+      return await admin(req, res, `${daemonPath}${search}`, record?.id)
     }
     return false
   }
@@ -491,6 +496,10 @@ export function apply(ctx, config) {
     readModel,
     readModelRows,
     writeModel,
+    // The session view belongs to the auth layer, which owns the records; `/admin` only
+    // aggregates it with what the other nodes answer. Wrapped rather than passed by
+    // reference so the method keeps its own `this`-free closure contract.
+    sessions: (currentId) => auth.sessions(currentId),
     logger,
   })
 

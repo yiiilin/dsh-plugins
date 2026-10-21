@@ -14,8 +14,25 @@ import { deriveId, freshToken, normalizeEnvironment } from './registry.js'
 /** How long a tunnel status stays cached, so a panel refresh is not a probe storm. */
 const STATUS_TTL_MS = 5_000
 
+/**
+ * How long one relayed question may take before it is reported as timed out.
+ *
+ * Long enough that a busy edge still answers, short enough that a hung one stops being
+ * the table's problem. Injectable so a test can make the same question fail quickly.
+ */
+const RELAY_TIMEOUT_MS = 30_000
+
+/**
+ * The id the session overview gives this node's own sessions.
+ *
+ * `self` is a reserved environment id, so no registered environment can be mistaken for
+ * the node the panel is being read on: the id alone answers "which node".
+ */
+const SELF_NODE_ID = 'self'
+
 export function createAdmin({
-  registry, hub, config, profileSelf, inventory, readModel, readModelRows, writeModel, logger,
+  registry, hub, config, profileSelf, inventory, readModel, readModelRows, writeModel, sessions, logger,
+  relayTimeoutMs = RELAY_TIMEOUT_MS,
 }) {
   /** id -> `{ at, value }` for the last known connection state. */
   const statusCache = new Map()
@@ -48,9 +65,72 @@ export function createAdmin({
     }
   }
 
-  return async function admin(req, res, url) {
+  /**
+   * Ask one environment for the sessions it holds, over its tunnel.
+   *
+   * Never throws and never omits the node: a machine that is offline, slow or broken is
+   * still a row in the answer, saying which of those it is. Dropping it would make an
+   * unreachable node look like a node with nothing on it — the one reading this view
+   * exists to prevent.
+   *
+   * @param environment - the registry record to ask.
+   * @returns one node envelope; `sessions` is present only when the node answered.
+   */
+  async function askNode(environment) {
+    const node = { id: environment.id, role: 'edge', label: environment.label }
+    if (!hub.isOnline(environment.id)) {
+      return { ...node, state: 'offline', error: `environment "${environment.id}" is offline` }
+    }
+    // The same read-only route this process answers, reached the way every other
+    // environment call is: one HTTP request into the tunnel, with its own timeout.
+    const answer = await relay(
+      hub,
+      environment.id,
+      { method: 'GET', path: '/admin/sessions', headers: {} },
+      relayTimeoutMs,
+    )
+    if (answer?.timeout === true) return { ...node, state: 'timeout', error: answer.error }
+    if (answer?.ok !== true) {
+      return { ...node, state: 'error', error: String(answer?.error ?? 'the environment answered nothing') }
+    }
+    // The edge answers the same envelope for itself, tagged `self` there. That tag is
+    // local to the edge, so the entry is retagged with the id and label this registry
+    // knows it by — the panel must name the node the way the environment list does.
+    const own = Array.isArray(answer.nodes)
+      ? answer.nodes.find((entry) => entry.id === SELF_NODE_ID)
+      : undefined
+    if (own === undefined || !Array.isArray(own.sessions)) {
+      return { ...node, state: 'error', error: 'the environment answered without its own sessions' }
+    }
+    return { ...node, state: 'ok', sessions: own.sessions }
+  }
+
+  /**
+   * Every node's live sessions, grouped by the node they are on.
+   *
+   * A per-node envelope rather than one flat list: an offline node has to stay visible
+   * *as a node*, and a flat list could only express its absence as "no rows", which
+   * reads exactly like a node nobody is signed in on.
+   *
+   * The environments are asked in parallel and none of them is awaited in turn, so the
+   * table costs one relay timeout in the worst case, not one per unreachable machine.
+   *
+   * @param sessionId - the session asking, marked `current` on this node.
+   * @returns `{ ok, partial, nodes }`; `partial` is true when any node did not answer.
+   */
+  async function overview(sessionId) {
+    const self = { id: SELF_NODE_ID, role: config.role, state: 'ok', sessions: sessions(sessionId) }
+    // An edge manages no environments, so its overview is itself: that is the answer the
+    // main node relays into the table, and it is also what an operator reading the edge
+    // directly should see.
+    if (config.role !== 'main') return { ok: true, partial: false, nodes: [self] }
+    const nodes = await Promise.all([self, ...registry.list().map(askNode)])
+    return { ok: true, partial: nodes.some((node) => node.state !== 'ok'), nodes }
+  }
+
+  return async function admin(req, res, url, sessionId) {
     try {
-      return await route(req, res, url)
+      return await route(req, res, url, sessionId)
     } catch (error) {
       logger.warn(`daemon: ${req.method} ${url} failed: ${error.message}`)
       if (!res.headersSent) {
@@ -62,7 +142,7 @@ export function createAdmin({
     }
   }
 
-  async function route(req, res, url) {
+  async function route(req, res, url, sessionId) {
     const method = req.method ?? 'GET'
     const pathname = url.split('?')[0]
 
@@ -96,6 +176,20 @@ export function createAdmin({
 
     if (pathname === '/admin/inventory' && method === 'GET') {
       json(res, 200, { ok: true, inventory: await inventory() })
+      return true
+    }
+
+    if (pathname === '/admin/sessions') {
+      // Read-only, and only read-only: there is no route that revokes a session, on this
+      // node or through a tunnel. Withdrawing someone else's session is a write across
+      // nodes and needs a rollback story this surface does not have.
+      if (method !== 'GET') {
+        json(res, 405, { ok: false, error: `${method} is not supported on ${pathname}: sessions are read-only` }, { allow: 'GET' })
+        return true
+      }
+      // Answered on both roles: an edge's answer is what the main node relays into its
+      // own table, and it is also what a session view read on the edge directly shows.
+      json(res, 200, await overview(sessionId))
       return true
     }
 
@@ -273,9 +367,11 @@ function askInventory(hub, envId) {
  * @param hub - the tunnel hub.
  * @param envId - the environment to reach.
  * @param request - `{ method, path, headers, body? }`; a body is JSON-encoded.
- * @returns the parsed JSON answer, or `{ ok: false, error }`.
+ * @param timeoutMs - how long to wait before giving up on the environment.
+ * @returns the parsed JSON answer, or `{ ok: false, error }`. A timeout is flagged
+ *   `{ ok: false, timeout: true }` so a caller can tell a slow node from a broken one.
  */
-function relay(hub, envId, request) {
+function relay(hub, envId, request, timeoutMs = RELAY_TIMEOUT_MS) {
   return new Promise((resolve) => {
     const settled = { done: false, body: '' }
     const finish = (value) => {
@@ -283,9 +379,12 @@ function relay(hub, envId, request) {
       settled.done = true
       resolve(value)
     }
-    const timer = setTimeout(() => finish({ ok: false, error: 'the environment did not answer in time' }), 30_000)
+    const timer = setTimeout(
+      () => finish({ ok: false, timeout: true, error: 'the environment did not answer in time' }),
+      timeoutMs,
+    )
     try {
-      hub.request(envId, {
+      const sent = hub.request(envId, {
         method: request.method,
         path: request.path,
         headers: { ...request.headers, 'x-dsh-federation': request.token ?? '' },
@@ -307,6 +406,12 @@ function relay(hub, envId, request) {
           finish({ ok: false, error: String(error?.message ?? error) })
         },
       })
+      // A refused send never reaches any handler, so waiting for the timeout would turn
+      // "this tunnel is already gone" into a 30-second wait for nothing.
+      if (sent === false) {
+        clearTimeout(timer)
+        finish({ ok: false, error: `environment "${envId}" is not connected` })
+      }
     } catch (error) {
       clearTimeout(timer)
       finish({ ok: false, error: String(error?.message ?? error) })
@@ -314,9 +419,13 @@ function relay(hub, envId, request) {
   })
 }
 
-function json(res, status, value) {
+function json(res, status, value, headers = {}) {
   const body = JSON.stringify(value)
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    ...headers,
+  })
   res.end(body)
 }
 
