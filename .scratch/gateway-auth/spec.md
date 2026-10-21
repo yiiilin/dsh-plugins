@@ -161,5 +161,7 @@ Status: ready-for-agent
   那是会话本身从未到达的截止点。续期阈值是动态的（已用时间的 1/3 等于原寿命的 1/4）。
 - ~~`pnpm-lock.yaml` 陈旧~~ **已解决**：重新生成后，8 个 importer 与磁盘上的包目录完全一致，
   `@simplewebauthn/server` 的残留也清掉了（净删 290 行）。
-- **历史文档仍提 passkey/TOTP**：`docs/changes/*` 与 `docs/verifications/*` 里还有引用。
-  它们是历史记录，不是当前说明。
+- ~~**历史文档仍提 passkey/TOTP**~~ **已处理**：`daemon-design.md` 的模块表与数据流图、
+  `federation-design.md` 的用户验证一行已改为当前模型。
+  `unified-entry-routing.md` 里那三处**保留原样**——它们讲的是已退役的 `auth-webserver` 包，
+  不是当前 gateway；改它会让历史记录失真。`docs/verifications/` 是验证快照，同理保留。
