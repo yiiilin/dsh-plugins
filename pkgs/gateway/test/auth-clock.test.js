@@ -8,15 +8,23 @@
  */
 
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { randomBytes, scryptSync } from 'node:crypto'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { PAIRING_CREDENTIAL_FILE } from '../lib/auth/pairing-credential.js'
 import { createAuth } from '../lib/auth/session.js'
 
 /** A fixed instant in the past, so the system clock can never be mistaken for it. */
 const FIXED_NOW = 1_600_000_000_000
+
+/** The credential the seeded record stands for. */
+const CREDENTIAL = 'pairing credential 8d1f'
+
+/** A cheap work factor, so writing a record per test stays fast. */
+const CHEAP = Object.freeze({ N: 1024, r: 8, p: 1, keylen: 32 })
 
 /**
  * Answer every request with the authentication layer.
@@ -85,6 +93,27 @@ async function temporaryDirectory() {
   return await mkdtemp(join(tmpdir(), 'dsh-gateway-clock-'))
 }
 
+/**
+ * Seed the auth directory with the record for {@link CREDENTIAL}.
+ *
+ * The credential comes from the file alone, so every test that signs in has to
+ * write one; the record carries its own cheap scrypt parameters.
+ */
+async function writeCredential(directory) {
+  const salt = randomBytes(16)
+  const hash = scryptSync(CREDENTIAL, salt, CHEAP.keylen, { ...CHEAP, maxmem: 64 * 1024 * 1024 })
+  await writeFile(join(directory, PAIRING_CREDENTIAL_FILE), `${JSON.stringify({
+    version: 1,
+    credential: {
+      kdf: 'scrypt',
+      salt: salt.toString('base64url'),
+      hash: hash.toString('base64url'),
+      ...CHEAP,
+      createdAt: FIXED_NOW,
+    },
+  })}\n`, { mode: 0o600 })
+}
+
 // --- the injected clock ------------------------------------------------------
 
 test('a session carries the timestamp of the injected clock', async () => {
@@ -92,16 +121,16 @@ test('a session carries the timestamp of the injected clock', async () => {
   // answer. If it never reaches the store, every deadline falls back to the wall
   // clock and the test has to sleep instead.
   const directory = await temporaryDirectory()
+  await writeCredential(directory)
   const auth = createAuth({
     directory,
-    password: 'secret',
     sessionMaxAgeSeconds: 3600,
     sessionIdleSeconds: 60,
     now: () => FIXED_NOW,
   })
   const { server, origin } = await startAuthServer(auth)
   try {
-    const { issuedAt } = sessionValue(await login(origin, 'secret'))
+    const { issuedAt } = sessionValue(await login(origin, CREDENTIAL))
     assert.equal(issuedAt, FIXED_NOW, 'the session is stamped with the injected clock')
     assert.ok(
       Math.abs(Date.now() - issuedAt) > 60_000,
@@ -118,17 +147,17 @@ test('a session stops being accepted once the injected clock passes its idle tim
   // session that outlives its idle timeout is refused even though the wall clock
   // has barely moved.
   const directory = await temporaryDirectory()
+  await writeCredential(directory)
   let now = FIXED_NOW
   const auth = createAuth({
     directory,
-    password: 'secret',
     sessionMaxAgeSeconds: 3600,
     sessionIdleSeconds: 60,
     now: () => now,
   })
   const { server, origin } = await startAuthServer(auth)
   try {
-    const value = sessionValue(await login(origin, 'secret'))
+    const value = sessionValue(await login(origin, CREDENTIAL))
     const fresh = await authState(origin, `${value.id}.${value.issuedAt}`)
     assert.equal(fresh.authenticated, true, 'the fresh session is accepted')
 
@@ -145,11 +174,12 @@ test('without an injected clock a session is stamped with the system time', asyn
   // The default has to stay what it always was: a deployment that says nothing
   // about time gets the wall clock.
   const directory = await temporaryDirectory()
-  const auth = createAuth({ directory, password: 'secret' })
+  await writeCredential(directory)
+  const auth = createAuth({ directory })
   const { server, origin } = await startAuthServer(auth)
   try {
     const before = Date.now()
-    const { issuedAt } = sessionValue(await login(origin, 'secret'))
+    const { issuedAt } = sessionValue(await login(origin, CREDENTIAL))
     const after = Date.now()
     assert.ok(
       issuedAt >= before && issuedAt <= after,

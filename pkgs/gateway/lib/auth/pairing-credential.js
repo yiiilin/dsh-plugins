@@ -2,22 +2,26 @@
  * The pairing credential: the one password that binds a browser to this machine.
  *
  * The password itself is never written down. What reaches the disk is a scrypt
- * hash and its salt, in `pairing.json` beside the session store:
- * the first start hashes the configured password and writes the file, and every
- * start after that reads the file alone. A configured password is therefore a
- * seed, not a login fallback — leaving `DSH_AUTH_PASS` in the environment does
- * not keep a plaintext copy alive on disk, and a corrupt file stops the mount
- * instead of being tolerated.
+ * hash and its salt, in `pairing.json` beside the session store, and that file is
+ * the only source of truth: nothing seeds it, nothing supplies a fallback, and the
+ * operator's copy of the password exists only in their head. There is therefore no
+ * plaintext credential anywhere in the system — not in the profile, not in the
+ * launch environment, not in a log line.
+ *
+ * A corrupt file stops the mount instead of being tolerated: a gateway that starts
+ * with an unusable credential serves a login page nobody can pass.
  *
  * The record carries its own scrypt parameters, so a deployment that was paired
  * with a weaker (or a newer) work factor keeps working: verification uses the
- * numbers in the file, never the defaults in this module.
+ * numbers in the file and never a default of its own. That is also why this class
+ * has no write path — it reads and verifies, and whatever creates a credential
+ * decides the parameters it is created with.
  *
  * @module @yiln-dsh/dsh-gateway/auth/pairing-credential
  */
 
-import { randomBytes, scrypt, scryptSync, timingSafeEqual } from 'node:crypto'
-import { chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { scrypt, timingSafeEqual } from 'node:crypto'
+import { chmodSync, lstatSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 /** Version of the credential file this module writes and accepts. */
@@ -32,10 +36,6 @@ export const PAIRING_CREDENTIAL_VERSION = 1
  */
 export const PAIRING_CREDENTIAL_FILE = 'pairing.json'
 
-/** Bytes of salt in a bootstrapped record. */
-const SALT_BYTES = 16
-/** Work factor for a newly bootstrapped credential: ~16 MiB and ~30-100 ms per check. */
-const DEFAULT_SCRYPT = Object.freeze({ N: 16384, r: 8, p: 1, keylen: 64 })
 /** Ceiling on the memory one verification may reserve; also bounds a corrupt record. */
 const SCRYPT_MAX_MEM_BYTES = 256 * 1024 * 1024
 /** Largest N a record may name. */
@@ -90,26 +90,12 @@ function normalizeCredential(value) {
   }
 }
 
-/** The on-disk form of one record: buffers back to base64url text. */
-function serializeCredential(record) {
-  return {
-    kdf: record.kdf,
-    salt: record.salt.toString('base64url'),
-    hash: record.hash.toString('base64url'),
-    N: record.N,
-    r: record.r,
-    p: record.p,
-    keylen: record.keylen,
-    createdAt: record.createdAt,
-  }
-}
-
 /**
  * Derive the key for a submitted credential.
  *
  * Callback-based `scrypt` wrapped in an explicit promise: this runs on the request
  * path, and a synchronous derivation there would block the listener for its whole
- * duration. `scryptSync` is used only once, when the file is first written.
+ * duration.
  */
 function derive(submitted, record) {
   return new Promise((resolve, reject) => {
@@ -129,37 +115,29 @@ function derive(submitted, record) {
 /**
  * Owner-only pairing credential, loaded from `pairing.json` at construction.
  *
- * Construction is the startup path: a missing file with no password, an
- * unreadable file and a corrupt file all throw here, so the plugin fails to mount
- * rather than serving a login page nobody can pass.
+ * Construction is the startup path: a missing file, an unreadable file and a
+ * corrupt file all throw here, so the plugin fails to mount rather than serving a
+ * login page nobody can pass. Nothing seeds the file: the credential is written by
+ * whatever creates it, and this class only ever reads it back.
  */
 export class PairingCredential {
   #directory
   #file
   #record
-  #now
-  #logger
 
   /**
-   * @param options - where the credential lives and what may seed it.
+   * @param options - where the credential lives.
    * @param options.directory - auth directory; the file is `pairing.json` in it.
-   * @param options.password - seed for a missing file. Ignored once the file exists.
-   * @param options.now - clock used for the record's `createdAt`.
-   * @param options.logger - diagnostic sink.
    */
-  constructor({ directory, password = '', now = () => Date.now(), logger } = {}) {
+  constructor({ directory } = {}) {
     if (typeof directory !== 'string' || directory === '') throw new Error('pairing credential store directory is required')
     this.#directory = directory
     this.#file = join(directory, PAIRING_CREDENTIAL_FILE)
-    this.#now = now
-    this.#logger = logger
-    if (this.#load()) return
-    if (typeof password !== 'string' || password === '') {
+    if (!this.#load()) {
       throw new Error(
-        `daemon: the pairing credential file is missing at ${this.#file} and no password is configured (config.password or DSH_AUTH_PASS) to create it`,
+        `daemon: the pairing credential file is missing at ${this.#file}; the credential comes from that file alone and is never seeded from configuration or the environment`,
       )
     }
-    this.#bootstrap(password)
   }
 
   /**
@@ -199,38 +177,6 @@ export class PairingCredential {
     }
     this.#record = record
     return true
-  }
-
-  /** Hash a configured password once and write the credential file. */
-  #bootstrap(password) {
-    const salt = randomBytes(SALT_BYTES)
-    const hash = scryptSync(password, salt, DEFAULT_SCRYPT.keylen, { ...DEFAULT_SCRYPT, maxmem: SCRYPT_MAX_MEM_BYTES })
-    this.#record = { kdf: 'scrypt', salt, hash, ...DEFAULT_SCRYPT, createdAt: this.#now() }
-    this.#persist()
-    this.#logger?.info?.(`daemon: wrote the pairing credential to ${this.#file}`)
-  }
-
-  /** Atomically write the credential file with owner-only permissions. */
-  #persist() {
-    const temporary = `${this.#file}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
-    try {
-      mkdirSync(this.#directory, { recursive: true, mode: 0o700 })
-      chmodSync(this.#directory, 0o700)
-      writeFileSync(temporary, `${JSON.stringify({ version: PAIRING_CREDENTIAL_VERSION, credential: serializeCredential(this.#record) })}\n`, {
-        encoding: 'utf8',
-        mode: 0o600,
-      })
-      chmodSync(temporary, 0o600)
-      renameSync(temporary, this.#file)
-      chmodSync(this.#file, 0o600)
-    } catch (error) {
-      try {
-        unlinkSync(temporary)
-      } catch {
-        // Best-effort cleanup after an interrupted atomic write.
-      }
-      throw new Error(`daemon: the pairing credential file at ${this.#file} could not be written: ${error.message}`, { cause: error })
-    }
   }
 
   /**

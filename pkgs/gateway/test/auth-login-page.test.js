@@ -98,7 +98,8 @@ test('the login page has exactly one input and no passkey affordance', async () 
   // the operator has to maintain, and a passkey button would be a path with no
   // implementation behind it.
   const directory = await temporaryDirectory()
-  const auth = createAuth({ directory, password: CREDENTIAL })
+  await writeCredential(directory, CREDENTIAL)
+  const auth = createAuth({ directory })
   try {
     for (const locale of ['en', 'zh']) {
       const html = auth.loginPage(loginPageRequest({ 'accept-language': locale }, '/'))
@@ -122,7 +123,8 @@ test('the page renders in both Chinese and English', async () => {
   // a locale that lost its strings would fall back silently and be noticed by
   // nobody until a user saw English on a Chinese deployment.
   const directory = await temporaryDirectory()
-  const auth = createAuth({ directory, password: CREDENTIAL })
+  await writeCredential(directory, CREDENTIAL)
+  const auth = createAuth({ directory })
   try {
     const zh = auth.loginPage(loginPageRequest({ 'accept-language': 'zh-CN,zh;q=0.9' }, '/?lang=zh'))
     assert.match(zh, /<html lang="zh-CN">/u, 'the Chinese dictionary declares a Chinese document')
@@ -149,7 +151,8 @@ test('the page renders in both Chinese and English', async () => {
 
 test('the correct pairing credential buys a session and a wrong one does not', async () => {
   const directory = await temporaryDirectory()
-  const auth = createAuth({ directory, password: CREDENTIAL })
+  await writeCredential(directory, CREDENTIAL)
+  const auth = createAuth({ directory })
   const { server, origin } = await startAuthServer(auth)
   try {
     const accepted = await attemptLogin(origin, { password: CREDENTIAL })
@@ -185,7 +188,8 @@ test('a browser with no session is served the login page instead of a credential
   // The "no credential" case from the ticket's list: nobody signed in yet, so the
   // page is served. It is the state every first visit is in.
   const directory = await temporaryDirectory()
-  const auth = createAuth({ directory, password: CREDENTIAL })
+  await writeCredential(directory, CREDENTIAL)
+  const auth = createAuth({ directory })
   const { server, origin } = await startAuthServer(auth)
   try {
     const state = await fetch(`${origin}/api/auth.state`)
@@ -214,7 +218,8 @@ test('a refused pairing credential explains itself in both languages', async () 
   // language has to be right. A refusal that repeats the form's default copy
   // would still be true, but the operator would not know which locale they got.
   const directory = await temporaryDirectory()
-  const auth = createAuth({ directory, password: CREDENTIAL })
+  await writeCredential(directory, CREDENTIAL)
+  const auth = createAuth({ directory })
   const { server, origin } = await startAuthServer(auth)
   try {
     const en = await attemptLogin(origin, { password: 'wrong' }, '/api/auth.login?lang=en')
@@ -235,12 +240,12 @@ test('a refused pairing credential explains itself in both languages', async () 
   }
 })
 
-test('a credential written to pairing.json is what the page accepts, not the configured seed', async () => {
-  // The file is the only source of truth. A page tested against the seed alone
+test('a credential written to pairing.json is what the page accepts, and nothing else is', async () => {
+  // The file is the only source of truth. A page tested against a configured value
   // would pass even if the request path never consulted the store.
   const directory = await temporaryDirectory()
   await writeCredential(directory, CREDENTIAL)
-  const auth = createAuth({ directory, password: '', sessionMaxAgeSeconds: 3600, sessionIdleSeconds: 60 })
+  const auth = createAuth({ directory, sessionMaxAgeSeconds: 3600, sessionIdleSeconds: 60 })
   const { server, origin } = await startAuthServer(auth)
   try {
     assert.equal((await attemptLogin(origin, { password: CREDENTIAL })).status, 200, 'the stored record is accepted')

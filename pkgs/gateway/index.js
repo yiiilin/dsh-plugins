@@ -61,8 +61,8 @@ export const Config = z.object({
   homeDir: z.string().default(''),
   cacheDir: z.string().default(''),
 
-  /** Login for this daemon's own listener, independent of every other node. */
-  password: z.string().default(''),
+  /** Realm shown on the login page. There is no password key: the credential lives
+   * in `daemon/auth/pairing.json` and nowhere else — see `retiredKeys` below. */
   realm: z.string().default('dsh-daemon'),
   sessionMaxAgeSeconds: z.natural().default(2_592_000),
   sessionIdleSeconds: z.natural().default(0),
@@ -172,27 +172,38 @@ export function apply(ctx, config) {
     }
   }
 
-  // A seed for the pairing credential, never a live credential: on the first start
-  // it is hashed into `daemon/auth/pairing.json`, and every start after that reads
-  // the file alone. Keeping it out of the login path is what lets the operator drop
-  // the plaintext from the launch environment afterwards.
-  const password = config.password !== ''
-    ? config.password
-    : process.env.DSH_AUTH_PASS ?? process.env.AUTH_PASS ?? ''
-  // The credential model is one pairing credential now. These keys belonged to the
-  // retired model; a profile that still sets them is not an error — schemastery
-  // merges unknown keys rather than rejecting them — but ignoring them in silence
-  // would let a deployment believe a second factor is still being enforced.
+  // The credential model is one pairing credential, and it comes from exactly one
+  // place: the scrypt hash in `daemon/auth/pairing.json`. There is no configured seed
+  // and no environment fallback, so no plaintext copy of the credential exists at all —
+  // not in the profile, not in the launch environment, not in a log line.
+  //
+  // The keys and variables below belonged to models that no longer exist, `password`
+  // and `DSH_AUTH_PASS`/`AUTH_PASS` among them: they used to hash themselves into the
+  // file on the first start. A profile that still sets them is not an error —
+  // schemastery merges unknown keys rather than rejecting them — but ignoring them in
+  // silence would let a deployment believe they still decide who can log in.
+  //
+  // The retired model keys are reported when present at all; the two password forms
+  // are reported only when non-empty, because the old semantics were "empty means not
+  // configured". The shipped patch used to carry `password: ''`, so warning on the
+  // empty value would raise a false alarm on every deployment that ever ran a default
+  // install and teach operators to ignore the one message that matters.
   const retiredKeys = ['username', 'twoFactorEnabled', 'totpSecret', 'passkeyOrigin', 'passkeyRpId']
-  const stillConfigured = retiredKeys.filter((key) => Object.hasOwn(config, key))
+  const retiredEnvironmentKeys = ['DSH_AUTH_PASS', 'AUTH_PASS']
+  const stillConfigured = [
+    ...retiredKeys.filter((key) => Object.hasOwn(config, key)),
+    ...['password', ...retiredEnvironmentKeys].filter((key) => {
+      const value = key === 'password' ? config.password : process.env[key]
+      return typeof value === 'string' && value !== ''
+    }),
+  ]
   if (stillConfigured.length > 0) {
     logger.warn?.(
-      `daemon: ignoring ${stillConfigured.join(', ')} — the login model is one pairing credential now, and these no longer do anything`,
+      `daemon: ignoring ${stillConfigured.join(', ')} — the login model is one pairing credential read from daemon/auth/pairing.json, and these no longer do anything`,
     )
   }
   const auth = createAuth({
     directory: join(homeDir, 'daemon', 'auth'),
-    password,
     realm: config.realm,
     sessionMaxAgeSeconds: config.sessionMaxAgeSeconds,
     sessionIdleSeconds: config.sessionIdleSeconds,

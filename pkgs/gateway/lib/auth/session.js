@@ -5,11 +5,16 @@
  * surface also carried a mobile preview, a settings editor and a paired-client
  * list; none of those answer "who may reach this origin", so they are not here.
  *
- * There is exactly one way in — the pairing credential in `pairing.json` — and
- * exactly one thing it buys: a session cookie. Sessions are minted under an
- * authentication epoch (`SESSION_AUTH_EPOCH` in the store), so changing the way in
- * invalidates the cookies the previous model handed out instead of leaving them to
- * stand for a credential that no longer exists.
+ * There is exactly one way in — the pairing credential in `pairing.json`, read from
+ * that file and nowhere else — and exactly one thing it buys: a session cookie.
+ * Sessions are minted under an authentication epoch (`SESSION_AUTH_EPOCH` in the
+ * store), so changing the way in invalidates the cookies the previous model handed
+ * out instead of leaving them to stand for a credential that no longer exists.
+ *
+ * The layer also reports which sessions exist ({@link createAuth} returns
+ * `sessions`): "who is signed in" is a question about authentication, and the store
+ * already holds the answer. The view is read-only — revoking a session is a write
+ * across nodes and is not part of this surface.
  *
  * Wire format matches the shipped login page: it posts JSON to `/api/auth.login`
  * and reloads on `{ ok: true }`, so a failure is JSON too — never a rendered
@@ -33,10 +38,8 @@ const SECURE_COOKIE_NAME = '__Host-dsh_daemon_session'
 /**
  * Build the authentication layer.
  *
- * @param options - credentials, storage location and cookie policy.
+ * @param options - credential storage location and cookie policy.
  * @param options.directory - directory holding the session and pairing stores.
- * @param options.password - seeds the pairing credential file when it does not exist
- *   yet; ignored once it does. Empty and no file is a startup error.
  * @param options.realm - realm shown on the login page.
  * @param options.sessionMaxAgeSeconds - absolute session lifetime.
  * @param options.sessionIdleSeconds - idle timeout.
@@ -51,7 +54,6 @@ const SECURE_COOKIE_NAME = '__Host-dsh_daemon_session'
  */
 export function createAuth({
   directory,
-  password,
   realm,
   sessionMaxAgeSeconds = 2_592_000,
   sessionIdleSeconds = 604_800,
@@ -59,11 +61,11 @@ export function createAuth({
   rootPrefix = '',
   logger,
 }) {
-  // First, before any store opens: the pairing credential is read (or bootstrapped
-  // from `password`) here, so a missing or corrupt file stops the mount instead of
-  // surfacing at the first login attempt.
-  const pairing = new PairingCredential({ directory, password, now, logger })
-  const sessions = new SessionStore({
+  // First, before any store opens: the pairing credential is read here, so a
+  // missing or corrupt file stops the mount instead of surfacing at the first login
+  // attempt. Nothing seeds it — the file is the only source of the credential.
+  const pairing = new PairingCredential({ directory })
+  const store = new SessionStore({
     directory,
     maxAgeSeconds: sessionMaxAgeSeconds,
     idleTimeoutSeconds: sessionIdleSeconds,
@@ -100,10 +102,10 @@ export function createAuth({
     const id = value.slice(0, at)
     const issuedAt = Number(value.slice(at + 1))
     if (!Number.isSafeInteger(issuedAt)) return undefined
-    const record = sessions.touch(id, issuedAt)
+    const record = store.touch(id, issuedAt)
     if (record === null) return undefined
-    if (res !== undefined && sessions.cookieRenewalDue(record)) {
-      sessions.markCookieRenewed(record)
+    if (res !== undefined && store.cookieRenewalDue(record)) {
+      store.markCookieRenewed(record)
       res.setHeader?.('set-cookie', sessionCookie(record, secure))
     }
     return record
@@ -123,7 +125,7 @@ export function createAuth({
     if (path === '/api/auth.login') return await login(req, res, url, secure)
     if (path === '/api/auth.logout') {
       const record = session(req, secure)
-      if (record !== undefined) sessions.revoke(record.id)
+      if (record !== undefined) store.revoke(record.id)
       res.writeHead(303, { location: '/', 'set-cookie': [clearCookie(secure)], 'cache-control': 'no-store' })
       res.end()
       return true
@@ -157,15 +159,15 @@ export function createAuth({
       json(res, 400, { ok: false, error: loginErrorMessage(locale, 'invalidBody') })
       return true
     }
-    // The stored hash is the only source of truth: the configured password seeded
-    // the file once and is not consulted again. The pairing credential travels in
-    // `password`, so the shipped login form keeps working.
+    // The stored hash is the only source of truth: it is the whole of the
+    // credential, and nothing else can be consulted. The pairing credential travels
+    // in `password`, so the shipped login form keeps working.
     if (!(await pairing.verify(body.password ?? ''))) {
       json(res, 401, { ok: false, error: loginErrorMessage(locale, 'invalid') })
       return true
     }
 
-    const record = sessions.create({
+    const record = store.create({
       address: req.socket.remoteAddress,
       userAgent: req.headers['user-agent'],
       secure,
@@ -176,7 +178,7 @@ export function createAuth({
 
   function sessionCookie(record, secure) {
     const name = secure ? SECURE_COOKIE_NAME : COOKIE_NAME
-    return `${name}=${record.id}.${record.issuedAt}; Path=/; Max-Age=${sessions.cookieLifetimeSeconds(record)}; HttpOnly; SameSite=Strict${secure ? '; Secure' : ''}`
+    return `${name}=${record.id}.${record.issuedAt}; Path=/; Max-Age=${store.cookieLifetimeSeconds(record)}; HttpOnly; SameSite=Strict${secure ? '; Secure' : ''}`
   }
 
   function clearCookie(secure) {
@@ -187,6 +189,36 @@ export function createAuth({
   return {
     handle,
     session,
+    /**
+     * Every live session on this node, as a display-ready projection.
+     *
+     * A session is what "who is signed in" means, so answering that question is the
+     * auth layer's job rather than a caller's: the store already keeps the records
+     * and knows which of them have expired, and its projection is exactly the field
+     * set a panel needs — `id`, `address`, `userAgent`, `issuedAt`, `lastSeenAt`,
+     * `expiresAt` and `current`.
+     *
+     * Read-only by construction: the returned value is a fresh array of plain objects
+     * copied out of the store, so a caller cannot reach a live record, cannot revoke
+     * one, and cannot mutate the store through what it was given. Expired sessions are
+     * dropped by the store before the projection is built, so a vanished session is
+     * absent rather than listed with a deadline in the past.
+     *
+     * @param currentId - id of the session asking, marked `current: true` in the
+     *   result. Omit when the question comes from something that is not a session.
+     * @returns one entry per live session, most recently active first.
+     */
+    sessions(currentId) {
+      return store.list(currentId).map((session) => ({
+        id: session.id,
+        address: session.address,
+        userAgent: session.userAgent,
+        issuedAt: session.issuedAt,
+        lastSeenAt: session.lastSeenAt,
+        expiresAt: session.expiresAt,
+        current: session.current,
+      }))
+    },
     /** Render the login page for a request that has no session. */
     loginPage(req) {
       return renderLoginPage(realm, selectLoginLocale(req), req.url ?? '/', rootPrefix)

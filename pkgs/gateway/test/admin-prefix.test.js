@@ -32,7 +32,7 @@ async function temporaryHome() {
   return await mkdtemp(join(tmpdir(), 'dsh-gateway-admin-'))
 }
 
-/** Seed `daemon/auth/pairing.json` so mounting needs no configured password. */
+/** Seed `daemon/auth/pairing.json`, which is now the only source of the credential. */
 async function seedCredential(home) {
   const directory = join(home, 'daemon', 'auth')
   await mkdir(directory, { recursive: true, mode: 0o700 })
@@ -87,7 +87,6 @@ async function startDaemon(home, config = {}) {
     systemdUnit: '',
     role: 'main',
     profile: '',
-    password: '',
     ...config,
   })
   const port = await listening
@@ -243,7 +242,6 @@ test('a profile still carrying the retired credential keys is told they do nothi
       systemdUnit: '',
       role: 'main',
       profile: '',
-      password: '',
       rootPrefix: 'main',
       twoFactorEnabled: true,
       passkeyOrigin: 'https://example.test',

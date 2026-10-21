@@ -26,7 +26,7 @@
         # Empty hides the panel's restart control. Name this deployment's own unit to
         # enable it; a guess would restart the wrong service.
         selfUnit: ''
-        # Login for this listener. The password seeds daemon/auth/pairing.json on the
-        # first start (DSH_AUTH_PASS / AUTH_PASS do the same); after that the hashed
-        # file is the only source of truth and the plaintext can be removed.
-        password: ''
+        # There is no password here. The credential is the scrypt hash in
+        # daemon/auth/pairing.json and nothing else: it is never seeded from this
+        # profile or from DSH_AUTH_PASS. Setting either is reported at mount as having
+        # no effect.

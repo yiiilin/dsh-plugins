@@ -10,16 +10,24 @@
  */
 
 import assert from 'node:assert/strict'
+import { randomBytes, scryptSync } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { PAIRING_CREDENTIAL_FILE } from '../lib/auth/pairing-credential.js'
 import { createAuth } from '../lib/auth/session.js'
 import { SessionStore } from '../lib/auth/session-store.js'
 
 /** A fixed instant in the past, so the system clock can never be mistaken for it. */
 const FIXED_NOW = 1_600_000_000_000
+
+/** The credential the seeded record stands for. */
+const CREDENTIAL = 'pairing credential 2e6b'
+
+/** A cheap work factor, so writing a record per test stays fast. */
+const CHEAP = Object.freeze({ N: 1024, r: 8, p: 1, keylen: 32 })
 
 /**
  * A clock the test moves by hand.
@@ -41,6 +49,27 @@ function manualClock(start = FIXED_NOW) {
 /** A temporary store directory; the production path is never touched. */
 async function temporaryDirectory() {
   return await mkdtemp(join(tmpdir(), 'dsh-gateway-session-'))
+}
+
+/**
+ * Seed the auth directory with the record for {@link CREDENTIAL}.
+ *
+ * The credential layer reads the file and nothing else, so a test that signs in
+ * has to write one; the record carries its own cheap scrypt parameters.
+ */
+async function writeCredential(directory) {
+  const salt = randomBytes(16)
+  const hash = scryptSync(CREDENTIAL, salt, CHEAP.keylen, { ...CHEAP, maxmem: 64 * 1024 * 1024 })
+  await writeFile(join(directory, PAIRING_CREDENTIAL_FILE), `${JSON.stringify({
+    version: 1,
+    credential: {
+      kdf: 'scrypt',
+      salt: salt.toString('base64url'),
+      hash: hash.toString('base64url'),
+      ...CHEAP,
+      createdAt: FIXED_NOW,
+    },
+  })}\n`, { mode: 0o600 })
 }
 
 /** A store rooted in a temporary directory and reading the test's clock. */
@@ -508,17 +537,17 @@ async function authState(origin, cookieValue) {
 
 test('a request carrying a valid session cookie is accepted', async () => {
   const directory = await temporaryDirectory()
+  await writeCredential(directory)
   const clock = manualClock()
   const auth = createAuth({
     directory,
-    password: 'secret',
     sessionMaxAgeSeconds: 3600,
     sessionIdleSeconds: 60,
     now: clock.now,
   })
   const { server, origin } = await startAuthServer(auth)
   try {
-    const cookie = sessionValue(await login(origin, 'secret'))
+    const cookie = sessionValue(await login(origin, CREDENTIAL))
     const state = await authState(origin, cookie)
     assert.equal(state.ok, true)
     assert.equal(state.authenticated, true, 'the cookie the layer issued is recognised')
@@ -531,17 +560,17 @@ test('a request carrying a valid session cookie is accepted', async () => {
 
 test('a request carrying an invalid session cookie is refused', async () => {
   const directory = await temporaryDirectory()
+  await writeCredential(directory)
   const clock = manualClock()
   const auth = createAuth({
     directory,
-    password: 'secret',
     sessionMaxAgeSeconds: 3600,
     sessionIdleSeconds: 60,
     now: clock.now,
   })
   const { server, origin } = await startAuthServer(auth)
   try {
-    const cookie = sessionValue(await login(origin, 'secret'))
+    const cookie = sessionValue(await login(origin, CREDENTIAL))
     const at = cookie.indexOf('.')
     const id = cookie.slice(0, at)
     const issuedAt = Number(cookie.slice(at + 1))
@@ -564,10 +593,10 @@ test('a request carrying an invalid session cookie is refused', async () => {
 
 test('a request carrying a malformed session cookie is refused', async () => {
   const directory = await temporaryDirectory()
+  await writeCredential(directory)
   const clock = manualClock()
   const auth = createAuth({
     directory,
-    password: 'secret',
     sessionMaxAgeSeconds: 3600,
     sessionIdleSeconds: 60,
     now: clock.now,
@@ -576,7 +605,7 @@ test('a request carrying a malformed session cookie is refused', async () => {
   try {
     // Signed in, so a real session exists: the refusals below are about the
     // cookie's form, not about the store being empty.
-    const cookie = sessionValue(await login(origin, 'secret'))
+    const cookie = sessionValue(await login(origin, CREDENTIAL))
     const id = cookie.slice(0, cookie.indexOf('.'))
 
     const absent = await authState(origin, undefined)
@@ -607,10 +636,10 @@ test('a cookie minted before the credential model changed is refused on the next
   // a session minted under a credential that no longer exists must not keep it in
   // force.
   const directory = await temporaryDirectory()
+  await writeCredential(directory)
   const clock = manualClock()
   const options = {
     directory,
-    password: 'secret',
     sessionMaxAgeSeconds: 3600,
     sessionIdleSeconds: 60,
     now: clock.now,
@@ -619,7 +648,7 @@ test('a cookie minted before the credential model changed is refused on the next
   const started = await startAuthServer(first)
   let cookie
   try {
-    cookie = sessionValue(await login(started.origin, 'secret'))
+    cookie = sessionValue(await login(started.origin, CREDENTIAL))
     assert.equal((await authState(started.origin, cookie)).authenticated, true, 'the session works before the upgrade')
   } finally {
     await stopAuthServer(started.server)
@@ -634,7 +663,7 @@ test('a cookie minted before the credential model changed is refused on the next
       assert.equal((await authState(restarted.origin, cookie)).authenticated, false, 'the old cookie is refused')
       assert.equal((await authState(restarted.origin, cookie)).username, undefined, 'and it names no user')
 
-      const fresh = sessionValue(await login(restarted.origin, 'secret'))
+      const fresh = sessionValue(await login(restarted.origin, CREDENTIAL))
       assert.notEqual(fresh, cookie, 'the browser had to pair again')
       assert.equal((await authState(restarted.origin, fresh)).authenticated, true, 'and the new session is accepted')
     } finally {
@@ -652,17 +681,17 @@ test('a wrong issue time is refused without signing the real browser out', async
   // the real session by presenting it with a wrong timestamp — a denial of
   // service that needs no credential at all.
   const directory = await temporaryDirectory()
+  await writeCredential(directory)
   const clock = manualClock()
   const auth = createAuth({
     directory,
-    password: 'secret',
     sessionMaxAgeSeconds: 3600,
     sessionIdleSeconds: 60,
     now: clock.now,
   })
   const { server, origin } = await startAuthServer(auth)
   try {
-    const value = sessionValue(await login(origin, 'secret'))
+    const value = sessionValue(await login(origin, CREDENTIAL))
     const id = value.slice(0, value.indexOf('.'))
     const issuedAt = Number(value.slice(value.indexOf('.') + 1))
 
@@ -675,6 +704,205 @@ test('a wrong issue time is refused without signing the real browser out', async
 
     const survivor = await authState(origin, `${id}.${issuedAt}`)
     assert.equal(survivor.authenticated, true, 'the genuine cookie still works after the edited one was refused')
+  } finally {
+    await stopAuthServer(server)
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// --- the auth layer: the read-only session view ------------------------------
+
+/** Sign in twice, so there are two live sessions with their own clients. */
+async function loginTwice(origin) {
+  const first = sessionValue(await login(origin, CREDENTIAL))
+  const second = sessionValue(await login(origin, CREDENTIAL))
+  return { first, second }
+}
+
+/** The id half of a `<id>.<issuedAt>` cookie value. */
+function idOf(value) {
+  return value.slice(0, value.indexOf('.'))
+}
+
+test('the session view reports the fields display needs, and which session is asking', async () => {
+  // "Who is signed in" is a question about authentication, so the layer answers it.
+  // The field set is the display's: an operator reading the table needs to recognise
+  // the client, know when it signed in and when it goes away, and see which row is
+  // the browser they are looking at.
+  const directory = await temporaryDirectory()
+  await writeCredential(directory)
+  const clock = manualClock()
+  const auth = createAuth({
+    directory,
+    sessionMaxAgeSeconds: 3600,
+    sessionIdleSeconds: 60,
+    now: clock.now,
+  })
+  const { server, origin } = await startAuthServer(auth)
+  try {
+    const { first } = await loginTwice(origin)
+    const asking = idOf(first)
+
+    const list = auth.sessions(asking)
+    assert.equal(list.length, 2, 'both live sessions are reported')
+    const entry = list.find((session) => session.id === asking)
+    assert.ok(entry !== undefined, 'the asking session is one of them')
+
+    assert.deepEqual(
+      Object.keys(entry).sort(),
+      ['address', 'current', 'expiresAt', 'id', 'issuedAt', 'lastSeenAt', 'userAgent'],
+      `the view carries exactly the display fields, got ${Object.keys(entry).join(', ')}`,
+    )
+    assert.equal(entry.issuedAt, FIXED_NOW, 'the issue time comes from the store record')
+    assert.equal(entry.lastSeenAt, FIXED_NOW, 'so does the last-seen time')
+    assert.equal(entry.expiresAt, FIXED_NOW + 60_000, 'and the expiry the configured bounds earned')
+    assert.equal(typeof entry.address, 'string', 'the client address is readable')
+    assert.ok(entry.address.length > 0, 'and it is populated')
+    assert.equal(typeof entry.userAgent, 'string', 'the client type is readable')
+    assert.equal(entry.current, true, 'the asking session is marked as the current one')
+
+    const other = list.find((session) => session.id !== asking)
+    assert.equal(other.current, false, 'every other session is not current')
+    assert.equal(
+      list.filter((session) => session.current).length,
+      1,
+      'exactly one session is the one that asked',
+    )
+
+    // Asking as something that is not a session marks nothing, rather than guessing.
+    assert.equal(
+      auth.sessions().filter((session) => session.current).length,
+      0,
+      'an unidentified caller gets no current session',
+    )
+  } finally {
+    await stopAuthServer(server)
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('the session view holds no store-internal fields', async () => {
+  // `authEpoch` is the authentication-epoch marker: a storage detail that means
+  // nothing on screen. `username` and `secure` belong to the retired multi-user model
+  // and the cookie policy. A view that leaked them would tie the display to the
+  // record's shape, which is the coupling the projection exists to avoid.
+  const directory = await temporaryDirectory()
+  await writeCredential(directory)
+  const clock = manualClock()
+  const auth = createAuth({
+    directory,
+    sessionMaxAgeSeconds: 3600,
+    sessionIdleSeconds: 60,
+    now: clock.now,
+  })
+  const { server, origin } = await startAuthServer(auth)
+  try {
+    const { first } = await loginTwice(origin)
+    for (const session of auth.sessions(idOf(first))) {
+      for (const internal of ['authEpoch', 'username', 'secure', 'renewedAt']) {
+        assert.equal(
+          Object.hasOwn(session, internal),
+          false,
+          `the view must not expose the internal field "${internal}"`,
+        )
+      }
+    }
+  } finally {
+    await stopAuthServer(server)
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('an expired session does not appear in the session view', async () => {
+  // A vanished session listed with a deadline in the past is indistinguishable from a
+  // live one to a reader, and the point of the view is that what it shows is current.
+  const directory = await temporaryDirectory()
+  await writeCredential(directory)
+  const clock = manualClock()
+  const auth = createAuth({
+    directory,
+    sessionMaxAgeSeconds: 0,
+    sessionIdleSeconds: 60,
+    now: clock.now,
+  })
+  const { server, origin } = await startAuthServer(auth)
+  try {
+    const { first } = await loginTwice(origin)
+    assert.equal(auth.sessions(idOf(first)).length, 2, 'both are listed while they are live')
+
+    clock.set(FIXED_NOW + 120_000)
+    assert.deepEqual(auth.sessions(idOf(first)), [], 'once the idle window passes, neither is reported')
+  } finally {
+    await stopAuthServer(server)
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('a revoked session disappears from the view without touching the others', async () => {
+  const directory = await temporaryDirectory()
+  await writeCredential(directory)
+  const clock = manualClock()
+  const auth = createAuth({
+    directory,
+    sessionMaxAgeSeconds: 3600,
+    sessionIdleSeconds: 60,
+    now: clock.now,
+  })
+  const { server, origin } = await startAuthServer(auth)
+  try {
+    const { first, second } = await loginTwice(origin)
+    assert.equal(auth.sessions(idOf(first)).length, 2)
+
+    // Logging out is the only revocation this layer offers, and it is the layer's own
+    // endpoint rather than something the view hands out.
+    const response = await fetch(`${origin}/api/auth.logout`, {
+      method: 'POST',
+      headers: { cookie: `dsh_daemon_session=${second}` },
+      redirect: 'manual',
+    })
+    assert.equal(response.status, 303)
+
+    const remaining = auth.sessions(idOf(first))
+    assert.deepEqual(remaining.map((session) => session.id), [idOf(first)], 'only the signed-out session is gone')
+    assert.equal(remaining[0].current, true, 'and the survivor is still marked as the caller')
+  } finally {
+    await stopAuthServer(server)
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('the session view is read-only: what it returns cannot change the store', async () => {
+  // A view that handed out live records would be a way to edit or revoke one, which is
+  // the write path this round deliberately does not have. Mutating what the view
+  // returned must therefore be visible nowhere.
+  const directory = await temporaryDirectory()
+  await writeCredential(directory)
+  const clock = manualClock()
+  const auth = createAuth({
+    directory,
+    sessionMaxAgeSeconds: 3600,
+    sessionIdleSeconds: 60,
+    now: clock.now,
+  })
+  const { server, origin } = await startAuthServer(auth)
+  try {
+    const { first } = await loginTwice(origin)
+    const asking = idOf(first)
+    const before = auth.sessions(asking)
+
+    const view = auth.sessions(asking)
+    view[0].expiresAt = FIXED_NOW - 1
+    view[0].address = 'tampered'
+    view.push({ id: 'invented', current: true })
+    view.length = 1
+
+    assert.deepEqual(auth.sessions(asking), before, 'the store is unchanged by anything done to the returned value')
+    const record = auth.session(
+      { headers: { cookie: `dsh_daemon_session=${first}` }, socket: {} },
+      false,
+    )
+    assert.notEqual(record, undefined, 'the session still works')
+    assert.equal(record.address !== 'tampered', true, 'and no field was overwritten through the view')
   } finally {
     await stopAuthServer(server)
     await rm(directory, { recursive: true, force: true })
