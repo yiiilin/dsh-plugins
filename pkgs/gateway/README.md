@@ -26,7 +26,7 @@ refuses to mount rather than serve a login page nobody can pass. Once
 `daemon/auth/pairing.json` exists the configured password is only a seed and can
 be removed.
 
-## Upgrading from 0.4
+## Upgrading from 0.4 to 0.5
 
 `config.password`, `DSH_AUTH_PASS` and `AUTH_PASS` no longer do anything. They were
 a *seed*: a value hashed into `daemon/auth/pairing.json` on the first start and not
@@ -43,6 +43,19 @@ Nothing to do for an existing deployment: a `pairing.json` written by 0.4 keeps
 working unchanged, because the file was always what verification consulted. Do
 remove the plaintext from the profile and the launch environment — that is the
 point of the change.
+
+Two behaviours are new in 0.5.
+
+**A missing credential file no longer stops the mount.** The login page offers
+first-time setup instead. That makes an install finishable from another machine
+on the network; it also means that after the file is deleted, anyone who can
+reach the daemon can set it. See the section below before relying on it.
+
+**The credential can be changed from the panel**, without a shell and without a
+restart. The change takes effect immediately and signs out every other session;
+the one making the change stays signed in, having just proved it knows both the
+old and the new value. The panel's third tab lists the sessions on this node and
+every edge, so "who is signed in" has one answer instead of one per machine.
 
 ## First-time setup, and the trade-off it accepts
 
