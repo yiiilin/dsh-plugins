@@ -278,7 +278,7 @@ export function apply(ctx, config) {
     const routed = path.slice(1).split('/')[0]
     if (routed !== '' && registry.find(routed) !== undefined) return false
     if (sessionRequired(path)) {
-      const record = auth.session(req, secure)
+      const record = auth.session(req, secure, res)
       if (record === undefined) {
         if (path.startsWith('/api/')) {
           res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })

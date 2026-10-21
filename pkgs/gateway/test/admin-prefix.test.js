@@ -256,3 +256,29 @@ test('a profile still carrying the retired credential keys is told they do nothi
   assert.match(notice, /twoFactorEnabled/u, 'the warning names the key that no longer does anything')
   assert.match(notice, /passkeyOrigin/u, 'and every retired key it found')
 })
+
+test('an accepted request re-issues a cookie that is falling behind', async () => {
+  // The browser's cookie carries the lifetime it was given at login, while the
+  // server's deadline slides with every accepted request. Without a re-issue the
+  // two drift apart and a browser in constant use is signed out when its original
+  // window closes — a deadline the session itself never reached. The window here
+  // is short so the renewal point arrives inside the test.
+  await withDaemon({ rootPrefix: '/main', sessionMaxAgeSeconds: 2 }, async ({ origin }) => {
+    const cookie = await pair(origin)
+
+    // Immediately after pairing there is nothing to renew.
+    const fresh = await fetch(`${origin}/main/admin/state`, { headers: { cookie } })
+    assert.equal(fresh.status, 200)
+    assert.deepEqual(fresh.headers.getSetCookie(), [], 'a cookie well inside its window is left alone')
+
+    // Past a quarter of the lifetime the browser's copy is worth renewing. The
+    // renewal point is dynamic — the code renews once the elapsed time reaches a
+    // third of what is left, which is a quarter of the original lifetime.
+    await new Promise((done) => setTimeout(done, 700))
+    const due = await fetch(`${origin}/main/admin/state`, { headers: { cookie } })
+    assert.equal(due.status, 200, 'the session is still accepted')
+    const renewed = due.headers.getSetCookie()
+    assert.equal(renewed.length, 1, `the cookie is re-issued once, got ${JSON.stringify(renewed)}`)
+    assert.match(renewed[0], /dsh_daemon_session=/u, 'the re-issued cookie carries the same session')
+  })
+})

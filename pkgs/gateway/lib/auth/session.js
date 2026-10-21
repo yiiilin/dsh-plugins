@@ -72,13 +72,24 @@ export function createAuth({
   })
 
   /**
-   * Decide whether a request carries a live session.
+   * Decide whether a request carries a live session, and keep the browser's cookie
+   * alive when it is falling behind.
+   *
+   * The browser's copy of the cookie carries a `Max-Age` fixed at the moment it was
+   * issued, while the server's deadline slides forward with every accepted request.
+   * Without a re-issue the two drift apart and an actively used browser is signed
+   * out at the lifetime it was given at login — a window the session itself never
+   * reached. So an accepted request that finds the cookie due re-issues it.
+   *
+   * `res` is optional: the caller that only wants to know who is asking can leave it
+   * out, and then nothing is written.
    *
    * @param req - the incoming request.
    * @param secure - whether the browser reached the daemon over HTTPS.
+   * @param res - the response to re-issue the cookie on, when it is due.
    * @returns the session record, or undefined.
    */
-  function session(req, secure) {
+  function session(req, secure, res) {
     const value = readCookie(req, secure ? SECURE_COOKIE_NAME : COOKIE_NAME)
       ?? readCookie(req, COOKIE_NAME)
     if (value === undefined) return undefined
@@ -90,7 +101,12 @@ export function createAuth({
     const issuedAt = Number(value.slice(at + 1))
     if (!Number.isSafeInteger(issuedAt)) return undefined
     const record = sessions.touch(id, issuedAt)
-    return record === null ? undefined : record
+    if (record === null) return undefined
+    if (res !== undefined && sessions.cookieRenewalDue(record)) {
+      sessions.markCookieRenewed(record)
+      res.setHeader?.('set-cookie', sessionCookie(record, secure))
+    }
+    return record
   }
 
   /**
