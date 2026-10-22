@@ -67,7 +67,7 @@ function fakeBackend({ display = ':200', port = 5900 } = {}) {
  *
  * @returns {Promise<object>} the context, table, recorded routes and an agent call helper.
  */
-async function mount(t, { ports = [5900, 5901], prepareDisplay } = {}) {
+async function mount(t, { ports = [5900, 5901], prepareDisplay, probe = async () => false } = {}) {
   const ctx = new Context()
   new SystemPrompt(ctx, { includeHarnessIdentity: false })
   new ToolRuntime(ctx)
@@ -99,6 +99,10 @@ async function mount(t, { ports = [5900, 5901], prepareDisplay } = {}) {
     createBackend: (context) => fakeBackend({ display: ':200', port: context.port }),
     prepareDisplay: prepareDisplay ?? (async () => ({ display: ':200' })),
     ports,
+    // The probe is injected so the table's behaviour does not depend on whether
+    // the machine running the tests happens to have a real VNC server listening:
+    // a host with one would make these assertions pass or fail by luck.
+    probe,
     viewport: { width: 1280, height: 800 },
     now: clock.now,
     log: () => {},

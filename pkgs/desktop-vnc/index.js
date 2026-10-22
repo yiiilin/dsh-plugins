@@ -74,6 +74,40 @@ import {
   createBrowserStack,
   defaultProbe as defaultDisplayProbe,
 } from './browser.js'
+
+/**
+ * The debug ports a browser instance may bind, in claim order.
+ *
+ * 9222 is Chrome's conventional first CDP port; the range is deliberately small
+ * and far from the RFB pool so the two cannot be confused in a diagnostic.
+ */
+export const CDP_PORT_MIN = 9222
+export const CDP_PORT_MAX = 9321
+
+/**
+ * Is something already listening on this debug port?
+ *
+ * A plain TCP probe: any listener means the port is taken, and the port pool
+ * walk skips it rather than letting Chromium fail to bind.
+ *
+ * @param {number} port the port to test.
+ * @returns {Promise<boolean>} true when a listener answers.
+ */
+export function defaultCdpProbe(port) {
+  return new Promise((resolve) => {
+    const socket = connect({ host: '127.0.0.1', port })
+    let settled = false
+    const done = (value) => {
+      if (settled) return
+      settled = true
+      try { socket.destroy() } catch {}
+      resolve(value)
+    }
+    socket.setTimeout(400, () => done(false))
+    socket.once('connect', () => done(true))
+    socket.once('error', () => done(false))
+  })
+}
 import { createCaptureService, streamMjpeg } from './capture.js'
 import { cleanStaleInstanceDirs, newInstanceKeyer } from './instance-dirs.js'
 import { createInstanceRegistry, isInstanceId } from './instances.js'
@@ -308,6 +342,19 @@ export function apply(ctx, config = {}) {
    * two concurrent boots can be kept off the same number: `pickFreeDisplay` probes
    * and returns, and two probes in one tick both see the same number as free.
    */
+  /**
+   * The debug ports this process may hand out, in claim order.
+   *
+   * A port per instance is what makes an instance id actionable: the model can
+   * point `agent-browser connect <port>` at exactly this browser instead of
+   * launching one of its own.
+   */
+  const cdpPortPool = () => {
+    const pool = []
+    for (let port = CDP_PORT_MIN; port <= CDP_PORT_MAX; port += 1) pool.push(port)
+    return pool
+  }
+
   const nestedDisplays = () => {
     const pool = []
     for (let number = NESTED_DISPLAY_MIN; number <= NESTED_DISPLAY_MAX; number += 1) pool.push(`:${number}`)
@@ -325,7 +372,7 @@ export function apply(ctx, config = {}) {
    * @param {{id: string, port: number}} context the registry's claim for this instance.
    * @returns {{browser: object, vnc: object, capture: object, dispose: () => Promise<void>}} the trio.
    */
-  const createBackend = ({ id, port, display: claimedDisplay }) => {
+  const createBackend = ({ id, port, display: claimedDisplay, cdpPort }) => {
     const browser = createBrowserStack({
       spawn,
       resolveExecutable,
@@ -335,9 +382,14 @@ export function apply(ctx, config = {}) {
         viewportHeight: viewport.height,
         // Hand the stack the display the registry already claimed. Passing `auto`
         // here is what let two boots race onto the same number.
-        browser: claimedDisplay === undefined
-          ? browserConfig
-          : { ...browserConfig, nestedDisplay: claimedDisplay },
+        browser: {
+          ...browserConfig,
+          ...(claimedDisplay === undefined ? {} : { nestedDisplay: claimedDisplay }),
+          // The instance's own identity, so an agent can address this window and a
+          // person can tell two windows apart on the desktop.
+          ...(cdpPort === undefined ? {} : { debugPort: cdpPort }),
+          windowTitle: `${browserConfig.windowTitle ?? 'DSH Browser'} ${id}`,
+        },
       },
       log,
       tmpDir: tmpdir(),
@@ -409,6 +461,8 @@ export function apply(ctx, config = {}) {
     // atomic: two stacks probing in the same tick both see `:N` free.
     displays: nestedDisplays(),
     probeDisplay: defaultDisplayProbe,
+    cdpPorts: cdpPortPool(),
+    probeCdp: defaultCdpProbe,
     viewport,
     log,
   })

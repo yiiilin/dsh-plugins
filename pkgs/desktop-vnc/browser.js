@@ -251,6 +251,9 @@ export function chromiumArgv(executable, {
   height,
   startUrl = DEFAULT_START_URL,
   extraArgs = [],
+  debugPort = undefined,
+  windowTitle = undefined,
+  windowPosition = undefined,
 } = {}) {
   return [
     executable,
@@ -265,8 +268,19 @@ export function chromiumArgv(executable, {
     '--disable-dev-shm-usage',
     '--disable-gpu',
     '--hide-crash-restore-bubble',
-    '--window-position=0,0',
+    // Every instance gets its own position: two windows stacked at 0,0 look like
+    // one browser, and the one underneath can never be brought forward by hand.
+    `--window-position=${windowPosition ?? '0,0'}`,
     `--window-size=${width},${height}`,
+    // A titled window is the only handle a person or a tool has on the desktop
+    // window itself: the instance id is invisible in the UI otherwise, and every
+    // window would carry the same title. `--window-name` (not `--app-window-title`,
+    // which only applies to `--app` windows) is what actually renames the title.
+    ...(typeof windowTitle === 'string' && windowTitle !== '' ? [`--window-name=${windowTitle}`] : []),
+    // The debug port is what lets an agent act on *this* browser rather than on
+    // whichever one it happened to launch: without it the instance id names a
+    // window nothing can drive, and a model falls back to its own browser.
+    ...(Number.isInteger(debugPort) && debugPort > 0 ? [`--remote-debugging-port=${debugPort}`] : []),
     ...extraArgs,
     startUrl === '' ? DEFAULT_START_URL : startUrl,
   ]
@@ -298,6 +312,10 @@ function normalizeBrowser(config) {
     executable: textOr(raw.executable, 'chromium'),
     nestedDisplay: textOr(raw.nestedDisplay, 'auto'),
     windowTitle: textOr(raw.windowTitle, DEFAULT_WINDOW_TITLE),
+    // Optional per-instance identity: the CDP port an agent drives this browser
+    // through, the title a person reads on the desktop, and where it lands.
+    debugPort: Number.isInteger(raw.debugPort) && raw.debugPort > 0 ? raw.debugPort : undefined,
+    windowPosition: typeof raw.windowPosition === 'string' && raw.windowPosition !== '' ? raw.windowPosition : undefined,
     startUrl: textOr(raw.startUrl, DEFAULT_START_URL),
     extraArgs: Array.isArray(raw.extraArgs)
       ? raw.extraArgs.filter((arg) => typeof arg === 'string' && arg !== '')
@@ -670,6 +688,9 @@ export function createBrowserStack({
           height,
           startUrl: browserConfig.startUrl,
           extraArgs: browserConfig.extraArgs,
+          debugPort: browserConfig.debugPort,
+          windowTitle: browserConfig.windowTitle,
+          windowPosition: browserConfig.windowPosition,
         }),
         {
           DISPLAY: state.display,

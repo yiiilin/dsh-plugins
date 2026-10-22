@@ -57,6 +57,10 @@ const ROW_SCHEMA = {
     },
     lastActiveAt: { type: 'integer', description: 'Epoch seconds.' },
     viewers: { type: 'integer', description: 'Clients currently watching this instance.' },
+    cdpPort: {
+      type: 'integer',
+      description: 'Chrome DevTools Protocol port for this instance. Pass it to `agent-browser connect <port>` to drive THIS browser.',
+    },
     error: {
       type: 'string',
       description: 'Why the instance failed; present only on a failed row, absent on starting/ready rows.',
@@ -65,32 +69,34 @@ const ROW_SCHEMA = {
 }
 
 const LIST_DESCRIPTION = [
-  'List every browser instance (浏览器实例) held by this dsh process, in creation order.',
-  'Each row carries its browser instance id (浏览器实例 id), state (starting | ready | failed), size,',
-  'creation time, owning session (实例归属), last activity and current viewer count.',
-  'A failed row also carries `error`, the reason that instance did not come up; a starting or ready',
-  'row has no such field.',
-  'This is the only way to learn ids: read them here, then pass one to browser_instance_close.',
-  'Do not guess an id, and do not treat the first, newest or only row as an implicit target.',
+  'List the browser windows the user can see on their desktop (浏览器实例).',
+  'Each row carries the instance id (浏览器实例 id), a `cdpPort` that drives exactly this browser,',
+  'its state (starting | ready | failed), size, creation time, owning session (实例归属), last',
+  'activity and viewer count. A failed row also carries `error`.',
+  'To act on one of these windows, run `agent-browser connect <cdpPort>` and then use agent-browser',
+  'commands (open/snapshot/click/fill/screenshot). Do NOT call `agent-browser open` without connecting',
+  'first: that launches a private browser the user cannot see, and the window you meant to drive stays',
+  'blank. Read ids here; never guess one, and never treat the first or only row as an implicit target.',
 ].join(' ')
 
 const CREATE_DESCRIPTION = [
-  'Create one browser instance (浏览器实例) and answer with its browser instance id (浏览器实例 id) and',
-  'initial state (starting; it becomes ready or failed shortly after).',
-  'ownerSessionId records 实例归属: the owning session, fixed at creation and never reassigned.',
-  'Omit it to own the new instance for the calling session, which is what makes it close when that',
-  'session is disposed.',
-  'Creating is always explicit: this tool is the only way an instance appears, and it never reuses or',
-  'takes over an existing one.',
+  'Open a visible browser window on the user\'s desktop (浏览器实例) and return its browser instance id plus the',
+  '`cdpPort` that drives it.',
+  'Use this when the user asks you to test a web page, check a UI, log into a site, take a screenshot,',
+  'or walk through a workflow they should be able to watch. For automation nobody watches, use',
+  '`agent-browser` on its own instead — that browser is headless and invisible.',
+  'After creating: run `agent-browser connect <cdpPort>` to attach to THIS window, then drive it.',
+  'The window appears in the sidebar 桌面 VNC panel and on the desktop, titled with its id.',
+  'ownerSessionId records 实例归属: the owning session, fixed at creation and never reassigned. Omit it to own the new',
+  'instance for the calling session, which is what makes it close when that session is disposed.',
 ].join(' ')
 
 const CLOSE_DESCRIPTION = [
-  'Close exactly the browser instance (浏览器实例) named by `id`.',
-  '`id` must be a browser instance id (浏览器实例 id) returned by browser_instance_create or',
-  'browser_instance_list.',
-  'An id that does not exist is an error: nothing is closed, no other instance is substituted (not the',
-  'most recent, not the only one), and no new instance is created. Close the instance you actually mean,',
-  'or list first to get the right id.',
+  'Close one browser window (浏览器实例) by its browser instance id (浏览器实例 id).',
+  'Closing is immediate and does not ask the user: the row leaves the list and the window disappears',
+  'from their desktop. An id that does not exist is an error rather than a silent success:',
+  'no other instance is substituted, and nothing is closed on a guess.',
+  'This closes the browser only; it does not touch the session that owned it.',
 ].join(' ')
 
 /**
@@ -134,6 +140,10 @@ export function browserInstanceTools({ list, create, close }) {
           properties: {
             id: { type: 'string', description: 'The new browser instance id.' },
             state: { type: 'string', const: 'starting' },
+            cdpPort: {
+              type: 'integer',
+              description: 'CDP port for this instance; `agent-browser connect <cdpPort>` drives it.',
+            },
           },
         },
         render: jsonRender,

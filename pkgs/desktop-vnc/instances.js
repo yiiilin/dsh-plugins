@@ -92,6 +92,8 @@ export function createInstanceRegistry({
   probe = probePort,
   displays = [],
   probeDisplay = undefined,
+  cdpPorts = [],
+  probeCdp = undefined,
   viewport = { width: 1280, height: 800 },
   now = Date.now,
   log,
@@ -113,6 +115,23 @@ export function createInstanceRegistry({
    * stack is then handed the claimed display instead of probing for its own.
    */
   const claimedDisplays = new Set()
+  /**
+   * Debug ports claimed by this process.
+   *
+   * Same race as the RFB port and the display: the probe cannot be atomic, so the
+   * claim lands before any await. Without a port per instance the id names a
+   * window nothing can drive, and a model falls back to a browser of its own.
+   */
+  const claimedCdpPorts = new Set()
+  /** Fallback occupancy probe for a debug port, when the caller supplies none. */
+  const cdpPortTaken = async (port) => {
+    if (typeof probeCdp !== 'function') return false
+    try {
+      return (await probeCdp(port)) === true
+    } catch {
+      return false
+    }
+  }
   /** Fallback occupancy probe for a display candidate, when the caller supplies none. */
   const displayTaken = async (display) => {
     if (typeof probeDisplay !== 'function') return false
@@ -175,6 +194,9 @@ export function createInstanceRegistry({
       lastActiveAt: seconds(entry.lastActiveAt),
       viewers: entry.viewers,
     }
+    // The debug port is what makes the id actionable: it is the argument
+    // `agent-browser connect` needs to drive *this* browser rather than launch one.
+    if (Number.isInteger(entry.cdpPort)) base.cdpPort = entry.cdpPort
     if (entry.state !== 'failed') return base
     return {
       ...base,
@@ -222,6 +244,22 @@ export function createInstanceRegistry({
   /** Give a display back so the next instance may claim it. */
   const releaseDisplay = (display) => {
     if (typeof display === 'string') claimedDisplays.delete(display)
+  }
+
+  /** Claim the lowest debug port no live instance of this process holds. */
+  const claimCdpPort = () => {
+    for (const port of cdpPorts) {
+      if (!claimedCdpPorts.has(port)) {
+        claimedCdpPorts.add(port)
+        return port
+      }
+    }
+    return null
+  }
+
+  /** Give a debug port back so the next instance may claim it. */
+  const releaseCdpPort = (port) => {
+    if (Number.isInteger(port)) claimedCdpPorts.delete(port)
   }
 
   /** True when something already answers on `port`; an unreadable probe is not occupancy. */
@@ -385,7 +423,7 @@ export function createInstanceRegistry({
       if (entry.closed) return
       if (display === null) throw exhaustedDisplay()
 
-      const backend = createBackend({ id: entry.id, port, display })
+      const backend = createBackend({ id: entry.id, port, display, cdpPort: entry.cdpPort })
       entry.browser = backend.browser ?? null
       entry.vnc = backend.vnc ?? null
       entry.capture = backend.capture ?? null
@@ -459,6 +497,15 @@ export function createInstanceRegistry({
       throw exhaustedDisplay()
     }
 
+    // Claimed in the same synchronous block, for the same reason as the port and
+    // the display: the probe cannot be atomic.
+    const cdpPort = cdpPorts.length === 0 ? undefined : claimCdpPort()
+    if (cdpPort === null) {
+      releasePort(port)
+      releaseDisplay(displayClaim)
+      throw instanceError(503, '没有空闲的调试端口（no free debug port in the configured range）')
+    }
+
     const id = newInstanceId()
     const createdAt = now()
     const entry = {
@@ -478,6 +525,9 @@ export function createInstanceRegistry({
       // the backend is built. Distinct from `display`, which only carries a value
       // once the stack has actually started on it.
       displayClaim,
+      // The CDP port an agent drives this browser through, and the title it shows
+      // on the desktop. Both are per-instance identity, not decoration.
+      cdpPort,
       error: null,
       // Set when close() wins the race against an in-flight boot, so that boot
       // stops instead of building a stack nobody can address or dispose.
@@ -487,7 +537,11 @@ export function createInstanceRegistry({
     entries.set(id, entry)
     note('info', `desktop-vnc: created browser instance ${id} (owner ${entry.ownerSessionId ?? 'unknown'})`)
     entry.ready = boot(entry)
-    return { id, state: 'starting' }
+    // `cdpPort` is part of the answer, not a detail of the row: it is the argument
+    // the caller needs to drive the window it just opened.
+    return cdpPort === undefined
+      ? { id, state: 'starting' }
+      : { id, state: 'starting', cdpPort }
   }
 
   /** The flat list the sidebar renders, insertion order, no focus and no cap. */
@@ -530,6 +584,8 @@ export function createInstanceRegistry({
     // a nested display number reserved, or the pool leaks one number per close.
     releaseDisplay(entry.displayClaim)
     entry.displayClaim = null
+    releaseCdpPort(entry.cdpPort)
+    entry.cdpPort = null
     entry.state = 'failed'
     entry.error = 'closed'
 
