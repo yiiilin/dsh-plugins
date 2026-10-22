@@ -91,7 +91,7 @@ window.__ModuleLoader__.load({
       'list.refresh': '刷新列表',
       'list.loading': '正在读取实例列表…',
       'list.empty': '没有浏览器实例',
-      'list.emptyHint': '请让 agent 创建一个，再回来查看',
+      'list.emptyHint': '点上方 + 新建一个，或让 agent 创建',
       'list.error': '无法读取浏览器实例列表',
       'list.retry': '重试',
       'list.rowLabel': '浏览实例 {id}（{state}）',
@@ -105,6 +105,12 @@ window.__ModuleLoader__.load({
       'list.unavailable': '暂不可用',
       'list.failureReason': '失败原因：{detail}',
       'list.failureUnknown': '失败原因未知',
+      'list.create': '新建浏览器实例',
+      'list.creating': '正在新建…',
+      'list.createFailed': '新建失败：{detail}',
+      'list.close': '关闭实例 {id}',
+      'list.closing': '正在关闭…',
+      'list.closeFailed': '关闭失败：{detail}',
       'viewer.empty': '选择一个浏览器实例',
       'viewer.emptyHint': '在左侧列表里点一个实例，就能看到它的画面',
       'state.starting': '启动中',
@@ -144,7 +150,7 @@ window.__ModuleLoader__.load({
       'list.refresh': 'Refresh list',
       'list.loading': 'Reading the instance list…',
       'list.empty': 'No browser instances',
-      'list.emptyHint': 'Ask an agent to create one, then check again',
+      'list.emptyHint': 'Use + above to open one, or ask an agent',
       'list.error': 'Could not read the browser instance list',
       'list.retry': 'Retry',
       'list.rowLabel': 'Browser instance {id} ({state})',
@@ -158,6 +164,12 @@ window.__ModuleLoader__.load({
       'list.unavailable': 'Not available yet',
       'list.failureReason': 'Failed: {detail}',
       'list.failureUnknown': 'Failure reason unavailable',
+      'list.create': 'New browser instance',
+      'list.creating': 'Opening…',
+      'list.createFailed': 'Could not open: {detail}',
+      'list.close': 'Close instance {id}',
+      'list.closing': 'Closing…',
+      'list.closeFailed': 'Could not close: {detail}',
       'viewer.empty': 'Select a browser instance',
       'viewer.emptyHint': 'Pick an instance in the list on the left to see its screen',
       'state.starting': 'Starting',
@@ -421,6 +433,63 @@ window.__ModuleLoader__.load({
       return parseInstanceList(rows)
     }
 
+    /**
+     * One line for a failed create/close, for the row note and the aria label.
+     * @param error - whatever the fetch path threw.
+     * @returns a non-empty reason; never the empty string.
+     */
+    function errorMessage(error) {
+      if (error instanceof Error && error.message !== '') return error.message
+      if (typeof error === 'string' && error !== '') return error
+      return 'unknown error'
+    }
+
+    /**
+     * Ask the Host to open one browser instance owned by this session.
+     *
+     * The owner is the session the page is showing, so the instance is collected
+     * when that session goes away — the same rule the agent's create tool follows.
+     *
+     * @param fetchImpl - the `fetch` to use.
+     * @param ownerSessionId - the session that will own the instance.
+     * @returns the new instance's address and initial state.
+     * @throws when the Host refuses (an exhausted pool answers 503 with a reason).
+     */
+    async function createInstance(fetchImpl, ownerSessionId) {
+      const response = await fetchImpl(SESSIONS_PATH(), {
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json' },
+        body: JSON.stringify(ownerSessionId === null ? {} : { ownerSessionId }),
+      })
+      const body = await response.json().catch(() => null)
+      if (response?.ok !== true) {
+        const reason = typeof body?.error === 'string' && body.error !== ''
+          ? body.error
+          : `desktop-vnc sessions returned HTTP ${response?.status}`
+        throw new Error(reason)
+      }
+      return body
+    }
+
+    /**
+     * Ask the Host to close one browser instance.
+     * @param fetchImpl - the `fetch` to use.
+     * @param id - the instance to close.
+     * @throws when the Host refuses (an unknown id answers 404).
+     */
+    async function closeInstance(fetchImpl, id) {
+      const response = await fetchImpl(`${SESSIONS_PATH()}/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { accept: 'application/json' },
+      })
+      if (response?.ok === true) return
+      const body = await response.json().catch(() => null)
+      const reason = typeof body?.error === 'string' && body.error !== ''
+        ? body.error
+        : `desktop-vnc sessions returned HTTP ${response?.status}`
+      throw new Error(reason)
+    }
+
     // ===== locale fallback =====
 
     function applyParams(template, params) {
@@ -617,6 +686,39 @@ window.__ModuleLoader__.load({
 .dsh-vnc-instance[aria-current="true"] {
   background: var(--dsw-alias-bg-layer-2, #e7e5e4);
   font-weight: 600;
+}
+.dsh-vnc-instance-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px;
+}
+.dsh-vnc-instance-row[data-current="true"] .dsh-vnc-instance {
+  background: var(--dsw-alias-bg-layer-2, #e7e5e4);
+  font-weight: 600;
+}
+.dsh-vnc-close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: var(--dsw-radius-sm, 6px);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.dsh-vnc-close:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover, var(--dsw-alias-bg-layer-2, #e7e5e4));
+  color: var(--dsw-alias-label-primary, #1f2937);
+}
+.dsh-vnc-close:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 .dsh-vnc-instance-id {
   flex: 1 1 auto;
@@ -1607,6 +1709,13 @@ window.__ModuleLoader__.load({
       return function VncShell(props) {
         /** The focused browser instance, or null for "nothing selected". */
         const [focusedId, setFocusedId] = React.useState(null)
+        /**
+         * What the user's own create/close request is doing right now, one entry
+         * at a time: `{ kind: 'create' }` or `{ kind: 'close', id }`, with a reason
+         * once it failed. A page-level value rather than one per row keeps the two
+         * controls mutually exclusive, so a double click cannot open two browsers.
+         */
+        const [action, setAction] = React.useState(null)
         /** The last list read: `{ rows }`, or `{ error }`. `null` while loading. */
         const [listing, setListing] = React.useState(null)
         const [refreshKey, setRefreshKey] = React.useState(0)
@@ -1661,6 +1770,52 @@ window.__ModuleLoader__.load({
           }
         }, [refreshKey, visible])
 
+        /** The fetch this page uses; the sandbox's own when there is no window. */
+        const pageFetch = () => (typeof window !== 'undefined' && typeof window.fetch === 'function'
+          ? window.fetch.bind(window)
+          : fetch)
+
+        /** The session that owns an instance this page creates. */
+        const owningSessionId = typeof tabInfo?.tab?.id === 'string' && tabInfo.tab.id !== ''
+          ? tabInfo.tab.id
+          : null
+
+        /**
+         * Open one instance on the user's behalf and focus it.
+         *
+         * `starting` rows are not focusable, so the new id is only remembered once
+         * the poll reports it ready — otherwise the focus would land on a row the
+         * viewer cannot mount.
+         */
+        const createOnBehalfOfUser = async () => {
+          if (action !== null) return
+          setAction({ kind: 'create' })
+          try {
+            const created = await createInstance(pageFetch(), owningSessionId)
+            if (created !== null && typeof created.id === 'string') {
+              setListing((current) => (current === null ? current : { ...current, rows: current.rows }))
+            }
+            setAction(null)
+            setRefreshKey((key) => key + 1)
+          } catch (error) {
+            setAction({ kind: 'create', failed: true, detail: errorMessage(error) })
+          }
+        }
+
+        /** Close one instance, clearing the focus if it was the focused one. */
+        const closeOnBehalfOfUser = async (id) => {
+          if (action !== null) return
+          setAction({ kind: 'close', id })
+          try {
+            await closeInstance(pageFetch(), id)
+            setFocusedId((current) => (current === id ? null : current))
+            setAction(null)
+            setRefreshKey((key) => key + 1)
+          } catch (error) {
+            setAction({ kind: 'close', id, failed: true, detail: errorMessage(error) })
+          }
+        }
+
         /**
          * One list row: the identity line, the details that decide whether the
          * instance is worth focusing, and — when it is not usable — why.
@@ -1691,10 +1846,21 @@ window.__ModuleLoader__.load({
             ? applyParams(t('list.viewers'), { count: row.viewers })
             : t('list.viewersNone')
           const detail = note ?? (typeof row.viewers === 'number' ? viewers : '')
-          return React.createElement('button', {
+          // The row is a container, not a button: the close control must not be a
+          // nested button, which is invalid HTML and unreachable by keyboard.
+          const closing = action?.kind === 'close' && action.id === row.id
+          const closeFailed = closing && action?.failed === true
+          return React.createElement('div', {
             key: row.id,
+            className: 'dsh-vnc-instance-row',
+            'data-current': selectable && row.id === focusedId,
+          },
+          React.createElement('button', {
             type: 'button',
             className: 'dsh-vnc-instance',
+            // The identity lives on the selectable button, not on the wrapper:
+            // the button is the row's control, and this is what tests and any
+            // future keyboard navigation read it by.
             'data-instance-id': row.id,
             'data-state': row.state,
             'aria-current': selectable && row.id === focusedId,
@@ -1721,7 +1887,24 @@ window.__ModuleLoader__.load({
             React.createElement('span', { className: 'dsh-vnc-instance-viewers' }, viewers)),
           note === null
             ? null
-            : React.createElement('span', { className: 'dsh-vnc-instance-note', 'data-state': row.state }, note))
+            : React.createElement('span', { className: 'dsh-vnc-instance-note', 'data-state': row.state }, note)),
+          React.createElement('button', {
+            type: 'button',
+            className: 'dsh-vnc-close',
+            title: applyParams(t('list.close'), { id: row.id }),
+            'aria-label': closing ? t('list.closing') : applyParams(t('list.close'), { id: row.id }),
+            // Closing is always offered, whatever the state: an instance that
+            // failed to start is exactly the one a user wants to clear away.
+            disabled: action !== null,
+            onClick: (event) => {
+              event.stopPropagation()
+              void closeOnBehalfOfUser(row.id)
+            },
+          }, closing ? t('list.closing') : '\u00d7'),
+          closeFailed
+            ? React.createElement('span', { className: 'dsh-vnc-instance-note', 'data-state': 'failed', role: 'alert' },
+                applyParams(t('list.closeFailed'), { detail: action.detail }))
+            : null)
         }
 
         const rows = listing?.rows ?? []
@@ -1753,10 +1936,25 @@ window.__ModuleLoader__.load({
               React.createElement('button', {
                 type: 'button',
                 className: 'dsh-vnc-tool',
+                title: action?.kind === 'create' ? t('list.creating') : t('list.create'),
+                'aria-label': action?.kind === 'create' ? t('list.creating') : t('list.create'),
+                // One create at a time, and never while a close is in flight: two
+                // clicks would otherwise open two browsers with no way to tell them
+                // apart in this list until both settle.
+                disabled: action !== null,
+                onClick: () => { void createOnBehalfOfUser() },
+              }, action?.kind === 'create' ? t('list.creating') : '+'),
+              React.createElement('button', {
+                type: 'button',
+                className: 'dsh-vnc-tool',
                 title: t('list.refresh'),
                 'aria-label': t('list.refresh'),
                 onClick: () => setRefreshKey((key) => key + 1),
               }, icon('reconnect', 14))),
+            action?.kind === 'create' && action?.failed === true
+              ? React.createElement('div', { className: 'dsh-vnc-list-note', role: 'alert' },
+                  applyParams(t('list.createFailed'), { detail: action.detail }))
+              : null,
             React.createElement('div', { className: 'dsh-vnc-list-body' }, listBody)),
           React.createElement('div', { className: 'dsh-vnc-viewer' },
             focusedRow === null

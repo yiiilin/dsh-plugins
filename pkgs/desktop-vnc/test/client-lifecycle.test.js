@@ -304,11 +304,27 @@ async function mountPage(options = {}) {
   const sessionsCalls = [];
   const requests = [];
   const fetchImpl = async (url, init) => {
+    const method = init?.method ?? "GET";
     sessionsCalls.push(String(url));
-    requests.push({ url: String(url), method: init?.method ?? "GET" });
+    requests.push({ url: String(url), method });
     // `/state` is what the viewer's failure diagnosis reads; the list route is
     // the shell's data source. One fetch stub serves both.
     if (String(url).includes("/sessions")) {
+      // A user-initiated create/close goes through the same route with a verb;
+      // answer it the way the Host does so the shell's button paths are real.
+      if (method === "POST") {
+        if (options.createFails === true) {
+          return { ok: false, status: 503, json: async () => ({ error: "no free RFB port" }) };
+        }
+        const created = { id: options.createdId ?? "cccc3333", state: "starting" };
+        return { ok: true, status: 200, json: async () => created };
+      }
+      if (method === "DELETE") {
+        if (options.closeFails === true) {
+          return { ok: false, status: 404, json: async () => ({ error: "no such browser instance" }) };
+        }
+        return { ok: true, status: 200, json: async () => ({ closed: true }) };
+      }
       // An Error stands for an unreachable Host: a failed refresh is a distinct
       // case from an empty table, and the shell must tell them apart.
       if (instances instanceof Error) throw instances;
@@ -397,6 +413,8 @@ async function mountPage(options = {}) {
     created,
     importedPaths,
     sessionsCalls,
+    /** Every request the page made, in order: `{ url, method }`. */
+    requests,
     exported,
     ZH: exported.__test.ZH_DICT,
     /** Replace the list the sessions route answers with, then re-read it. */
@@ -867,6 +885,77 @@ test("renders one list row per browser instance, from the Host list", async () =
   // The list is what the user reads, so both ids are on screen.
   assert.match(page.runtime.text(), /aaaa1111/u);
   assert.match(page.runtime.text(), /bbbb2222/u);
+});
+
+test("the user can open an instance from the list header", async () => {
+  const page = await mountShell({ instances: [] });
+  const create = byClass(page.runtime.tree, "dsh-vnc-tool")
+    .find((node) => node.children.includes("+"));
+  assert.ok(create !== undefined, "the header offers a create control");
+
+  create.props.onClick();
+  await page.settle();
+
+  const posted = page.requests.filter((request) => request.method === "POST");
+  assert.equal(posted.length, 1, "one create request, not one per click");
+  assert.match(posted[0].url, /\/_dsh\/desktop-vnc\/sessions$/u);
+});
+
+test("the user can close an instance from its row", async () => {
+  const page = await mountShell({ instances: INSTANCES });
+  const row = listRows(page)[0];
+  const close = byClass(page.runtime.tree, "dsh-vnc-close")
+    .find((node) => node.props.title.includes(row.props["data-instance-id"]));
+  assert.ok(close !== undefined, "each row offers a close control");
+
+  close.props.onClick({ stopPropagation() {} });
+  await page.settle();
+
+  const deleted = page.requests.filter((request) => request.method === "DELETE");
+  assert.equal(deleted.length, 1);
+  assert.match(deleted[0].url, /aaaa1111$/u, "the row's own id is the one closed");
+});
+
+test("closing a focused instance clears the focus instead of switching to a survivor", async () => {
+  const page = await mountShell({ instances: INSTANCES });
+  const first = listRows(page)[0];
+  first.props.onClick();
+  await page.settle();
+  assert.equal(byClass(page.runtime.tree, "dsh-vnc-viewer").length, 1, "the viewer is mounted");
+
+  // The Host now answers without the instance the user closed.
+  page.setInstances([INSTANCES[1]]);
+  const close = byClass(page.runtime.tree, "dsh-vnc-close")
+    .find((node) => node.props.title.includes("aaaa1111"));
+  close.props.onClick({ stopPropagation() {} });
+  await page.settle();
+
+  assert.equal(byClass(page.runtime.tree, "dsh-vnc-empty").length, 1,
+    "the viewer returns to the empty state rather than jumping to the survivor");
+});
+
+test("a create the Host refuses is reported, and the row count is unchanged", async () => {
+  const page = await mountShell({ instances: [], createFails: true });
+  const before = listRows(page).length;
+  const create = byClass(page.runtime.tree, "dsh-vnc-tool")
+    .find((node) => node.children.includes("+"));
+
+  create.props.onClick();
+  await page.settle();
+
+  assert.equal(listRows(page).length, before, "a refused create adds no row");
+  assert.match(page.runtime.text(), /新建失败/u, "the reason is shown, not swallowed");
+});
+
+test("a close the Host refuses is reported on the row", async () => {
+  const page = await mountShell({ instances: INSTANCES, closeFails: true });
+  const close = byClass(page.runtime.tree, "dsh-vnc-close")[0];
+
+  close.props.onClick({ stopPropagation() {} });
+  await page.settle();
+
+  assert.match(page.runtime.text(), /关闭失败/u);
+  assert.equal(listRows(page).length, 2, "the row stays until the Host confirms");
 });
 
 test("shows the empty list state rather than an empty list", async () => {
