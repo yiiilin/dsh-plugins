@@ -32,6 +32,7 @@ English: a right-sidebar tab that auto-connects on open and shows **a browser** 
 | --- | --- | --- |
 | Host | `index.js` | 路由注册、状态汇总、生命周期回收、浏览器栈与 x11vnc 的接线 |
 | Host | `instances.js` | 浏览器实例表：实例 id、归属会话、状态、端口预留、观看人数 |
+| Host | `tools.js` | 三个 agent 工具：列出 / 按归属会话创建 / 按 id 关闭浏览器实例 |
 | Host | `browser.js` | Xephyr 嵌套显示 + Chromium 的启动/复用/停止（Xephyr 缺失时降级 Xvfb） |
 | Host | `x11vnc.js` | 从 `rfbPortRange` 分配端口、按需启动/复用/停止 `x11vnc` 子进程 |
 | Host | `ws.js` | 手写 RFC6455 WebSocket 服务端，把 WS 帧与 VNC TCP 字节流双向直通 |
@@ -66,6 +67,28 @@ English: a right-sidebar tab that auto-connects on open and shows **a browser** 
 不关闭任何实例（agent 结束但会话仍在时，实例继续存活）。
 
 浏览器只与 DSH 的 Web 源交互；`x11vnc` 始终绑定 `127.0.0.1`，从不直接暴露。
+
+## agent 工具
+
+agent 通过三个工具管理浏览器实例。它们直接调用实例表（与路由共享同一个 registry），
+不走 HTTP，所以工具操作的结果立刻出现在面板的列表里，反之亦然。
+
+| 工具 | 参数 | 返回 |
+| --- | --- | --- |
+| `browser_instance_list` | 无 | 与 `GET /sessions` 相同的行数组 |
+| `browser_instance_create` | `ownerSessionId`（可省） | `{id, state:"starting"}` |
+| `browser_instance_close` | `id`（必填） | `{closed:true}` |
+
+- **id 是唯一的指定方式。** 不存在的 id 直接报错，不回退到「最近一个」或「唯一的那个」，
+  也不自动新建——静默回退会让 agent 以为自己操作的是 A，实际动了 B。
+- `ownerSessionId` 记录**实例归属**，创建时确定、不可转让。省略时取**调用方会话**的 id：
+  agent 未必知道自己的会话 id，而归属错了会导致实例泄漏或跟着别的会话一起被关掉。
+- 创建走插件的 `createInstance` 包装，所以工具创建的实例同样会挂上自己的 WS 路由，
+  面板能直接看。
+- **不提供 `browser_instance_focus`。** 焦点是每个客户端各自的界面状态，服务端工具跨层
+  修改语义不清。
+- `tools` 服务是可选的（`ctx.inject(['tools'], …)`）：只装来用面板的 profile 没有工具
+  注册表，路由照常挂载，只是没有这三个工具。
 
 ## 配置
 
