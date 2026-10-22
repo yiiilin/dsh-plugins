@@ -73,7 +73,18 @@ export function probePort(port, { timeoutMs = DEFAULT_PROBE_TIMEOUT_MS } = {}) {
   })
 }
 
-/** Turn any spawn failure into one readable, non-stack line for the panel. */
+/**
+ * Turn any spawn failure into one readable, non-stack line for the panel.
+ *
+ * The one implementation: {@link ./browser.js} re-exports this rather than
+ * carrying its own copy, so a missing `x11vnc`, `Xephyr` and `chromium` are all
+ * described the same way — the panel shows one kind of sentence for one kind of
+ * environment problem, whichever binary is absent.
+ *
+ * @param {unknown} error whatever `spawn` (or the executable resolver) threw.
+ * @param {string} executable the name to put in the message.
+ * @returns {string} one line, no stack, at most 300 characters.
+ */
 export function describeSpawnError(error, executable) {
   const code = error?.code
   const text = typeof error?.message === 'string' ? error.message : String(error ?? '')

@@ -36,6 +36,9 @@ import { rm } from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { INSTANCE_DIR_PREFIX } from './instance-dirs.js'
+import { describeSpawnError } from './x11vnc.js'
+
 /** `FamilyLocal` in an Xauthority record; the only field stored little-endian. */
 const FAMILY_LOCAL = 1
 
@@ -152,19 +155,15 @@ export async function pickFreeDisplay({
   return null
 }
 
-/** Turn any spawn failure into one readable, non-stack line for the panel. */
-export function describeSpawnError(error, executable) {
-  const code = error?.code
-  const text = typeof error?.message === 'string' ? error.message : String(error ?? '')
-  if (code === 'ENOENT' || /not found on PATH|is not an executable file/i.test(text)) {
-    return `${executable} 未安装（${executable} not installed）`
-  }
-  if (code === 'EACCES' || /EACCES/i.test(text)) {
-    return `${executable} 不可执行（permission denied）`
-  }
-  const first = text.split('\n')[0].trim()
-  return first === '' ? `无法启动 ${executable}` : first.slice(0, 300)
-}
+/**
+ * Turn any spawn failure into one readable, non-stack line for the panel.
+ *
+ * Defined once in {@link ./x11vnc.js} and re-exported here: the browser stack and
+ * the RFB controller report the same environment failures (a missing binary, a
+ * lost execute bit), and two byte-identical copies had already drifted apart
+ * once. Importers of this module keep working unchanged.
+ */
+export { describeSpawnError }
 
 /**
  * Write an Xauthority file holding one cookie for one display.
@@ -364,7 +363,11 @@ function raceExit(entry, ms) {
  * @param {(pid: number, signal: string) => void} [options.kill] signal sink, for tests.
  * @param {(dir: string) => Promise<void>} [options.removeDir] profile-dir removal, for tests.
  * @param {string} [options.tmpDir] base for the per-instance profile dir.
- * @param {number} [options.pid] instance id embedded in the profile dir (defaults to this process).
+ * @param {string} [options.instanceKey] identity embedded in the profile dir name;
+ *   defaults to `String(process.pid)`, which is only safe for a process that opens
+ *   one stack — the plugin always passes a per-instance key.
+ * @param {number} [options.pid] legacy alias: the instance id embedded in the
+ *   profile dir (defaults to this process). Kept for the v1-shaped tests.
  * @param {number} [options.startTimeoutMs] budget for the nested display socket.
  * @param {number} [options.probeIntervalMs] probe cadence while waiting.
  * @param {number} [options.settleMs] window a new Chromium must survive.
@@ -380,6 +383,7 @@ export function createBrowserStack({
   kill = defaultKill,
   removeDir = defaultRemoveDir,
   tmpDir,
+  instanceKey,
   pid,
   startTimeoutMs = DEFAULT_START_TIMEOUT_MS,
   probeIntervalMs = DEFAULT_PROBE_INTERVAL_MS,
@@ -392,11 +396,17 @@ export function createBrowserStack({
   const height = sizeOr(config.viewportHeight, 800)
   const cwd = textOr(config.cwd, tmpdir())
   const baseDir = textOr(tmpDir, tmpdir())
-  const instancePid = Number.isInteger(pid) && pid >= 0 ? pid : process.pid
+  // The identity embedded in the directory name. A bare sequence restarts at 1 in
+  // every process and would reuse a crashed process's profile (inheriting its
+  // SingletonLock and stale Xauthority); a bare pid collides when the pid is
+  // recycled. Production passes `<pid>-<bootId>-<seq>` from {@link ./instance-dirs.js};
+  // the `pid` option stays as a simple identity for callers that only need two
+  // stacks told apart.
+  const key = textOr(instanceKey, Number.isInteger(pid) && pid >= 0 ? String(pid) : String(process.pid))
   // One directory per browser instance, holding both the Chromium profile and the
   // Xauthority cookie this display trusts. Two instances in one process therefore
   // never share a SingletonLock and never overwrite each other's cookie.
-  const instanceDir = join(baseDir, `dsh-desktop-vnc-${instancePid}`)
+  const instanceDir = join(baseDir, `${INSTANCE_DIR_PREFIX}${key}`)
   const probeDisplay = typeof probe === 'function' ? probe : defaultProbe
 
   /**

@@ -9,6 +9,7 @@
     "capture.js",
     "client.js",
     "index.js",
+    "instance-dirs.js",
     "instances.js",
     "novnc",
     "tools.js",

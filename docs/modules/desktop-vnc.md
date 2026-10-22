@@ -31,7 +31,8 @@ English: a right-sidebar tab that auto-connects on open. It lists the **browser 
 | 半边 | 文件 | 职责 |
 | --- | --- | --- |
 | Host | `index.js` | 路由注册、状态汇总、生命周期回收、浏览器栈与 x11vnc 的接线 |
-| Host | `instances.js` | 浏览器实例表：实例 id、归属会话、状态、端口预留、观看人数 |
+| Host | `instances.js` | 浏览器实例表：实例 id、归属会话、状态、端口预留与外部占用探测、观看人数 |
+| Host | `instance-dirs.js` | 每个实例的临时目录身份（跨进程启动不撞名）与启动时的残留清理 |
 | Host | `tools.js` | 三个 agent 工具：列出 / 按归属会话创建 / 按 id 关闭浏览器实例 |
 | Host | `browser.js` | Xephyr 嵌套显示 + Chromium 的启动/复用/停止（Xephyr 缺失时降级 Xvfb） |
 | Host | `x11vnc.js` | 从 `rfbPortRange` 分配端口、按需启动/复用/停止 `x11vnc` 子进程 |
@@ -66,6 +67,8 @@ English: a right-sidebar tab that auto-connects on open. It lists the **browser 
 
 `error` 是**条件字段**：只在 `state === "failed"` 时出现，携带失败原因；其余状态整个键
 缺席（不是 `null`，也不是 `undefined`）。侧边栏因此能在同一行里解释失败，不必再发一次请求。
+`browser_instance_list` 的输出 schema 也声明了这个键（`additionalProperties: false` 保持不变），
+否则一行失败会让整个列表调用因 schema 校验失败而拿不到任何行 —— 恰好在最需要原因的时候。
 
 `viewers` 是当前真实的 WS 桥连接数（两个客户端同时看一个实例就是 2）。列表**不**报告
 「谁在看」：那是别的客户端自己的界面状态，既不可知也无用。
@@ -139,9 +142,17 @@ agent 通过三个工具管理浏览器实例。它们直接调用实例表（�
   某端口上已经有人在监听，说明那不是本实例的 x11vnc（可能是别的实例、系统服务或残留进程），
   于是**跳过它继续找下一个**，既不连接也不结束它。区间耗尽时返回明确错误，不静默降级。
   早期实现是「有人监听就复用」，那会让第二个实例的面板静默显示第一个实例的桌面且零报错。
-- **路径按实例隔离。** 每个浏览器实例有自己的目录（`$TMPDIR/dsh-desktop-vnc-<实例标识>/`），
+  实现上 `create()` 仍然**同步**预留端口（并发的两个 create 不会抢到同一个号），随后在 boot 里
+  用 `probe(port)`（默认是回环 connect 探测）确认该端口没有外部监听者；被占用就交还并继续往下找。
+- **路径按实例隔离。** 每个浏览器实例有自己的目录（`$TMPDIR/dsh-desktop-vnc-<pid>-<启动标识>-<序号>/`），
   里面放 Chromium 的 `profile` 与 Xauthority；两者都不与别的实例共享。实例停止时整个目录一起删除，
   Xauthority 不会残留（它是凭据，不该比它授权的显示活得更久）。
+  目录名带**每次进程启动唯一**的标识：只靠从 1 开始的序号，重启后的第一个实例会复用上次崩溃留下的
+  目录（旧 `SingletonLock` + 旧 Xauthority），首实例的 Chromium 因此起不来。
+- **启动时清理残留目录（best-effort）。** 挂载时扫一次 `$TMPDIR`，只删除**名字能解析成本插件格式**、
+  且其记录 pid **已确认不存在**的目录；规则是「拿不准就留着」：解析不了的名字（包括旧版单一数字格式）、
+  本进程自己的目录、探测抛错（如 `EPERM`）一律不删。清理失败只记日志，绝不阻塞插件挂载 ——
+  泄漏一个旧目录只浪费几 KB，误删别的进程正在用的 profile 会让它的浏览器崩掉。
 
 ## 依赖
 
