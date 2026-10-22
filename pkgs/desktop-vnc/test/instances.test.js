@@ -8,6 +8,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { createServer } from 'node:net'
 
 import { createInstanceRegistry } from '../instances.js'
 
@@ -56,7 +57,7 @@ function fakeBackend({ display = ':200', port = 5900 } = {}) {
 }
 
 /** A registry wired to fake infrastructure, fast timings and a hand-driven clock. */
-function makeRegistry({ ports = [5900, 5901, 5902], prepareDisplay, backend, clock = fakeClock() } = {}) {
+function makeRegistry({ ports = [5900, 5901, 5902], prepareDisplay, backend, clock = fakeClock(), probe = async () => false } = {}) {
   const backends = []
   const registry = createInstanceRegistry({
     createBackend: (context) => {
@@ -70,6 +71,7 @@ function makeRegistry({ ports = [5900, 5901, 5902], prepareDisplay, backend, clo
     },
     prepareDisplay: prepareDisplay ?? (async () => ({ display: ':200' })),
     ports,
+    probe,
     viewport: { width: 1280, height: 800 },
     now: clock.now,
     log: () => {},
@@ -183,6 +185,89 @@ test('a full port pool refuses the create instead of sharing a port', async () =
   assert.match(error.message, new RegExp(first.id))
   assert.equal(registry.get(first.id).state, 'ready', 'the existing instance is untouched')
   assert.equal(registry.list().length, 1)
+})
+
+test('a port something else is listening on is skipped, not shared', async () => {
+  // Probe-then-bind is not atomic, but the *port table* is the one place that
+  // knows who is listening right now. A foreign listener means the port is not
+  // ours to take: binding it would fail, and adopting it would show another
+  // instance's desktop with no error anywhere.
+  const probed = []
+  const { registry, backends } = makeRegistry({
+    ports: [5900, 5901],
+    probe: async (port) => {
+      probed.push(port)
+      return port === 5900
+    },
+  })
+
+  const { id } = registry.create({ ownerSessionId: 'session-a' })
+  await registry.get(id).ready
+
+  assert.deepEqual(probed, [5900, 5901], 'the occupied port is probed and skipped')
+  assert.equal(registry.get(id).port, 5901, 'the instance landed on the first genuinely free port')
+  // The backend is built for the port the table settled on, never the skipped one.
+  assert.equal(backends.length, 1)
+  assert.equal(registry.get(id).state, 'ready')
+})
+
+test('two instances created at once skip an occupied port without colliding', async () => {
+  const { registry } = makeRegistry({
+    ports: [5900, 5901, 5902],
+    probe: async (port) => port === 5900,
+  })
+
+  const first = registry.create({ ownerSessionId: 'session-a' })
+  const second = registry.create({ ownerSessionId: 'session-a' })
+  await Promise.all([registry.get(first.id).ready, registry.get(second.id).ready])
+
+  const ports = [registry.get(first.id).port, registry.get(second.id).port]
+  assert.deepEqual(ports.slice().sort(), [5901, 5902])
+  assert.ok(!ports.includes(5900))
+})
+
+test('a pool whose every port is already taken fails the instance with a readable reason', async () => {
+  const { registry } = makeRegistry({
+    ports: [5900, 5901],
+    // Nothing may be bound here: the row has to say the pool is exhausted rather
+    // than start a server on a port somebody else owns.
+    probe: async () => true,
+  })
+
+  const { id } = registry.create({ ownerSessionId: 'session-a' })
+  await registry.get(id).ready
+
+  const row = registry.list()[0]
+  assert.equal(row.state, 'failed')
+  assert.match(row.error, /RFB 端口/u)
+  assert.equal(registry.claimedPorts.size, 0, 'no claim survives a failed allocation')
+})
+
+test('a real listener on the allocated port is detected by the default probe', async (t) => {
+  // Every other case injects the probe, so this one drives the default: a real
+  // socket on loopback is the only proof that "something is listening" actually
+  // reaches the allocation logic instead of being assumed by the tests.
+  const server = createServer(() => {})
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const occupied = server.address().port
+  t.after(() => new Promise((resolve) => server.close(resolve)))
+
+  const registry = createInstanceRegistry({
+    createBackend: (context) => fakeBackend({ display: ':200', port: context.port }),
+    prepareDisplay: async () => ({ display: ':200' }),
+    ports: [occupied],
+    viewport: { width: 1280, height: 800 },
+    now: fakeClock().now,
+    log: () => {},
+  })
+
+  const { id } = registry.create({ ownerSessionId: 'session-a' })
+  await registry.get(id).ready
+
+  const row = registry.list()[0]
+  assert.equal(row.state, 'failed', 'the one port in the pool is held by a foreign listener')
+  assert.match(row.error, /RFB 端口/u)
+  assert.equal(registry.claimedPorts.size, 0)
 })
 
 test('closing an unknown instance is a clear error, not a silent success', async () => {
@@ -379,6 +464,55 @@ test('closing an instance while it is still booting leaves no row and frees the 
 
   assert.equal(registry.list().length, 0, 'a boot that finishes after a close must not resurrect the row')
   assert.equal(registry.claimedPorts.size, 0, 'and it must not keep the port claimed')
+})
+
+test('a close that lands while the port is being probed still frees the claim', async () => {
+  // The probe made the allocation asynchronous, which opened a window: close()
+  // releases the entry's port, and the boot must not then re-record a claim on a
+  // port nobody will ever release. A leaked claim shrinks the pool for the life of
+  // the process, and the last free port is exactly what a later create needs.
+  let releaseProbe
+  const probeGate = new Promise((resolve) => {
+    releaseProbe = resolve
+  })
+  const { registry } = makeRegistry({
+    ports: [5900],
+    probe: async () => {
+      await probeGate
+      return false
+    },
+  })
+
+  const { id } = registry.create({ ownerSessionId: 'session-a' })
+  // The boot is now parked inside the probe, with the port claimed.
+  assert.equal(registry.claimedPorts.size, 1)
+  await registry.close(id)
+  releaseProbe()
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.equal(registry.list().length, 0, 'the closed row is not resurrected')
+  assert.equal(registry.claimedPorts.size, 0, 'and the close released the claim the boot had reserved')
+})
+
+test('a pool blocked by foreign listeners recovers once they go away', async () => {
+  // The pool exhaustion caused by *foreign* listeners is reported on the row, not
+  // as a create-time throw: probing cannot be done synchronously without delaying
+  // the POST that must answer at once. What must still hold is that the failure
+  // poisons nothing — the port is not left claimed, and the next create uses it.
+  let occupied = true
+  const { registry } = makeRegistry({ ports: [5900], probe: async () => occupied })
+
+  const blocked = registry.create({ ownerSessionId: 'session-a' })
+  await registry.get(blocked.id).ready
+  assert.equal(registry.list()[0].state, 'failed')
+  assert.equal(registry.claimedPorts.size, 0, 'a failed allocation must not keep the port')
+
+  occupied = false
+  const recovered = registry.create({ ownerSessionId: 'session-a' })
+  await registry.get(recovered.id).ready
+
+  assert.equal(registry.get(recovered.id).port, 5900, 'the freed port is usable again')
+  assert.equal(registry.get(recovered.id).state, 'ready')
 })
 
 test('the port the RFB server reports is the one the bridge must connect to', async () => {

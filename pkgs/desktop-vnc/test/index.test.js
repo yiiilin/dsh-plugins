@@ -8,6 +8,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { EventEmitter } from 'node:events'
 import { createServer } from 'node:net'
+import { tmpdir } from 'node:os'
 
 import { Config, apply, assetContentType, inject, name, resolveAssetPath, resolvePanelDisplay } from '../index.js'
 import { createInstanceRegistry } from '../instances.js'
@@ -194,6 +195,38 @@ test('applying without a web server is a safe no-op', () => {
   assert.doesNotThrow(() => apply(ctx, {}))
   assert.equal(routes.length, 0)
   assert.equal(upgrades.length, 0)
+})
+
+test('mounting sweeps the stale instance directories a dead process left behind', async () => {
+  // The spec's startup cleanup: a crash leaves /tmp/dsh-desktop-vnc-* behind, and
+  // the next process should clear what is provably dead. Injected so the test
+  // never touches the real /tmp.
+  const swept = []
+  const fake = fakeCtx()
+  apply(fake.ctx, {
+    cleanStaleDirs: async (options) => {
+      swept.push(options)
+      return ['dsh-desktop-vnc-1000-111-1']
+    },
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.equal(swept.length, 1, 'the sweep runs once, at mount')
+  assert.equal(swept[0].tmpDir, tmpdir())
+  assert.equal(swept[0].ownPid, process.pid, 'the plugin never deletes its own live directories')
+})
+
+test('a sweep that throws does not stop the plugin from mounting', async () => {
+  // Best-effort by contract: cleanup must never be a startup dependency.
+  const fake = fakeCtx()
+  assert.doesNotThrow(() => apply(fake.ctx, {
+    cleanStaleDirs: async () => {
+      throw new Error('EACCES')
+    },
+  }))
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.ok(fake.routes.some((route) => route.path === '/_dsh/desktop-vnc/sessions'))
 })
 
 test('every route and the upgrade are registered and released by effects', () => {
@@ -615,6 +648,8 @@ function fakeRegistry() {
   return {
     calls,
     rows,
+    /** Live close subscribers, so a test can see a subscription leak. */
+    subscribers: () => closeListeners.size,
     /** The real table reports every close through one hook; the fake must too. */
     subscribeClose(handler) {
       closeListeners.add(handler)
@@ -842,6 +877,19 @@ test('the session routes are registered by effects and released on unload', () =
 
   fake.unload()
   assert.equal(fake.routes.length, 0)
+})
+
+test('the close subscription is released on unload like every other registration', () => {
+  // The registry outlives a plugin unload only if something else holds it, and a
+  // subscriber that is never unsubscribed keeps the disposed plugin's routes map
+  // alive. Every other registration here is an effect; this one has to be too.
+  const registry = fakeRegistry()
+  const fake = mountWithRegistry(registry)
+  assert.equal(registry.subscribers(), 1)
+
+  fake.unload()
+
+  assert.equal(registry.subscribers(), 0, 'unload must unsubscribe from the instance table')
 })
 
 test('a disposed session closes exactly that session\'s instances', async () => {

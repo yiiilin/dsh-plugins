@@ -49,9 +49,11 @@
  *   instance's* server and is never killed by pattern; unloading the plugin stops
  *   exactly the processes each instance spawned, and each browser stack stops
  *   exactly the Xephyr/Chromium pids it recorded.
- * - **Ports are claimed before they are bound.** The table reserves a port when
- *   the instance is created, so two concurrent creates cannot both pick the same
- *   free-looking port and race for the bind.
+ * - **Ports are claimed before they are bound, and probed before they are used.**
+ *   The table reserves a port when the instance is created, so two concurrent
+ *   creates cannot both pick the same free-looking port and race for the bind; the
+ *   boot then probes that port so a foreign listener makes it walk to the next
+ *   one instead of pinning a controller to a port somebody else already owns.
  * - **Ownership is the session's.** `session/disposed` closes that session's
  *   instances; `agent/disposed` deliberately closes nothing, because an agent can
  *   end while its session stays open and keeps driving the browser.
@@ -68,6 +70,7 @@ import z from '@deepseek-ai/schemastery'
 
 import { createBrowserStack } from './browser.js'
 import { createCaptureService, streamMjpeg } from './capture.js'
+import { cleanStaleInstanceDirs, newInstanceKeyer } from './instance-dirs.js'
 import { createInstanceRegistry, isInstanceId } from './instances.js'
 import { browserInstanceTools } from './tools.js'
 import { createX11VncController, portCandidates } from './x11vnc.js'
@@ -283,19 +286,15 @@ export function apply(ctx, config = {}) {
   /**
    * The directory identity handed to each browser stack.
    *
-   * `createBrowserStack` names its temp directory `dsh-desktop-vnc-<pid>`, and the
-   * field exists to give each stack a directory of its own. A monotonically
-   * increasing number is used rather than a hash of the instance id because
-   * uniqueness has to be guaranteed, not merely likely: two instances sharing a
-   * directory share a Chromium SingletonLock and an Xauthority cookie, which
-   * silently locks one of them out of its own display. Starting at 1 keeps it
-   * distinct from the process id default a v1 profile would have used.
+   * `createBrowserStack` names its temp directory `dsh-desktop-vnc-<key>`, and the
+   * key has to be unique across process starts, not merely across instances: a
+   * counter that restarts at 1 reused the directory a crashed process left
+   * behind, so the first instance of the new process inherited its
+   * `profile/SingletonLock` and stale Xauthority and Chromium refused to start.
+   * The key therefore carries a per-start stamp as well as a sequence (see
+   * {@link ./instance-dirs.js}); each instance still gets its own directory.
    */
-  let instanceSequence = 0
-  const nextInstancePid = () => {
-    instanceSequence += 1
-    return instanceSequence
-  }
+  const nextInstanceKey = newInstanceKeyer()
 
   /**
    * Build the browser/vnc/capture trio for one browser instance.
@@ -321,8 +320,9 @@ export function apply(ctx, config = {}) {
       log,
       tmpDir: tmpdir(),
       // The instance identity, not the process id: two stacks in one process must
-      // land in different directories.
-      pid: nextInstancePid(),
+      // land in different directories, and a restarted process must not reuse a
+      // crashed one's directory.
+      instanceKey: nextInstanceKey(),
     })
 
     const vnc = createX11VncController({
@@ -385,6 +385,22 @@ export function apply(ctx, config = {}) {
     viewport,
     log,
   })
+
+  // Spec: clear what a crashed process left in $TMPDIR, best-effort. It can never
+  // be a startup dependency — a sweep that fails (or an unreadable temp dir) must
+  // not stop the plugin from mounting — and it never touches a directory whose
+  // owning process is still alive (see {@link ./instance-dirs.js}).
+  // `config.cleanStaleDirs` is the test seam, so no test deletes real `/tmp` files.
+  {
+    const sweep = typeof config.cleanStaleDirs === 'function' ? config.cleanStaleDirs : cleanStaleInstanceDirs
+    try {
+      void Promise.resolve(sweep({ tmpDir: tmpdir(), ownPid: process.pid, log })).catch((error) => {
+        log('warn', `desktop-vnc: stale instance directory cleanup failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
+    } catch (error) {
+      log('warn', `desktop-vnc: stale instance directory cleanup failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
 
   // Every route is registered as an effect so unloading the plugin releases it.
   const registerRoute = (route) => {
@@ -908,7 +924,10 @@ export function apply(ctx, config = {}) {
 
   // The registry reports every close, whichever path caused it (an explicit
   // DELETE, a disposed session, or unload), so the route is released exactly once.
-  registry.subscribeClose?.(unmountInstanceUpgrade)
+  // Registered as an effect like every other subscription: a registry handed in
+  // from outside outlives this plugin, and an un-unsubscribed listener would keep
+  // the disposed plugin's route map reachable.
+  ctx.effect(() => registry.subscribeClose?.(unmountInstanceUpgrade))
 
   /**
    * The registry's create, with this plugin's route bookkeeping around it.

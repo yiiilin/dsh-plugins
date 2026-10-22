@@ -16,7 +16,7 @@ import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
 
 import { apply, inject, name } from '../index.js'
-import { createInstanceRegistry } from '../instances.js'
+import { INSTANCE_STATES, createInstanceRegistry } from '../instances.js'
 
 const SESSIONS_PATH = '/_dsh/desktop-vnc/sessions'
 
@@ -67,7 +67,7 @@ function fakeBackend({ display = ':200', port = 5900 } = {}) {
  *
  * @returns {Promise<object>} the context, table, recorded routes and an agent call helper.
  */
-async function mount(t, { ports = [5900, 5901] } = {}) {
+async function mount(t, { ports = [5900, 5901], prepareDisplay } = {}) {
   const ctx = new Context()
   new SystemPrompt(ctx, { includeHarnessIdentity: false })
   new ToolRuntime(ctx)
@@ -97,7 +97,7 @@ async function mount(t, { ports = [5900, 5901] } = {}) {
   const clock = fakeClock()
   const registry = createInstanceRegistry({
     createBackend: (context) => fakeBackend({ display: ':200', port: context.port }),
-    prepareDisplay: async () => ({ display: ':200' }),
+    prepareDisplay: prepareDisplay ?? (async () => ({ display: ':200' })),
     ports,
     viewport: { width: 1280, height: 800 },
     now: clock.now,
@@ -171,6 +171,57 @@ test('browser_instance_list returns every browser instance as a frozen row', asy
       viewers: 0,
     },
   ])
+})
+
+test('browser_instance_list reports a failed instance instead of refusing the whole table', async (t) => {
+  // A boot that failed is exactly when the list matters most: it is the only
+  // surface that says *why*. An output schema that rejects the conditional
+  // `error` field would make the tool throw and hand the agent no rows at all.
+  const { call, created } = await mount(t, {
+    prepareDisplay: async () => ({ error: 'Xephyr 未安装（Xephyr not installed）' }),
+  })
+  const failed = await created('session-1')
+
+  const result = await call('browser_instance_list')
+
+  assert.equal(result.isError, false, 'a failed row must not cost the caller the whole list')
+  assert.equal(result.value.length, 1)
+  assert.equal(result.value[0].id, failed.id)
+  assert.equal(result.value[0].state, 'failed')
+  assert.match(result.value[0].error, /Xephyr 未安装/u)
+})
+
+test('browser_instance_list returns a failed row next to a healthy one', async (t) => {
+  // One bad row must not hide the good ones either: the table is the address
+  // book, so a single failure cannot take the reachable instances off it.
+  const failures = { remaining: 0 }
+  const { call, created } = await mount(t, {
+    prepareDisplay: async () => (failures.remaining > 0
+      ? { error: 'chromium exited during startup' }
+      : { display: ':200' }),
+  })
+  const healthy = await created('session-1')
+  failures.remaining += 1
+  const failing = await created('session-2')
+
+  const result = await call('browser_instance_list')
+
+  assert.equal(result.isError, false)
+  assert.deepEqual(result.value.map((row) => row.id), [healthy.id, failing.id])
+  assert.equal(result.value[0].state, 'ready')
+  assert.equal(result.value[1].state, 'failed')
+  assert.equal(result.value[1].error, 'chromium exited during startup')
+})
+
+test('the list schema admits exactly the states the table can report', async (t) => {
+  // The tool schema and the table must not drift: a state the table starts
+  // reporting would make every list call fail with "not one of the allowed
+  // values", and a state the schema allows but the table never emits is a
+  // promise to the model that nothing keeps.
+  const { ctx } = await mount(t)
+  const schema = ctx.tools.get('browser_instance_list').output.schema
+
+  assert.deepEqual(schema.items.properties.state.enum, INSTANCE_STATES)
 })
 
 test('browser_instance_create answers with the new id and the starting state', async (t) => {

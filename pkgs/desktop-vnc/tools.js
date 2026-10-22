@@ -28,23 +28,26 @@
 
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
-/** The three states a browser instance can be in, as the list reports them. */
-const STATES = ['starting', 'ready', 'failed']
+import { INSTANCE_STATES } from './instances.js'
 
 /** Render one canonical value as the single JSON text block the model reads. */
 const jsonRender = (_args, value) => [{ type: 'text', text: JSON.stringify(value) }]
 
 /**
  * The list row schema. It mirrors the frozen HTTP row exactly — eight fields,
- * epoch seconds — so the tool and `GET /sessions` cannot describe the same table
- * differently.
+ * epoch seconds — plus the one conditional field a `failed` row adds, so the
+ * tool and `GET /sessions` cannot describe the same table differently.
+ *
+ * `additionalProperties: false` stays on: the row is a closed shape, and a key
+ * the table starts emitting without being declared here is a contract change
+ * that should fail loudly rather than reach a model unannounced.
  */
 const ROW_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
     id: { type: 'string', description: '浏览器实例 id; pass this to the other browser_instance_ tools.' },
-    state: { type: 'string', enum: STATES },
+    state: { type: 'string', enum: INSTANCE_STATES },
     width: { type: 'integer' },
     height: { type: 'integer' },
     createdAt: { type: 'integer', description: 'Epoch seconds.' },
@@ -54,6 +57,10 @@ const ROW_SCHEMA = {
     },
     lastActiveAt: { type: 'integer', description: 'Epoch seconds.' },
     viewers: { type: 'integer', description: 'Clients currently watching this instance.' },
+    error: {
+      type: 'string',
+      description: 'Why the instance failed; present only on a failed row, absent on starting/ready rows.',
+    },
   },
 }
 
@@ -61,6 +68,8 @@ const LIST_DESCRIPTION = [
   'List every browser instance (浏览器实例) held by this dsh process, in creation order.',
   'Each row carries its browser instance id (浏览器实例 id), state (starting | ready | failed), size,',
   'creation time, owning session (实例归属), last activity and current viewer count.',
+  'A failed row also carries `error`, the reason that instance did not come up; a starting or ready',
+  'row has no such field.',
   'This is the only way to learn ids: read them here, then pass one to browser_instance_close.',
   'Do not guess an id, and do not treat the first, newest or only row as an implicit target.',
 ].join(' ')

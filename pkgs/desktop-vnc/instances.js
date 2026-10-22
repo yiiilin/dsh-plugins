@@ -11,10 +11,13 @@
  * - **The id is ours.** It is minted here from `crypto.randomUUID()`, never taken
  *   from bsk or any other external tool: swapping the driver layer must not
  *   change what an agent addresses an instance by.
- * - **Ports are claimed here, synchronously, before any bind.** Probe-then-bind is
- *   not atomic, so two instances created together would both see the same port as
- *   free and both try to bind it. The table holds the claim instead, which is why
- *   it is handed the port pool rather than probing for one.
+ * - **Ports are claimed here, synchronously, before any bind — then probed.**
+ *   Probe-then-bind is not atomic, so two instances created together would both
+ *   see the same port as free and both try to bind it. The table holds the claim
+ *   instead, which is why it is handed the port pool. A claim only rules out
+ *   *this process*: `boot()` therefore probes the claimed port before building the
+ *   backend and walks on when a foreign server already answers there. Adopting
+ *   such a server would show another instance's desktop with no error anywhere.
  * - **Ownership belongs to the session.** Closing a session closes its instances;
  *   nothing else does (see `disposeSession`, and the `session/disposed` wiring in
  *   index.js — `agent/disposed` is deliberately not listened to).
@@ -23,6 +26,8 @@
  */
 
 import { randomUUID } from 'node:crypto'
+
+import { probePort } from './x11vnc.js'
 
 /** Short opaque id: eight hex digits is 32 bits of collision space. */
 const ID_LENGTH = 8
@@ -71,6 +76,9 @@ function instanceError(status, message) {
  * @param {(context: object) => Promise<{display: string}|{error: string}>} [options.prepareDisplay]
  *   resolves and retargets the display for one freshly built backend.
  * @param {number[]} [options.ports] the RFB ports this process may claim, preferred first.
+ * @param {(port: number) => Promise<boolean>} [options.probe] reports whether a port
+ *   already answers; the default is the real loopback connect probe. Injected so
+ *   tests never bind a socket.
  * @param {{width: number, height: number}} [options.viewport] reported size of every instance.
  * @param {() => number} [options.now] clock, for tests.
  * @param {(level: string, message: string) => void} [options.log] diagnostic sink.
@@ -81,6 +89,7 @@ export function createInstanceRegistry({
   createBackend,
   prepareDisplay,
   ports = [],
+  probe = probePort,
   viewport = { width: 1280, height: 800 },
   now = Date.now,
   log,
@@ -164,6 +173,76 @@ export function createInstanceRegistry({
     if (Number.isInteger(port)) claimedPorts.delete(port)
   }
 
+  /** True when something already answers on `port`; an unreadable probe is not occupancy. */
+  const portTaken = async (port) => {
+    try {
+      return (await probe(port)) === true
+    } catch {
+      // An unreadable probe is not proof of occupancy: the bind attempt reports
+      // the real failure rather than this one hiding it.
+      return false
+    }
+  }
+
+  /**
+   * Confirm the port `create()` reserved is actually free, walking the pool when
+   * a foreign server already holds it.
+   *
+   * `create()` cannot await, so it claims the lowest port this process does not
+   * hold; that says nothing about a *foreign* listener. This is where the two are
+   * told apart: the reserved port is probed first, and when something answers on
+   * it the claim is given back and the pool is walked again.
+   *
+   * The reserve-then-probe order is what keeps the synchronous guarantee intact
+   * for concurrent boots: a candidate enters `claimedPorts` **before** its probe
+   * awaits, so a second instance never sees the same port as free, and a port
+   * that turns out to be free is simply kept.
+   *
+   * @param {object} entry the entry whose reserved port to confirm.
+   * @returns {Promise<number|null>} a claimed, free port, or null when none is left.
+   */
+  const confirmPort = async (entry) => {
+    const reserved = entry.port
+    if (Number.isInteger(reserved) && !await portTaken(reserved)) {
+      // close() may have given the claim back while the probe was in flight: the
+      // entry must not act on a port it no longer holds.
+      if (entry.closed) return null
+      // Still ours unless the release above raced: claimPort() only skips ports
+      // in `claimedPorts`, so re-adding is a no-op in the normal case.
+      claimedPorts.add(reserved)
+      return reserved
+    }
+    if (Number.isInteger(reserved)) releasePort(reserved)
+    entry.port = null
+
+    for (const port of ports) {
+      // The reserved port was just probed and found taken; walking it again would
+      // only repeat the same answer.
+      if (port === reserved || claimedPorts.has(port)) continue
+      claimedPorts.add(port)
+      const taken = await portTaken(port)
+      if (entry.closed) {
+        claimedPorts.delete(port)
+        return null
+      }
+      if (!taken) {
+        entry.port = port
+        return port
+      }
+      claimedPorts.delete(port)
+    }
+    return null
+  }
+
+  /** The 503 an exhausted pool produces, naming what is already open. */
+  const exhausted = () => {
+    const open = [...entries.values()].map((entry) => `${entry.id}:${entry.state}`).join(', ')
+    return instanceError(
+      503,
+      `没有空闲的 RFB 端口（no free RFB port in the configured range）; open instances: ${open || 'none'}`,
+    )
+  }
+
   /** Tear down one entry's stack, best-effort: a failed stop must not block a close. */
   const disposeBackend = async (entry) => {
     const backend = entry.backend
@@ -191,7 +270,14 @@ export function createInstanceRegistry({
    */
   const boot = async (entry) => {
     try {
-      const backend = createBackend({ id: entry.id, port: entry.port })
+      // The port reserved at create() time is only a claim against this process;
+      // a foreign listener on it means it was never really free. Confirm before
+      // the backend is built, because the backend binds that exact port.
+      const port = await confirmPort(entry)
+      if (entry.closed) return
+      if (port === null) throw exhausted()
+
+      const backend = createBackend({ id: entry.id, port })
       entry.browser = backend.browser ?? null
       entry.vnc = backend.vnc ?? null
       entry.capture = backend.capture ?? null
@@ -247,15 +333,10 @@ export function createInstanceRegistry({
    */
   const create = ({ ownerSessionId } = {}) => {
     // Claimed synchronously, before any await, so two concurrent creates cannot
-    // both see the same port as free.
+    // both see the same port as free. `boot` then confirms the claim against
+    // foreign listeners, which is the part a synchronous claim cannot know.
     const port = claimPort()
-    if (port === null) {
-      const open = [...entries.values()].map((entry) => `${entry.id}:${entry.state}`).join(', ')
-      throw instanceError(
-        503,
-        `没有空闲的 RFB 端口（no free RFB port in the configured range）; open instances: ${open || 'none'}`,
-      )
-    }
+    if (port === null) throw exhausted()
 
     const id = newInstanceId()
     const createdAt = now()
