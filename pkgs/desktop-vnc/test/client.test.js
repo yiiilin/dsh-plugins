@@ -48,6 +48,20 @@ const CONTRACT_KEYS = [
   "error.hint",
   "error.asset",
   "error.state",
+  // The instance list and the empty viewer.
+  "list.title",
+  "list.refresh",
+  "list.loading",
+  "list.empty",
+  "list.emptyHint",
+  "list.error",
+  "list.retry",
+  "viewer.empty",
+  "viewer.emptyHint",
+  "state.starting",
+  "state.ready",
+  "state.failed",
+  "state.unknown",
 ];
 
 const REACT_STUB = new Proxy({}, {
@@ -164,6 +178,59 @@ test("builds the WebSocket URL from the page scheme", () => {
       "ws://127.0.0.1:3080/main/_dsh/desktop-vnc/ws");
     assert.equal(__test.wsUrlFor("https://dsh.yiln.de/env-6-13/_dsh/desktop-vnc/ws"),
       "wss://dsh.yiln.de/env-6-13/_dsh/desktop-vnc/ws");
+});
+
+// ===== instance list and viewer selection =====
+
+test("addresses one browser instance's socket, and keeps the v1 route without an id", () => {
+  const { __test } = exportsOf();
+  // The list route and the per-instance socket are the two Host routes the shell
+  // and the viewer need; both resolve against the page base so the environment
+  // prefix survives.
+  assert.match(__test.SESSIONS_PATH(), /\/main\/_dsh\/desktop-vnc\/sessions$/u);
+  assert.equal(__test.WS_PATH("aaaa1111"),
+    "http://127.0.0.1:3080/main/_dsh/desktop-vnc/sessions/aaaa1111/ws");
+  // A body rendered outside the seat has no instance id (and a v1 client still
+  // speaks the frozen single-socket route), so that route stays the fallback
+  // rather than becoming `/sessions//ws`.
+  assert.match(__test.WS_PATH(), /\/main\/_dsh\/desktop-vnc\/ws$/u);
+  assert.doesNotMatch(__test.WS_PATH(""), /\/sessions\//u);
+  assert.doesNotMatch(__test.WS_PATH(null), /\/sessions\//u);
+  // The id is a path segment, so it must be encoded rather than concatenated raw.
+  assert.match(__test.WS_PATH("a/b"), /\/sessions\/a%2Fb\/ws$/u);
+});
+
+test("parses the sessions list defensively", () => {
+  const { __test } = exportsOf();
+  const sent = { id: "aaaa1111", state: "ready", width: 1280, height: 800, createdAt: 1, ownerSessionId: "s1", lastActiveAt: 2, viewers: 1 };
+  const rows = __test.parseInstanceList([
+    sent,
+    { id: "", state: "ready" },
+    { state: "ready" },
+    null,
+  ]);
+  assert.equal(rows.length, 1, "only entries with a usable id survive");
+  // The whole row survives untouched: the fields the list does not draw yet are
+  // still the ones the server sent, so a later detail needs no second shape.
+  assert.deepEqual({ ...rows[0] }, sent);
+  // (An array crosses the VM realm, so length is the comparable fact.)
+  assert.equal(__test.parseInstanceList(undefined).length, 0);
+  assert.equal(__test.parseInstanceList({ not: "an array" }).length, 0);
+});
+
+test("keeps a focus only while the instance is still listed", () => {
+  const { __test } = exportsOf();
+  const rows = [{ id: "aaaa1111" }, { id: "bbbb2222" }];
+  // The whole point of the rule: a closed focus returns to *unselected*, it does
+  // not slide to whichever instance happens to be next.
+  assert.equal(__test.focusAfterList("aaaa1111", rows), "aaaa1111");
+  assert.equal(__test.focusAfterList("aaaa1111", [{ id: "bbbb2222" }]), null);
+  assert.equal(__test.focusAfterList(null, rows), null);
+  assert.equal(__test.focusAfterList("", rows), null);
+  // A list that could not be read is not a list that closed the instance: the
+  // focus has to survive an unreadable response.
+  assert.equal(__test.focusAfterList("aaaa1111", undefined), "aaaa1111");
+  assert.equal(__test.focusAfterList("aaaa1111", [null, "x", 7]), null);
 });
 
 // ===== state machine =====
@@ -339,8 +406,19 @@ test("registers the tab kind and the pane body under the same key", () => {
   assert.equal(body.descriptor.key, "@yiln-dsh/dsh-desktop-vnc");
   assert.equal(body.descriptor.locale, "desktop-vnc");
   assert.equal(typeof body.component, "function");
+  // The seat's body is the shell (list + focused viewer), not the bare viewer:
+  // registering `VncPage` directly is exactly what this change replaced.
+  assert.equal(body.component.name, "VncShell");
   assert.ok(effects.some((label) => /locale/u.test(label ?? "")));
   assert.ok(effects.some((label) => /stylesheet/u.test(label ?? "")));
+});
+
+test("exposes a shell factory that composes the list and the viewer", () => {
+  const { __test } = exportsOf();
+  assert.equal(typeof __test.createVncShell, "function");
+  const shell = __test.createVncShell((key) => key, {});
+  assert.equal(typeof shell, "function");
+  assert.equal(shell.name, "VncShell");
 });
 
 test("apply is a no-op when the product has no right sidebar", () => {

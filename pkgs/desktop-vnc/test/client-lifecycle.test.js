@@ -31,19 +31,34 @@ const EXPECTED_RFB_PATH = `${BASE}_dsh/desktop-vnc/asset/core/rfb.js`;
  * Build a React stub whose `createElement` returns a walkable tree and whose
  * hooks resolve by call order, so a function component can be rendered and
  * re-rendered outside a browser.
- * @returns the stub plus `render`, `setProps`, `unmount`, and `find`.
+ *
+ * Function-component children are rendered too, the way React does: the child
+ * keeps its own hooks across renders of the parent, and a changed `key` replaces
+ * it — unmounting the old one (running its effect cleanups) before the new one
+ * mounts. That is what lets the tests prove the shell's `key={focusedInstanceId}`
+ * actually releases the previous viewer instead of only asserting the element's
+ * props.
+ *
+ * @param component - the function component to render.
+ * @param initialProps - its props.
+ * @param shared - `{ current }`, the React object of the innermost runtime
+ *                 currently rendering. The bundle's `require('react')` proxy
+ *                 reads through it, so a nested component gets its own hooks.
+ * @returns the stub plus `render`, `setProps`, `unmount`, `find`, and `text`.
  */
-function createHookRuntime(component, initialProps) {
+function createHookRuntime(component, initialProps, shared = { current: null }) {
   const slots = [];
   const Ref = Symbol("ref");
   const St = Symbol("state");
   const Ef = Symbol("effect");
   let cursor = 0;
-  let props = initialProps;
+  let props = initialProps ?? {};
   let rendering = false;
   let again = false;
   let tree = null;
   let unmounted = false;
+  /** Mounted function-component children, keyed by position + key. */
+  const children = new Map();
 
   const sameDeps = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((value, i) => Object.is(value, b[i]));
 
@@ -98,13 +113,61 @@ function createHookRuntime(component, initialProps) {
     }
   };
 
+  /**
+   * Render the function components in the tree just produced.
+   *
+   * A child's identity is its position plus its `key` prop, which is exactly the
+   * part of React's reconciliation the shell's focus switch relies on. Host
+   * elements are walked through; their subtrees are searched by `find`/`text`.
+   */
+  const mountChildren = () => {
+    const next = new Map();
+    let anonymous = 0;
+    const walk = (node, path) => {
+      if (node === null || node === undefined || typeof node !== "object") return;
+      if (Array.isArray(node)) {
+        node.forEach((child, index) => walk(child, `${path}[${index}]`));
+        return;
+      }
+      if (typeof node.type === "function") {
+        const explicitKey = node.props?.key;
+        const key = explicitKey === undefined || explicitKey === null ? `#${anonymous++}` : String(explicitKey);
+        const slotKey = `${path}:${key}`;
+        const existing = children.get(slotKey);
+        if (existing !== undefined && existing.component === node.type) {
+          next.set(slotKey, existing);
+          existing.runtime.setProps(node.props);
+          // The subtree is read through `child`, never captured: a child that
+          // re-renders after an async update must be visible to `find`.
+          node.child = existing.runtime;
+          return;
+        }
+        const runtime = createHookRuntime(node.type, node.props, shared);
+        next.set(slotKey, { component: node.type, runtime });
+        node.child = runtime;
+        runtime.render();
+        return;
+      }
+      (node.children ?? []).forEach((child, index) => walk(child, `${path}/${index}`));
+    };
+    walk(tree, "root");
+    // A key that disappeared is unmounted, which runs the child's effect cleanups.
+    for (const [slotKey, entry] of children) {
+      if (!next.has(slotKey)) entry.runtime.unmount();
+    }
+    children.clear();
+    for (const [slotKey, entry] of next) children.set(slotKey, entry);
+  };
+
   const React = {
     Fragment: "fragment",
-    createElement: (type, elementProps, ...children) => {
+    createElement: (type, elementProps, ...childNodes) => {
       const node = {
         type,
         props: elementProps ?? {},
-        children: children.flat(Infinity).filter((child) => child !== null && child !== undefined && child !== false),
+        children: childNodes.flat(Infinity).filter((child) => child !== null && child !== undefined && child !== false),
+        // A mounted function-component child, if this node is one.
+        child: null,
       };
       // React assigns a `ref` prop after the host node is created; the page
       // reads `hostRef.current` synchronously when it connects, so the stub
@@ -122,12 +185,16 @@ function createHookRuntime(component, initialProps) {
       return;
     }
     rendering = true;
+    const outer = shared.current;
     do {
       again = false;
       cursor = 0;
+      shared.current = React;
       tree = component(props);
+      mountChildren();
       runEffects();
     } while (again);
+    shared.current = outer;
     rendering = false;
   };
 
@@ -136,11 +203,13 @@ function createHookRuntime(component, initialProps) {
     render,
     get tree() { return tree; },
     setProps(next) {
-      props = { ...props, ...next };
+      props = { ...props, ...(next ?? {}) };
       render();
     },
     unmount() {
       unmounted = true;
+      for (const entry of children.values()) entry.runtime.unmount();
+      children.clear();
       for (const slot of slots) {
         if (slot?.kind === Ef && typeof slot.cleanup === "function") {
           const cleanup = slot.cleanup;
@@ -157,6 +226,7 @@ function createHookRuntime(component, initialProps) {
         if (typeof node.type === "function" || typeof node.type === "string") {
           if (predicate(node)) return node;
         }
+        if (node.child !== null && node.child !== undefined) stack.push(node.child.tree);
         stack.push(...node.children);
       }
       return null;
@@ -168,6 +238,7 @@ function createHookRuntime(component, initialProps) {
         const node = stack.pop();
         if (typeof node === "string") { parts.push(node); continue; }
         if (node === null || node === undefined || typeof node !== "object") continue;
+        if (node.child !== null && node.child !== undefined) stack.push(node.child.tree);
         stack.push(...node.children);
       }
       return parts.join(" ");
@@ -180,9 +251,13 @@ function createHookRuntime(component, initialProps) {
 /**
  * Execute the shipped bundle in a VM and return a live page instance with its
  * first automatic connection already in flight.
+ *
  * @param options - `visible` is the pane's initial visibility; `failImports`
  *                  makes the fake noVNC module reject that many times, which is
- *                  how the automatic retry bound is observed.
+ *                  how the automatic retry bound is observed; `component`
+ *                  replaces the mounted body (the shell tests mount `VncShell`);
+ *                  `instances` is the list the sessions route answers with, or a
+ *                  function called per request so a test can change it.
  * @returns the page runtime plus the fake RFB class it recorded.
  */
 async function mountPage(options = {}) {
@@ -224,25 +299,57 @@ async function mountPage(options = {}) {
     removeEventListener: () => {},
     createElement: () => ({ id: "", dataset: {}, textContent: "", remove: () => {} }),
   };
+  /** The sessions list the Host would answer with, one entry per instance. */
+  let instances = options.instances ?? [];
+  const sessionsCalls = [];
+  const requests = [];
+  const fetchImpl = async (url, init) => {
+    sessionsCalls.push(String(url));
+    requests.push({ url: String(url), method: init?.method ?? "GET" });
+    // `/state` is what the viewer's failure diagnosis reads; the list route is
+    // the shell's data source. One fetch stub serves both.
+    if (String(url).includes("/sessions")) {
+      // An Error stands for an unreachable Host: a failed refresh is a distinct
+      // case from an empty table, and the shell must tell them apart.
+      if (instances instanceof Error) throw instances;
+      const rows = typeof instances === "function" ? instances() : instances;
+      return { ok: true, status: 200, json: async () => rows };
+    }
+    return { ok: true, status: 200, json: async () => ({ vncRunning: false }) };
+  };
   const window = {
     location: { protocol: "http:", host: "127.0.0.1:3080" },
-    fetch: async () => ({ ok: true, json: async () => ({ vncRunning: false }) }),
+    fetch: fetchImpl,
     isSecureContext: true,
   };
   const navigator = { clipboard: { readText: async () => "from-clipboard" } };
 
+  // Platform timers the bundle may schedule — the list's poll — captured so a
+  // test fires them on demand instead of waiting for wall-clock time.
+  const timers = [];
+  const clearedTimers = new Set();
+  const setIntervalStub = (callback) => {
+    timers.push(callback);
+    return timers.length;
+  };
+  const clearIntervalStub = (id) => { clearedTimers.add(id); };
+
   let entry = null;
   window.__ModuleLoader__ = { load: (spec) => { entry = spec; } };
-  const sandbox = { window, document, navigator, console, Promise, Object, Array, Error, JSON, URL, setTimeout, clearTimeout, fetch: window.fetch };
+  const sandbox = {
+    window, document, navigator, console, Promise, Object, Array, Error, JSON, URL, setTimeout, clearTimeout,
+    fetch: fetchImpl, setInterval: setIntervalStub, clearInterval: clearIntervalStub,
+  };
   vm.createContext(sandbox);
   vm.runInContext(CLIENT_SOURCE, sandbox, { filename: CLIENT_PATH, timeout: 2000 });
   assert.notEqual(entry, null, "the bundle must register with window.__ModuleLoader__");
 
   // The factory captures `require('react')` while evaluating, before the hook
   // runtime exists; the proxy resolves each hook against the live runtime so
-  // the real component renders with the stub's hooks.
-  const reactTarget = { current: null };
-  const ReactProxy = new Proxy({}, { get: (_target, name) => reactTarget.current[name] });
+  // the real component renders with the stub's hooks. `shared.current` tracks
+  // the innermost runtime, so a nested component gets hooks of its own.
+  const shared = { current: null };
+  const ReactProxy = new Proxy({}, { get: (_target, name) => shared.current[name] });
   const exported = entry.factory((name) => {
     if (name === "react") return ReactProxy;
     throw new Error(`unexpected client require: ${name}`);
@@ -277,18 +384,40 @@ async function mountPage(options = {}) {
     // No `sessionId` prop: the seat does not pass one. The body's identity comes from
     // the tab the hook reports, exactly as it does in the real seat.
     let tabId = options.tabId ?? "tab-1"
-    const runtime = createHookRuntime(exported.__test.createVncPage(t, connection), {
-      useTabInfo: () => ({ tab: { id: tabId, visible: tabVisible } }),
-    });
-  reactTarget.current = runtime.React;
+    const pageProps = { useTabInfo: () => ({ tab: { id: tabId, visible: tabVisible } }) }
+    const body = typeof options.component === "function"
+      ? options.component(exported.__test, t, connection)
+      : exported.__test.createVncPage(t, connection)
+    const runtime = createHookRuntime(body, pageProps, shared)
+  shared.current = runtime.React
   runtime.render();
 
   return {
     runtime,
     created,
     importedPaths,
+    sessionsCalls,
     exported,
     ZH: exported.__test.ZH_DICT,
+    /** Replace the list the sessions route answers with, then re-read it. */
+    setInstances: (next) => { instances = next; },
+    /**
+     * Click the list's own refresh control, as a user or a poll would, and let
+     * the request settle.
+     */
+    refresh: async () => {
+      const button = runtime.find((node) => node.props["aria-label"] === t("list.refresh") && node.type === "button")
+      assert.notEqual(button, null, "the list must offer a refresh control")
+      button.props.onClick()
+      for (let index = 0; index < 10; index += 1) await new Promise((resolve) => setImmediate(resolve))
+    },
+    /** Run every interval the bundle scheduled (the list's poll), then settle. */
+    tick: async () => {
+      for (const callback of [...timers]) callback()
+      for (let index = 0; index < 10; index += 1) await new Promise((resolve) => setImmediate(resolve))
+    },
+    /** Whether the bundle still holds a live poll. */
+    intervals: () => timers.filter((_callback, index) => !clearedTimers.has(index + 1)).length,
     setTabVisible: (value) => { tabVisible = value; runtime.setProps({}); },
     /** Rebind the pane to another tab, as a session switch does. */
     setTabId: (value) => { tabId = value; runtime.setProps({}); },
@@ -668,3 +797,199 @@ test("a new tab identity starts a fresh viewer lifetime", async () => {
   // x11vnc's client slot, alive with nothing drawing it.
   assert.equal(before.disconnects, 1, "the previous viewer is disconnected")
 })
+
+// ===== instance list and switching =====
+
+/** Two rows as `GET /sessions` reports them, in table order. */
+const INSTANCES = [
+  { id: "aaaa1111", state: "ready", width: 1280, height: 800, createdAt: 1792637133, ownerSessionId: "sess-one", lastActiveAt: 1792637200, viewers: 1 },
+  { id: "bbbb2222", state: "starting", width: 1280, height: 800, createdAt: 1792637300, ownerSessionId: "sess-two", lastActiveAt: 1792637300, viewers: 0 },
+];
+
+/** Mount the real shell, which is what the seat registers as the tab body. */
+async function mountShell(options = {}) {
+  const page = await mountPage({
+    ...options,
+    component: (test, t, connection) => test.createVncShell(t, connection),
+  });
+  await page.settle();
+  return page;
+}
+
+/** Every list row in document order, the way the seat draws them. */
+function listRows(page) {
+  const rows = [];
+  const walk = (node) => {
+    if (node === null || node === undefined || typeof node !== "object") return;
+    if (node.props?.className === "dsh-vnc-instance") rows.push(node);
+    if (node.child !== null && node.child !== undefined) walk(node.child.tree);
+    for (const child of node.children) walk(child);
+  };
+  walk(page.runtime.tree);
+  return rows;
+}
+
+test("renders one list row per browser instance, from the Host list", async () => {
+  const page = await mountShell({ instances: INSTANCES });
+  assert.deepEqual(page.sessionsCalls, ["http://127.0.0.1:3080/main/_dsh/desktop-vnc/sessions"],
+    "the list comes from the Host's instance table, under the environment prefix");
+
+  const rows = listRows(page);
+  assert.equal(rows.length, 2, "one row per instance");
+  assert.deepEqual(rows.map((row) => row.props["data-instance-id"]), ["aaaa1111", "bbbb2222"]);
+  assert.deepEqual(rows.map((row) => row.props["data-state"]), ["ready", "starting"]);
+  // The list is what the user reads, so both ids are on screen.
+  assert.match(page.runtime.text(), /aaaa1111/u);
+  assert.match(page.runtime.text(), /bbbb2222/u);
+});
+
+test("shows the empty list state rather than an empty list", async () => {
+  const page = await mountShell({ instances: [] });
+  assert.equal(listRows(page).length, 0);
+  assert.match(page.runtime.text(), /没有浏览器实例/u);
+});
+
+test("shows the empty viewer state until an instance is selected", async () => {
+  const page = await mountShell({ instances: INSTANCES });
+  // The point of the empty state: no canvas is mounted, so no viewer is even
+  // requested before the user picks an instance.
+  assert.equal(page.findByClass("dsh-vnc-canvas"), null, "no canvas may exist before a selection");
+  assert.equal(page.findByClass("dsh-vnc-stage"), null, "no stage may exist before a selection");
+  assert.match(page.runtime.text(), /选择一个浏览器实例/u);
+  assert.deepEqual(page.importedPaths, [], "nothing is loaded until an instance is focused");
+  assert.equal(page.created.length, 0);
+});
+
+test("selecting a row connects the viewer to that instance", async () => {
+  const page = await mountShell({ instances: INSTANCES });
+  listRows(page)[0].props.onClick();
+  await page.settle();
+
+  assert.equal(page.findByClass("dsh-vnc-canvas") !== null, true, "the viewer mounts once selected");
+  assert.equal(page.created.length, 1);
+  assert.equal(page.viewer().url, "ws://127.0.0.1:3080/main/_dsh/desktop-vnc/sessions/aaaa1111/ws",
+    "the viewer must dial the selected instance's own socket");
+});
+
+test("switching rows releases the previous viewer before opening the next", async () => {
+  const page = await mountShell({ instances: INSTANCES });
+  listRows(page)[0].props.onClick();
+  await page.settle();
+  const first = page.viewer();
+  first.emit("connect", {});
+  assert.equal(first.disconnects, 0, "the first viewer is live");
+
+  listRows(page)[1].props.onClick();
+  await page.settle();
+
+  // The abandoned viewer keeps its socket, and through it x11vnc's client slot,
+  // alive with nothing drawing it: it has to be gone before the switch counts.
+  assert.equal(first.disconnects, 1, "switching must disconnect the previous viewer");
+  assert.equal(page.created.length, 2, "the new instance gets a viewer of its own");
+  assert.equal(page.viewer().url, "ws://127.0.0.1:3080/main/_dsh/desktop-vnc/sessions/bbbb2222/ws");
+  // The new viewer is a fresh lifetime: the old connection's status must not leak
+  // into it, and the toolbar must offer the new session's own connect.
+  assert.match(page.runtime.text(), /自动连接中|正在连接桌面|正在加载 VNC 客户端/u);
+  assert.doesNotMatch(page.runtime.text(), /已连接/u);
+});
+
+test("closing the focused instance returns to an unselected page, not to another instance", async () => {
+  const page = await mountShell({ instances: INSTANCES });
+  listRows(page)[0].props.onClick();
+  await page.settle();
+  const viewer = page.viewer();
+  viewer.emit("connect", {});
+
+  // The instance disappears from the Host's table (closed by the agent, or by its
+  // owning session going away).
+  page.setInstances(INSTANCES.slice(1));
+  await page.refresh();
+
+  assert.equal(viewer.disconnects, 1, "the closed instance's viewer must be released");
+  assert.equal(page.findByClass("dsh-vnc-canvas"), null, "no canvas for an instance that no longer exists");
+  assert.match(page.runtime.text(), /选择一个浏览器实例/u);
+  // The rule from the glossary: focus is not silently moved to a survivor.
+  assert.doesNotMatch(page.runtime.text(), /已连接/u);
+  await page.settle();
+  assert.equal(page.created.length, 1, "no viewer is opened for the surviving instance");
+});
+
+test("a refresh that keeps the instance does not disturb its viewer", async () => {
+  const page = await mountShell({ instances: INSTANCES });
+  listRows(page)[0].props.onClick();
+  await page.settle();
+  const viewer = page.viewer();
+  viewer.emit("connect", {});
+
+  // `lastActiveAt`/`viewers` move every time anything watches; a list refresh must
+  // not be read as a new selection and restart the stream.
+  page.setInstances([{ ...INSTANCES[0], viewers: 2, lastActiveAt: 1792637999 }, INSTANCES[1]]);
+  await page.refresh();
+
+  assert.equal(viewer.disconnects, 0, "a re-listed instance keeps its viewer");
+  assert.equal(page.created.length, 1, "the refresh must not open a second viewer");
+  assert.match(page.runtime.text(), /已连接/u);
+});
+
+test("keeps a registered focus when the list cannot be read", async () => {
+  // A failed refresh is not evidence the instance closed: dropping the focus would
+  // tear down a working stream because a poll happened to fail.
+  const page = await mountShell({ instances: INSTANCES });
+  listRows(page)[0].props.onClick();
+  await page.settle();
+  const viewer = page.viewer();
+  viewer.emit("connect", {});
+
+  page.setInstances(new Error("boom"));
+  await page.refresh();
+
+  assert.equal(viewer.disconnects, 0, "an unreadable list must not release the viewer");
+  assert.equal(page.findByClass("dsh-vnc-canvas") !== null, true);
+});
+
+test("re-reads the instance table on its own, and stops when the tab is hidden", async () => {
+  const page = await mountShell({ instances: INSTANCES });
+  assert.equal(page.sessionsCalls.length, 1, "mounting reads the table once");
+  assert.equal(page.intervals(), 1, "a shown tab keeps a poll alive");
+
+  // The poll is what notices an instance an agent created, without a click.
+  page.setInstances([...INSTANCES, { id: "cccc3333", state: "starting", viewers: 0 }]);
+  await page.tick();
+  assert.equal(listRows(page).length, 3, "a created instance shows up on the next poll");
+
+  // A hidden tab holds no poll: nothing on screen could use the answer.
+  page.setTabVisible(false);
+  assert.equal(page.intervals(), 0, "hiding the tab releases the poll");
+  page.setTabVisible(true);
+  await page.settle();
+  assert.equal(page.intervals(), 1, "revealing the tab re-arms it");
+  assert.equal(page.sessionsCalls.length, 3, "the reveal reads immediately instead of waiting a period");
+});
+
+test("a failed list read is reported and retryable, not mistaken for an empty table", async () => {
+  const page = await mountShell({ instances: [] });
+  page.setInstances(new Error("host down"));
+  await page.refresh();
+  assert.match(page.runtime.text(), /无法读取浏览器实例列表/u);
+  // An empty table and an unreachable Host are different problems; this state
+  // must not tell the user to create an instance.
+  assert.doesNotMatch(page.runtime.text(), /没有浏览器实例/u);
+
+  page.setInstances(INSTANCES);
+  page.runtime.find((node) => node.props.className === "dsh-vnc-secondary" && node.type === "button").props.onClick();
+  await page.settle();
+  assert.equal(listRows(page).length, 2, "the retry recovers the list");
+});
+
+test("labels each row's state, so the list is readable without a hover", async () => {
+  const page = await mountShell({ instances: INSTANCES });
+  const rows = listRows(page);
+  assert.deepEqual(rows.map((row) => row.props["data-state"]), ["ready", "starting"]);
+  // Both labels are visible text: the state is the first thing that decides
+  // whether a row is worth clicking.
+  assert.match(page.runtime.text(), /就绪/u);
+  assert.match(page.runtime.text(), /启动中/u);
+  // Each row still names its instance for a screen reader, state included.
+  assert.match(rows[0].props["aria-label"], /aaaa1111/u);
+  assert.match(rows[0].props["aria-label"], /就绪/u);
+});

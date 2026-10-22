@@ -42,7 +42,21 @@ window.__ModuleLoader__.load({
      * URL must be this exact path — not an `app/` bundle.
      */
     const RFB_MODULE_PATH = () => `${ASSET_BASE()}/core/rfb.js`
-    const WS_PATH = () => new URL('_dsh/desktop-vnc/ws', BASE()).href
+    /**
+     * The browser-instance table (contract §4.4). The sidebar list reads it; the
+     * focus itself is never written back, because it is this client's own state.
+     */
+    const SESSIONS_PATH = () => new URL('_dsh/desktop-vnc/sessions', BASE()).href
+    /**
+     * The socket for one browser instance, or — with no id — the frozen v1 route
+     * (`/_dsh/desktop-vnc/ws`), which the Host still serves for a single/legacy
+     * deployment. The id is a path segment, so it is encoded rather than pasted in.
+     */
+    const WS_PATH = (instanceId = '') => {
+      const id = typeof instanceId === 'string' ? instanceId.trim() : ''
+      if (id === '') return new URL('_dsh/desktop-vnc/ws', BASE()).href
+      return new URL(`_dsh/desktop-vnc/sessions/${encodeURIComponent(id)}/ws`, BASE()).href
+    }
     const STATE_PATH = () => new URL('_dsh/desktop-vnc/state', BASE()).href
 
     const ZH_DICT = {
@@ -73,6 +87,20 @@ window.__ModuleLoader__.load({
       'error.state': '无法读取桌面服务状态',
       'clipboard.pasted': '已粘贴剪贴板内容',
       'clipboard.unavailable': '无法读取本机剪贴板',
+      'list.title': '浏览器实例',
+      'list.refresh': '刷新列表',
+      'list.loading': '正在读取实例列表…',
+      'list.empty': '没有浏览器实例',
+      'list.emptyHint': '请让 agent 创建一个，再回来查看',
+      'list.error': '无法读取浏览器实例列表',
+      'list.retry': '重试',
+      'list.rowLabel': '浏览实例 {id}（{state}）',
+      'viewer.empty': '选择一个浏览器实例',
+      'viewer.emptyHint': '在左侧列表里点一个实例，就能看到它的画面',
+      'state.starting': '启动中',
+      'state.ready': '就绪',
+      'state.failed': '失败',
+      'state.unknown': '未知状态',
     }
     const EN_DICT = {
       'title': 'Desktop VNC',
@@ -102,6 +130,20 @@ window.__ModuleLoader__.load({
       'error.state': 'Could not read the desktop service state',
       'clipboard.pasted': 'Clipboard content pasted',
       'clipboard.unavailable': 'Could not read the local clipboard',
+      'list.title': 'Browser instances',
+      'list.refresh': 'Refresh list',
+      'list.loading': 'Reading the instance list…',
+      'list.empty': 'No browser instances',
+      'list.emptyHint': 'Ask an agent to create one, then check again',
+      'list.error': 'Could not read the browser instance list',
+      'list.retry': 'Retry',
+      'list.rowLabel': 'Browser instance {id} ({state})',
+      'viewer.empty': 'Select a browser instance',
+      'viewer.emptyHint': 'Pick an instance in the list on the left to see its screen',
+      'state.starting': 'Starting',
+      'state.ready': 'Ready',
+      'state.failed': 'Failed',
+      'state.unknown': 'Unknown state',
     }
 
     // ===== connection state machine =====
@@ -246,6 +288,79 @@ window.__ModuleLoader__.load({
       return RFB_MODULE_PATH()
     }
 
+    // ===== browser instance list =====
+
+    /** The three states the Host reports for a browser instance. */
+    const INSTANCE_STATES = ['starting', 'ready', 'failed']
+
+    /**
+     * How often the visible list re-reads the instance table.
+     *
+     * The table is the one shared thing about instances, and it changes without
+     * this client doing anything: an agent creates or closes one, a boot moves
+     * `starting` → `ready`, another viewer joins. Re-reading is also how a focus
+     * finds out its instance closed (see {@link focusAfterList}), which is what
+     * keeps a dead canvas off the screen.
+     */
+    const LIST_POLL_MS = 5000
+
+    /**
+     * Keep the row fields the Host sent, dropping anything without a usable id.
+     *
+     * The list is read defensively because it is the panel's only data source: a
+     * malformed row must cost that row, not the whole page. An unknown `state` is
+     * normalised to `unknown` so a row can style and label it rather than leaving
+     * a raw value in the DOM.
+     *
+     * @param rows - the decoded JSON body of `GET /sessions`.
+     * @returns the usable rows, in table order.
+     */
+    function parseInstanceList(rows) {
+      if (!Array.isArray(rows)) return []
+      const list = []
+      for (const row of rows) {
+        if (row === null || typeof row !== 'object') continue
+        if (typeof row.id !== 'string' || row.id === '') continue
+        const state = INSTANCE_STATES.indexOf(row.state) !== -1 ? row.state : 'unknown'
+        list.push({ ...row, state })
+      }
+      return list
+    }
+
+    /**
+     * Reconcile the focus with a freshly read list.
+     *
+     * A focused instance that is no longer listed was closed. The page then goes
+     * back to **unselected** rather than sliding to a neighbour: focus is the
+     * user's choice, and silently retargeting the viewer would make them watch a
+     * different browser than the one they picked. An unreadable list (`null`) is
+     * not evidence of a close, so it keeps the focus — a failed poll must not tear
+     * down a working stream.
+     *
+     * @param focused - the currently focused instance id, or null.
+     * @param rows - the rows just read, or `null`/`undefined` when unreadable.
+     * @returns the id to keep focused, or null.
+     */
+    function focusAfterList(focused, rows) {
+      if (!Array.isArray(rows)) return focused
+      if (typeof focused !== 'string' || focused === '') return null
+      return rows.some((row) => row !== null && typeof row === 'object' && row.id === focused) ? focused : null
+    }
+
+    /**
+     * Read the Host's browser instance table.
+     * @param fetchImpl - the `fetch` to use (the page's own, or the sandbox's).
+     * @returns the parsed rows.
+     * @throws when the route is unreachable or does not answer with an array.
+     */
+    async function readInstanceList(fetchImpl) {
+      const response = await fetchImpl(SESSIONS_PATH(), { headers: { accept: 'application/json' } })
+      if (response?.ok !== true) throw new Error(`desktop-vnc sessions returned HTTP ${response?.status}`)
+      const rows = await response.json()
+      if (!Array.isArray(rows)) throw new Error('desktop-vnc sessions was not an array')
+      return parseInstanceList(rows)
+    }
+
     // ===== locale fallback =====
 
     function applyParams(template, params) {
@@ -335,6 +450,114 @@ window.__ModuleLoader__.load({
       style.id = 'dsh-plugin-desktop-vnc-style'
       style.dataset.plugin = '@yiln-dsh/dsh-plugins'
       style.textContent = `
+.dsh-vnc-shell {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  box-sizing: border-box;
+  background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-base, #f5f5f4));
+  color: var(--dsw-alias-label-primary, #111827);
+  font-size: 13px;
+  overflow: hidden;
+}
+.dsh-vnc-list {
+  flex: 0 0 auto;
+  width: 190px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  border-right: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.1));
+  overflow: hidden;
+}
+.dsh-vnc-list-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 4px 6px 4px 10px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.1));
+}
+.dsh-vnc-list-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-secondary, #57534e);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dsh-vnc-list-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px;
+  box-sizing: border-box;
+}
+.dsh-vnc-instance {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 6px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: var(--dsw-radius-sm, 6px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.dsh-vnc-instance:hover {
+  background: var(--dsw-alias-interactive-bg-hover, var(--dsw-alias-bg-layer-2, #e7e5e4));
+}
+.dsh-vnc-instance:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-brand-primary, #2563eb));
+}
+.dsh-vnc-instance[aria-current="true"] {
+  background: var(--dsw-alias-bg-layer-2, #e7e5e4);
+  font-weight: 600;
+}
+.dsh-vnc-instance-id {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dsh-vnc-instance-state {
+  flex: 0 0 auto;
+  color: var(--dsw-alias-label-secondary, #57534e);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.dsh-vnc-list-note {
+  padding: 10px;
+  color: var(--dsw-alias-label-secondary, #57534e);
+  font-size: 12px;
+  line-height: 17px;
+  overflow-wrap: anywhere;
+}
+.dsh-vnc-list-note .dsh-vnc-secondary {
+  margin-top: 8px;
+}
+.dsh-vnc-viewer {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .dsh-vnc-page {
   position: relative;
   height: 100%;
@@ -346,6 +569,23 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-label-primary, #111827);
   font-size: 13px;
   overflow: hidden;
+}
+.dsh-vnc-empty {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+  box-sizing: border-box;
+  text-align: center;
+  background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-base, #f5f5f4));
+  color: var(--dsw-alias-label-secondary, #57534e);
+}
+.dsh-vnc-empty .dsh-vnc-overlay-hint {
+  max-width: 240px;
 }
 .dsh-vnc-toolbar {
   flex: 0 0 auto;
@@ -377,17 +617,21 @@ window.__ModuleLoader__.load({
   background: var(--dsw-alias-state-idle-primary, #9ca3af);
 }
 .dsh-vnc-dot[data-state="loading"],
-.dsh-vnc-dot[data-state="connecting"] {
+.dsh-vnc-dot[data-state="connecting"],
+.dsh-vnc-dot[data-state="starting"] {
   background: var(--dsw-alias-state-warn-primary, #d97706);
   animation: dsh-vnc-pulse 1.2s ease-in-out infinite;
 }
-.dsh-vnc-dot[data-state="connected"] {
+.dsh-vnc-dot[data-state="connected"],
+.dsh-vnc-dot[data-state="ready"] {
   background: var(--dsw-alias-state-success-primary, #16a34a);
 }
-.dsh-vnc-dot[data-state="error"] {
+.dsh-vnc-dot[data-state="error"],
+.dsh-vnc-dot[data-state="failed"] {
   background: var(--dsw-alias-state-error-primary, #dc2626);
 }
-.dsh-vnc-dot[data-state="disconnected"] {
+.dsh-vnc-dot[data-state="disconnected"],
+.dsh-vnc-dot[data-state="unknown"] {
   background: var(--dsw-alias-state-idle-primary, #9ca3af);
 }
 @keyframes dsh-vnc-pulse {
@@ -763,6 +1007,15 @@ window.__ModuleLoader__.load({
         const sessionId = typeof props.sessionId === 'string' && props.sessionId !== ''
           ? props.sessionId
           : tabIdentity
+        /**
+         * The browser instance this page shows. The shell mounts one viewer per
+         * focused instance, so this is fixed for the page's whole lifetime; the
+         * lifetime effect's `[sessionId]` dependency is therefore what restarts the
+         * connection when the shell switches instances — the shell also keys the
+         * element, so a switch replaces the component outright.
+         */
+        const instanceId = typeof props.instanceId === 'string' ? props.instanceId : ''
+        const wsPath = WS_PATH(instanceId)
 
         // One lifetime per mounted page (and per Session switch): leaving the
         // page releases the viewer, because the pane may remount the body
@@ -923,7 +1176,7 @@ window.__ModuleLoader__.load({
           const credentials = typeof passwordRef.current === 'string' ? { password: passwordRef.current } : {}
           let rfb
           try {
-            rfb = new RFB(hostRef.current, wsUrlFor(WS_PATH()), {
+            rfb = new RFB(hostRef.current, wsUrlFor(wsPath), {
               credentials,
               wsProtocols: ['binary', 'base64'],
               scaleViewport: scale,
@@ -1236,6 +1489,142 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // ===== shell: instance list + viewer =====
+
+    /**
+     * The tab body: the browser-instance list on the left, the focused instance's
+     * viewer on the right.
+     *
+     * The list is the Host's table, so every client sees the same instances. The
+     * **focus** is the opposite: it is this client's own UI state and never leaves
+     * the page, which is what lets two people watch two different instances from
+     * the same account.
+     *
+     * The viewer is mounted with `key={focusedInstanceId}`, so switching instances
+     * replaces the component instead of re-rendering it. The replacement unmounts
+     * the old viewer — releasing its socket and x11vnc client — and starts a fresh
+     * page lifetime for the new one, which is exactly the reset an instance switch
+     * needs; nothing has to be torn down by hand here.
+     *
+     * @param t - the module's locale-bound translator.
+     * @param connection - the Host connection generation channel, passed through.
+     * @param VncPage - the viewer component to mount for the focused instance.
+     */
+    function createVncShell(t, connection, VncPage) {
+      const Viewer = typeof VncPage === 'function' ? VncPage : createVncPage(t, connection)
+
+      return function VncShell(props) {
+        /** The focused browser instance, or null for "nothing selected". */
+        const [focusedId, setFocusedId] = React.useState(null)
+        /** The last list read: `{ rows }`, or `{ error }`. `null` while loading. */
+        const [listing, setListing] = React.useState(null)
+        const [refreshKey, setRefreshKey] = React.useState(0)
+        /**
+         * The seat's own tab reader, read here for one fact — whether the tab is
+         * showing — and handed to the viewer unchanged, because the viewer is the
+         * component that acts on it. It is a framework hook, so it is called
+         * unconditionally; a bare render (unit tests) gets the inert placeholder.
+         */
+        const useTabInfo = typeof props?.useTabInfo === 'function' ? props.useTabInfo : noTabInfo
+        const tabInfo = useTabInfo()
+        const visible = tabInfo === null || tabInfo === undefined ? true : tabInfo?.tab?.visible !== false
+
+        /**
+         * Read the table once per refresh and once per poll, and reconcile the
+         * focus with what came back. A read that fails keeps the previous rows and
+         * the focus: an unreachable Host is not a closed instance.
+         */
+        React.useEffect(() => {
+          // A hidden tab neither reads nor polls: nobody is looking at the list
+          // and its viewer is already released. Revealing it re-runs this effect,
+          // which reads once immediately.
+          if (!visible) return undefined
+          let live = true
+          let inFlight = false
+          const read = async () => {
+            if (inFlight) return
+            inFlight = true
+            try {
+              const rows = await readInstanceList(
+                typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch.bind(window) : fetch,
+              )
+              if (!live) return
+              setListing({ rows })
+              setFocusedId((current) => focusAfterList(current, rows))
+            } catch (error) {
+              if (!live) return
+              setListing((current) => ({ rows: current?.rows ?? [], error: true }))
+            } finally {
+              inFlight = false
+            }
+          }
+          void read()
+          // The instance table changes without this client doing anything: an
+          // agent creates or closes one, a boot moves `starting` → `ready`,
+          // another viewer joins. Polling is what keeps a row — and a focus whose
+          // instance was closed elsewhere — honest.
+          const timer = setInterval(() => { void read() }, LIST_POLL_MS)
+          return () => {
+            live = false
+            clearInterval(timer)
+          }
+        }, [refreshKey, visible])
+
+        const rows = listing?.rows ?? []
+        const failed = listing?.error === true && rows.length === 0
+        const loading = listing === null
+        const focusedRow = focusedId === null ? null : rows.find((row) => row.id === focusedId) ?? null
+
+        const listBody = loading
+          ? React.createElement('div', { className: 'dsh-vnc-list-note' }, t('list.loading'))
+          : failed
+            ? React.createElement('div', { className: 'dsh-vnc-list-note', role: 'alert' },
+                t('list.error'),
+                React.createElement('div', null,
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'dsh-vnc-secondary',
+                    onClick: () => setRefreshKey((key) => key + 1),
+                  }, t('list.retry'))))
+            : rows.length === 0
+              ? React.createElement('div', { className: 'dsh-vnc-list-note' },
+                  React.createElement('div', { className: 'dsh-vnc-overlay-title' }, t('list.empty')),
+                  React.createElement('div', null, t('list.emptyHint')))
+              : rows.map((row) => React.createElement('button', {
+                key: row.id,
+                type: 'button',
+                className: 'dsh-vnc-instance',
+                'data-instance-id': row.id,
+                'data-state': row.state,
+                'aria-current': row.id === focusedId,
+                'aria-label': applyParams(t('list.rowLabel'), { id: row.id, state: t(`state.${row.state}`) }),
+                onClick: () => setFocusedId(row.id),
+              },
+              React.createElement('span', { className: 'dsh-vnc-dot', 'data-state': row.state, 'aria-hidden': true }),
+              React.createElement('span', { className: 'dsh-vnc-instance-id' }, row.id),
+              React.createElement('span', { className: 'dsh-vnc-instance-state' }, t(`state.${row.state}`))))
+
+        return React.createElement('div', { className: 'dsh-vnc-shell' },
+          React.createElement('div', { className: 'dsh-vnc-list' },
+            React.createElement('div', { className: 'dsh-vnc-list-head' },
+              React.createElement('span', { className: 'dsh-vnc-list-title' }, t('list.title')),
+              React.createElement('button', {
+                type: 'button',
+                className: 'dsh-vnc-tool',
+                title: t('list.refresh'),
+                'aria-label': t('list.refresh'),
+                onClick: () => setRefreshKey((key) => key + 1),
+              }, icon('reconnect', 14))),
+            React.createElement('div', { className: 'dsh-vnc-list-body' }, listBody)),
+          React.createElement('div', { className: 'dsh-vnc-viewer' },
+            focusedRow === null
+              ? React.createElement('div', { className: 'dsh-vnc-empty', role: 'region', 'aria-label': t('viewer.empty') },
+                  React.createElement('div', { className: 'dsh-vnc-overlay-title' }, t('viewer.empty')),
+                  React.createElement('div', { className: 'dsh-vnc-overlay-hint' }, t('viewer.emptyHint')))
+              : React.createElement(Viewer, { key: focusedRow.id, instanceId: focusedRow.id, useTabInfo })))
+      }
+    }
+
     // ===== registration =====
 
     /**
@@ -1280,6 +1669,9 @@ window.__ModuleLoader__.load({
         : (key, params) => applyParams(ZH_DICT[key] ?? EN_DICT[key] ?? key, params)
 
       const VncPage = createVncPage(t, connection)
+      // The seat's body is the shell: the instance list plus the focused viewer.
+      // `VncPage` stays the viewer component, mounted per focused instance.
+      const VncShell = createVncShell(t, connection, VncPage)
 
       ctx.effect(() => {
         const disposeType = sidebarRightTabs.register(createTabDefinition(t))
@@ -1289,7 +1681,7 @@ window.__ModuleLoader__.load({
           name: 'sidebar.right.pane.tab',
           key: VNC_TAB_ID,
           locale: LOCALE_NS,
-        }, VncPage))
+        }, VncShell))
         return () => {
           disposeBody()
           disposeType()
@@ -1308,6 +1700,7 @@ window.__ModuleLoader__.load({
         ASSET_BASE,
         RFB_MODULE_PATH,
         WS_PATH,
+        SESSIONS_PATH,
         STATE_PATH,
         ZH_DICT,
         EN_DICT,
@@ -1315,6 +1708,8 @@ window.__ModuleLoader__.load({
         VNC_INITIAL_STATE,
         AUTO_RETRY_LIMIT,
         VNC_STATE_TRANSITIONS,
+        INSTANCE_STATES,
+        LIST_POLL_MS,
         isVncState,
         reduceVncState,
         statusKeyFor,
@@ -1327,9 +1722,13 @@ window.__ModuleLoader__.load({
         legacyWriteClipboard,
         componentFailure,
         applyParams,
+        parseInstanceList,
+        focusAfterList,
+        readInstanceList,
         setRfbModuleImporter,
         createTabDefinition,
         createVncPage,
+        createVncShell,
       },
     }
   },
