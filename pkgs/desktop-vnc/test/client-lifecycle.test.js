@@ -958,6 +958,52 @@ test("a close the Host refuses is reported on the row", async () => {
   assert.equal(listRows(page).length, 2, "the row stays until the Host confirms");
 });
 
+test("the list can be folded away to a rail and brought back", async () => {
+  const page = await mountShell({ instances: INSTANCES });
+  assert.equal(byClass(page.runtime.tree, "dsh-vnc-list").length, 1, "the list starts open");
+
+  const collapse = byClass(page.runtime.tree, "dsh-vnc-tool")
+    .find((node) => node.props["aria-expanded"] === true);
+  assert.ok(collapse !== undefined, "an open list offers a collapse control");
+  collapse.props.onClick();
+  await page.settle();
+
+  assert.equal(byClass(page.runtime.tree, "dsh-vnc-list").length, 0, "the list is gone");
+  assert.equal(byClass(page.runtime.tree, "dsh-vnc-rail").length, 1, "a rail replaces it");
+
+  const expand = byClass(page.runtime.tree, "dsh-vnc-tool")
+    .find((node) => node.props["aria-expanded"] === false);
+  assert.ok(expand !== undefined, "the rail offers an expand control");
+  expand.props.onClick();
+  await page.settle();
+
+  assert.equal(byClass(page.runtime.tree, "dsh-vnc-list").length, 1, "the list is back");
+  assert.equal(byClass(page.runtime.tree, "dsh-vnc-rail").length, 0);
+});
+
+test("folding the list keeps the viewer mounted on the same instance", async () => {
+  const page = await mountShell({ instances: INSTANCES });
+  const first = listRows(page)[0];
+  first.props.onClick();
+  await page.settle();
+  // `created` holds one RFB per viewer mount, so its length is the number of
+  // times the viewer was remounted — the thing that would drop a live socket.
+  const mountsBefore = page.created.length;
+  assert.equal(mountsBefore, 1, "the viewer mounted once for the focused instance");
+
+  const collapse = byClass(page.runtime.tree, "dsh-vnc-tool")
+    .find((node) => node.props["aria-expanded"] === true);
+  collapse.props.onClick();
+  await page.settle();
+
+  assert.equal(byClass(page.runtime.tree, "dsh-vnc-viewer").length, 1, "the viewer survives folding");
+  assert.equal(page.created.length, mountsBefore,
+    "folding does not remount the viewer, so the live connection is not dropped");
+  // The rail still says how many instances there are, so the list is folded away
+  // rather than lost.
+  assert.match(page.runtime.text(), new RegExp(String(INSTANCES.length), "u"));
+});
+
 test("shows the empty list state rather than an empty list", async () => {
   const page = await mountShell({ instances: [] });
   assert.equal(listRows(page).length, 0);

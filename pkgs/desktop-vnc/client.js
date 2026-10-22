@@ -105,6 +105,8 @@ window.__ModuleLoader__.load({
       'list.unavailable': '暂不可用',
       'list.failureReason': '失败原因：{detail}',
       'list.failureUnknown': '失败原因未知',
+      'list.collapse': '收起实例列表',
+      'list.expand': '展开实例列表',
       'list.create': '新建浏览器实例',
       'list.creating': '正在新建…',
       'list.createFailed': '新建失败：{detail}',
@@ -164,6 +166,8 @@ window.__ModuleLoader__.load({
       'list.unavailable': 'Not available yet',
       'list.failureReason': 'Failed: {detail}',
       'list.failureUnknown': 'Failure reason unavailable',
+      'list.collapse': 'Collapse the instance list',
+      'list.expand': 'Expand the instance list',
       'list.create': 'New browser instance',
       'list.creating': 'Opening…',
       'list.createFailed': 'Could not open: {detail}',
@@ -521,6 +525,10 @@ window.__ModuleLoader__.load({
     }
 
     const ICON_PATHS = {
+      // The list rail's own control: pointing left means "push the list away".
+      collapse: [['path', { d: 'M15 5l-7 7 7 7' }]],
+      // ...and right means "bring it back".
+      expand: [['path', { d: 'M9 5l7 7-7 7' }]],
       // Toolbar actions.
       connect: [['path', { d: 'M8 5.5v13l11-6.5z' }]],
       disconnect: [['path', { d: 'M7 7l10 10' }], ['path', { d: 'M17 7L7 17' }]],
@@ -589,6 +597,22 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-label-primary, #111827);
   font-size: 13px;
   overflow: hidden;
+}
+.dsh-vnc-rail {
+  flex: 0 0 auto;
+  width: 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 0;
+  box-sizing: border-box;
+  border-right: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.1));
+}
+.dsh-vnc-rail-count {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--dsw-alias-label-tertiary, #9ca3af);
 }
 .dsh-vnc-list {
   flex: 0 0 auto;
@@ -1716,6 +1740,15 @@ window.__ModuleLoader__.load({
          * controls mutually exclusive, so a double click cannot open two browsers.
          */
         const [action, setAction] = React.useState(null)
+        /**
+         * Whether the instance list is folded away to a narrow rail.
+         *
+         * The viewer is the page's real subject; the list is how you pick what it
+         * shows. Folding it gives the browser nearly the whole panel on a narrow
+         * sidebar, and the rail keeps one click to bring it back. Kept in local
+         * state, like the focus: which rail a person likes is their own business.
+         */
+        const [collapsed, setCollapsed] = React.useState(false)
         /** The last list read: `{ rows }`, or `{ error }`. `null` while loading. */
         const [listing, setListing] = React.useState(null)
         const [refreshKey, setRefreshKey] = React.useState(0)
@@ -1929,10 +1962,41 @@ window.__ModuleLoader__.load({
                   React.createElement('div', null, t('list.emptyHint')))
               : rows.map((row) => instanceRow(row))
 
+        // Folded, the list becomes a rail: the title and the rows go away, and one
+        // control stays to bring them back. The viewer keeps its full height either
+        // way, because the point of folding is to give the browser more room.
+        if (collapsed) {
+          return React.createElement('div', { className: 'dsh-vnc-shell' },
+            React.createElement('div', { className: 'dsh-vnc-rail' },
+              React.createElement('button', {
+                type: 'button',
+                className: 'dsh-vnc-tool',
+                title: t('list.expand'),
+                'aria-label': t('list.expand'),
+                'aria-expanded': false,
+                onClick: () => setCollapsed(false),
+              }, icon('expand', 14)),
+              React.createElement('span', { className: 'dsh-vnc-rail-count' }, String(rows.length))),
+            React.createElement('div', { className: 'dsh-vnc-viewer' },
+              focusedRow === null
+                ? React.createElement('div', { className: 'dsh-vnc-empty', role: 'region', 'aria-label': t('viewer.empty') },
+                    React.createElement('div', { className: 'dsh-vnc-overlay-title' }, t('viewer.empty')),
+                    React.createElement('div', { className: 'dsh-vnc-overlay-hint' }, t('viewer.emptyHint')))
+                : React.createElement(Viewer, { key: focusedRow.id, instanceId: focusedRow.id, useTabInfo })))
+        }
+
         return React.createElement('div', { className: 'dsh-vnc-shell' },
           React.createElement('div', { className: 'dsh-vnc-list' },
             React.createElement('div', { className: 'dsh-vnc-list-head' },
               React.createElement('span', { className: 'dsh-vnc-list-title' }, t('list.title')),
+              React.createElement('button', {
+                type: 'button',
+                className: 'dsh-vnc-tool',
+                title: t('list.collapse'),
+                'aria-label': t('list.collapse'),
+                'aria-expanded': true,
+                onClick: () => setCollapsed(true),
+              }, icon('collapse', 14)),
               React.createElement('button', {
                 type: 'button',
                 className: 'dsh-vnc-tool',
