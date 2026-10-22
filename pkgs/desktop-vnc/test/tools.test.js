@@ -237,7 +237,7 @@ test('browser_instance_create answers with the new id and the starting state', a
   // The instance is addressable the moment create answers, before its stack is up.
   assert.equal(result.value.state, 'starting')
   assert.match(result.value.id, /^[0-9a-f]{8}$/u)
-  assert.deepEqual(Object.keys(result.value).sort(), ['id', 'state'])
+  assert.deepEqual(Object.keys(result.value).sort(), ['height', 'id', 'state', 'width'])
 })
 
 test('browser_instance_create records the owning session given by the caller', async (t) => {
@@ -319,12 +319,17 @@ test('browser_instance_close refuses an id that is not an instance id', async (t
   assert.deepEqual(registry.list().map((row) => row.id), [existing.id])
 })
 
-test('the plugin registers exactly the three browser_instance tools', async (t) => {
+test('the plugin registers exactly the four browser_instance tools', async (t) => {
   const { ctx } = await mount(t)
 
   const names = ctx.tools.schemas().map((schema) => schema.name).filter((tool) => tool.startsWith('browser_instance_'))
 
-  assert.deepEqual(names.sort(), ['browser_instance_close', 'browser_instance_create', 'browser_instance_list'])
+  assert.deepEqual(names.sort(), [
+    'browser_instance_close',
+    'browser_instance_create',
+    'browser_instance_list',
+    'browser_instance_resize',
+  ])
   // Focus is a per-client UI state, not an instance property: a server tool that
   // changed it would be modifying another client's screen, so it must not exist.
   assert.equal(ctx.tools.get('browser_instance_focus'), undefined)

@@ -91,6 +91,15 @@ const CREATE_DESCRIPTION = [
   'instance for the calling session, which is what makes it close when that session is disposed.',
 ].join(' ')
 
+const RESIZE_DESCRIPTION = [
+  'Set the viewport size of one browser window (浏览器实例) by its browser instance id',
+  '(浏览器实例 id).',
+  'Use this to test a page at a specific size — a 1920x1080 desktop, a 390x844 phone —',
+  'without opening another browser. The sizes are the page viewport, not the window frame.',
+  'A size that does not exist is an error rather than a silent success; nothing is resized',
+  'on a guess.',
+].join(' ')
+
 const CLOSE_DESCRIPTION = [
   'Close one browser window (浏览器实例) by its browser instance id (浏览器实例 id).',
   'Closing is immediate and does not ask the user: the row leaves the list and the window disappears',
@@ -110,7 +119,7 @@ const CLOSE_DESCRIPTION = [
  *   when it does not exist.
  * @returns {object[]} registry-ready tool definitions, in listing order.
  */
-export function browserInstanceTools({ list, create, close }) {
+export function browserInstanceTools({ list, create, close, resize }) {
   return [
     defineTool({
       name: 'browser_instance_list',
@@ -132,6 +141,8 @@ export function browserInstanceTools({ list, create, close }) {
           type: 'string',
           description: 'Owning session id (实例归属), fixed at creation. Omit to own it for the calling session.',
         },
+        width: { type: 'integer', description: 'Viewport width in CSS pixels; omit for the configured default.' },
+        height: { type: 'integer', description: 'Viewport height in CSS pixels; omit for the configured default.' },
       },
       output: {
         schema: {
@@ -144,6 +155,8 @@ export function browserInstanceTools({ list, create, close }) {
               type: 'integer',
               description: 'CDP port for this instance; `agent-browser connect <cdpPort>` drives it.',
             },
+            width: { type: 'integer' },
+            height: { type: 'integer' },
           },
         },
         render: jsonRender,
@@ -155,7 +168,11 @@ export function browserInstanceTools({ list, create, close }) {
         const ownerSessionId = typeof args.ownerSessionId === 'string' && args.ownerSessionId !== ''
           ? args.ownerSessionId
           : (exec.agent?.session?.id ?? null)
-        return create({ ownerSessionId })
+        return create({
+          ownerSessionId,
+          ...(Number.isFinite(args.width) ? { width: args.width } : {}),
+          ...(Number.isFinite(args.height) ? { height: args.height } : {}),
+        })
       },
     }),
     defineTool({
@@ -179,6 +196,35 @@ export function browserInstanceTools({ list, create, close }) {
       async execute(args, exec) {
         exec.signal.throwIfAborted()
         return close(args.id)
+      },
+    }),
+    defineTool({
+      name: 'browser_instance_resize',
+      description: RESIZE_DESCRIPTION,
+      parameters: {
+        id: {
+          type: 'string',
+          required: true,
+          description: 'Exact browser instance id to resize; an id that does not exist is an error.',
+        },
+        width: { type: 'integer', required: true, description: 'Viewport width in CSS pixels.' },
+        height: { type: 'integer', required: true, description: 'Viewport height in CSS pixels.' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            id: { type: 'string', description: 'The instance that was resized.' },
+            width: { type: 'integer' },
+            height: { type: 'integer' },
+          },
+        },
+        render: jsonRender,
+      },
+      async execute(args, exec) {
+        exec.signal.throwIfAborted()
+        return resize(args.id, { width: args.width, height: args.height })
       },
     }),
   ]

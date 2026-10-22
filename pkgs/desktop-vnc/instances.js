@@ -191,8 +191,10 @@ export function createInstanceRegistry({
     const base = {
       id: entry.id,
       state: entry.state,
-      width: viewport.width,
-      height: viewport.height,
+      // The instance's own size, not a global: two browsers can be sized
+      // differently, and the list has to say which is which.
+      width: entry.width,
+      height: entry.height,
       createdAt: seconds(entry.createdAt),
       ownerSessionId: entry.ownerSessionId,
       lastActiveAt: seconds(entry.lastActiveAt),
@@ -451,7 +453,14 @@ export function createInstanceRegistry({
       if (entry.closed) return
       if (cdpPort === null) throw instanceError(503, '没有空闲的调试端口（no free debug port in the configured range）')
 
-      const backend = createBackend({ id: entry.id, port, display, cdpPort })
+      const backend = createBackend({
+        id: entry.id,
+        port,
+        display,
+        cdpPort,
+        width: entry.width,
+        height: entry.height,
+      })
       entry.browser = backend.browser ?? null
       entry.vnc = backend.vnc ?? null
       entry.capture = backend.capture ?? null
@@ -519,7 +528,7 @@ export function createInstanceRegistry({
    * @throws {Error} with `status: 503` when the port pool is exhausted; the message
    *   names the instances already open so the caller can close one and retry.
    */
-  const create = ({ ownerSessionId } = {}) => {
+  const create = ({ ownerSessionId, width, height } = {}) => {
     // Claimed synchronously, before any await, so two concurrent creates cannot
     // both see the same port as free. `boot` then confirms the claim against
     // foreign listeners, which is the part a synchronous claim cannot know.
@@ -555,6 +564,11 @@ export function createInstanceRegistry({
       ownerSessionId: typeof ownerSessionId === 'string' && ownerSessionId !== '' ? ownerSessionId : null,
       createdAt,
       lastActiveAt: createdAt,
+      // Resolved at creation and stored per instance: `createBackend` builds the
+      // window from these, and the row reports them back so a caller can tell two
+      // differently-sized browsers apart.
+      width: Number.isFinite(width) && width > 0 ? Math.round(width) : viewport.width,
+      height: Number.isFinite(height) && height > 0 ? Math.round(height) : viewport.height,
       state: 'starting',
       viewers: 0,
       browser: null,
@@ -581,9 +595,15 @@ export function createInstanceRegistry({
     entry.ready = boot(entry)
     // `cdpPort` is part of the answer, not a detail of the row: it is the argument
     // the caller needs to drive the window it just opened.
-    return cdpPort === undefined
-      ? { id, state: 'starting' }
-      : { id, state: 'starting', cdpPort }
+    return {
+      id,
+      state: 'starting',
+      // The size the caller asked for (or the configured default) belongs in the
+      // answer: it is what the window was built at, and the list reports it back.
+      width: entry.width,
+      height: entry.height,
+      ...(cdpPort === undefined ? {} : { cdpPort }),
+    }
   }
 
   /** The flat list the sidebar renders, insertion order, no focus and no cap. */
@@ -689,6 +709,39 @@ export function createInstanceRegistry({
   }
 
   /**
+   * Record a new size for one instance.
+   *
+   * The record is what the list reports and what the next `browser.ensure()` would
+   * build from; applying the size to a *running* browser is the caller's job,
+   * because the mechanism (a CDP viewport override) lives outside this table.
+   *
+   * @param {string} id the instance to resize.
+   * @param {{width?: number, height?: number}} size the requested size.
+   * @returns {{id: string, width: number, height: number}|undefined} the applied size,
+   *   or undefined for an unknown id.
+   */
+  const resize = async (id, { width, height } = {}) => {
+    const entry = entries.get(id)
+    if (entry === undefined) return undefined
+    if (Number.isFinite(width) && width > 0) entry.width = Math.round(width)
+    if (Number.isFinite(height) && height > 0) entry.height = Math.round(height)
+    entry.lastActiveAt = now()
+    // The browser stack owns how a live window takes a new size; when it has no
+    // such seam the record still changes, so the list is honest about what was
+    // asked for even though the running page keeps its old viewport.
+    const apply = entry.backend?.resize
+    if (typeof apply === 'function') {
+      try {
+        await apply({ width: entry.width, height: entry.height })
+      } catch (error) {
+        entry.lastActiveAt = now()
+        throw error
+      }
+    }
+    return { id: entry.id, width: entry.width, height: entry.height }
+  }
+
+  /**
    * Record one fewer client watching an instance, never below zero.
    *
    * @param {string} id the instance that lost a viewer.
@@ -730,6 +783,7 @@ export function createInstanceRegistry({
     disposeAll,
     attachViewer,
     detachViewer,
+    resize,
     row,
     seconds,
     entries,

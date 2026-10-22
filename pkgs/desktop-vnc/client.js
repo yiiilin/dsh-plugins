@@ -591,7 +591,7 @@ window.__ModuleLoader__.load({
   height: 100%;
   min-height: 0;
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   box-sizing: border-box;
   background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-base, #f5f5f4));
   color: var(--dsw-alias-label-primary, #111827);
@@ -600,14 +600,14 @@ window.__ModuleLoader__.load({
 }
 .dsh-vnc-rail {
   flex: 0 0 auto;
-  width: 34px;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   gap: 6px;
-  padding: 5px 0;
+  min-height: 32px;
+  padding: 0 10px;
   box-sizing: border-box;
-  border-right: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.1));
+  border-bottom: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.1));
 }
 .dsh-vnc-rail-count {
   font-size: 11px;
@@ -616,12 +616,10 @@ window.__ModuleLoader__.load({
 }
 .dsh-vnc-list {
   flex: 0 0 auto;
-  width: 190px;
-  min-width: 0;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  border-right: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.1));
+  border-bottom: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.1));
   overflow: hidden;
 }
 .dsh-vnc-list-head {
@@ -649,8 +647,13 @@ window.__ModuleLoader__.load({
 .dsh-vnc-list-body {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
-  padding: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 6px;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 6px;
   box-sizing: border-box;
 }
 .dsh-vnc-instance {
@@ -659,7 +662,7 @@ window.__ModuleLoader__.load({
   align-items: center;
   gap: 2px 6px;
   width: 100%;
-  padding: 5px 6px;
+  padding: 4px 2px;
   box-sizing: border-box;
   border: 0;
   border-radius: var(--dsw-radius-sm, 6px);
@@ -716,6 +719,15 @@ window.__ModuleLoader__.load({
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 2px;
+  /* A card in a horizontal strip: fixed enough that several fit side by side and
+     the strip scrolls, rather than one row stretching across the whole panel. */
+  flex: 0 0 auto;
+  width: 210px;
+  padding: 2px 2px 2px 4px;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.08));
+  border-radius: var(--dsw-radius-sm, 6px);
+  background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-base, #f5f5f4));
 }
 .dsh-vnc-instance-row[data-current="true"] .dsh-vnc-instance {
   background: var(--dsw-alias-bg-layer-2, #e7e5e4);

@@ -140,8 +140,8 @@ export const Config = z.object({
    * that already answers belongs to somebody else and is skipped, never adopted.
    */
   rfbPortRange: z.array(z.number()).default([5900, 5999]),
-  viewportWidth: z.number().default(1280),
-  viewportHeight: z.number().default(800),
+  viewportWidth: z.number().default(1920),
+  viewportHeight: z.number().default(1080),
   jpegQuality: z.number().default(72),
   frameRate: z.number().default(8),
   maxClients: z.number().default(4),
@@ -294,8 +294,8 @@ export function apply(ctx, config = {}) {
   const frameRate = Number.isFinite(config.frameRate) ? config.frameRate : 8
   const jpegQuality = Number.isFinite(config.jpegQuality) ? config.jpegQuality : 72
   const viewport = {
-    width: Number.isFinite(config.viewportWidth) ? config.viewportWidth : 1280,
-    height: Number.isFinite(config.viewportHeight) ? config.viewportHeight : 800,
+    width: Number.isFinite(config.viewportWidth) ? config.viewportWidth : 1920,
+    height: Number.isFinite(config.viewportHeight) ? config.viewportHeight : 1080,
   }
 
   const log = (level, message) => {
@@ -392,14 +392,16 @@ export function apply(ctx, config = {}) {
    * @param {{id: string, port: number}} context the registry's claim for this instance.
    * @returns {{browser: object, vnc: object, capture: object, dispose: () => Promise<void>}} the trio.
    */
-  const createBackend = ({ id, port, display: claimedDisplay, cdpPort }) => {
+  const createBackend = ({ id, port, display: claimedDisplay, cdpPort, width, height }) => {
     const browser = createBrowserStack({
       spawn,
       resolveExecutable,
       config: {
         display,
-        viewportWidth: viewport.width,
-        viewportHeight: viewport.height,
+        // The instance's own size when the caller named one; the configured
+        // default otherwise. This is what makes create({width, height}) real.
+        viewportWidth: Number.isFinite(width) && width > 0 ? width : viewport.width,
+        viewportHeight: Number.isFinite(height) && height > 0 ? height : viewport.height,
         // Hand the stack the display the registry already claimed. Passing `auto`
         // here is what let two boots race onto the same number.
         browser: {
@@ -439,10 +441,46 @@ export function apply(ctx, config = {}) {
       log,
     })
 
+    /**
+     * Apply a viewport size to the live page.
+     *
+     * The window frame is fixed at creation (`--window-size` is a launch argument
+     * and Xephyr owns its screen), so the size a caller can still change is the
+     * page viewport, which CDP overrides. `agent-browser` is the tool that knows
+     * how to issue that override against a port, and it is already a dependency of
+     * anyone driving these browsers; a missing binary is reported rather than
+     * silently leaving the old size in place.
+     */
+    const resize = async ({ width, height }) => {
+      if (typeof spawn !== 'function' || !Number.isInteger(cdpPort)) {
+        throw new Error('this browser instance has no debug port to resize')
+      }
+      // Two invocations, not one: `agent-browser connect <port> -- <cmd>` drops the
+      // chained command, so the port is bound first and the override issued second.
+      // Resizes of one instance therefore run in order; two instances must not share
+      // a shell at once because `connect` binds a process-wide session.
+      for (const argv of [
+        ['agent-browser', 'connect', String(cdpPort)],
+        ['agent-browser', 'set', 'viewport', String(width), String(height)],
+      ]) {
+        const handle = spawn({
+          argv,
+          cwd: tmpdir(),
+          stdio: { stdin: 'ignore', stdout: { maxBytes: 4096 }, stderr: { maxBytes: 4096 } },
+          graceMs: 2000,
+        })
+        const outcome = await handle.done
+        if (outcome?.exitCode !== 0) {
+          throw new Error(handle.stderrText?.trim() || `agent-browser exited with code ${outcome?.exitCode}`)
+        }
+      }
+    }
+
     return {
       browser,
       vnc,
       capture,
+      resize,
       // Reverse order of construction: the RFB server and the browser must both be
       // gone before the plugin forgets the instance, and neither stop may throw.
       dispose: async () => {
@@ -731,6 +769,9 @@ export function apply(ctx, config = {}) {
             ownerSessionId: typeof body.ownerSessionId === 'string' && body.ownerSessionId !== ''
               ? body.ownerSessionId
               : null,
+            // Optional per-instance size: omitted means the configured default.
+            ...(Number.isFinite(body.width) ? { width: body.width } : {}),
+            ...(Number.isFinite(body.height) ? { height: body.height } : {}),
           }))
         } catch (error) {
           const status = Number.isInteger(error?.status) ? error.status : 500
@@ -751,8 +792,42 @@ export function apply(ctx, config = {}) {
         sendJson(res, 404, { error: `no such browser instance: ${id}` })
         return
       }
+      if (req.method === 'PATCH') {
+        // Resize one instance. A size is the only thing PATCH accepts, and the
+        // answer is the instance's applied size so the caller sees what landed.
+        let body = {}
+        try {
+          body = await readJsonBody(req)
+        } catch (error) {
+          sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+          return
+        }
+        if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+          sendJson(res, 400, { error: 'request body must be an object' })
+          return
+        }
+        if (!Number.isFinite(body.width) && !Number.isFinite(body.height)) {
+          sendJson(res, 400, { error: 'width or height must be a number' })
+          return
+        }
+        try {
+          const applied = await registry.resize(id, {
+            ...(Number.isFinite(body.width) ? { width: body.width } : {}),
+            ...(Number.isFinite(body.height) ? { height: body.height } : {}),
+          })
+          if (applied === undefined) {
+            sendJson(res, 404, { error: `no such browser instance: ${id}` })
+            return
+          }
+          sendJson(res, 200, applied)
+        } catch (error) {
+          const status = Number.isInteger(error?.status) ? error.status : 500
+          sendJson(res, status, { error: error instanceof Error ? error.message : String(error) })
+        }
+        return
+      }
       if (req.method !== 'DELETE') {
-        res.writeHead(405, { allow: 'DELETE' })
+        res.writeHead(405, { allow: 'DELETE, PATCH' })
         res.end()
         return
       }
@@ -1067,6 +1142,7 @@ export function apply(ctx, config = {}) {
         list: () => registry.list(),
         create: (options) => createInstance(options),
         close: (id) => registry.close(id),
+        resize: (id, size) => registry.resize(id, size),
       })) {
         toolCtx.tools.register(definition)
       }

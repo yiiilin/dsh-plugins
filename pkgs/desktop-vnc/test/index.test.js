@@ -25,8 +25,8 @@ test('the Config schema carries the frozen defaults', () => {
   assert.equal(config.enabled, true)
   assert.equal(config.display, ':0')
   assert.equal(config.rfbPort, 5900)
-  assert.equal(config.viewportWidth, 1280)
-  assert.equal(config.viewportHeight, 800)
+  assert.equal(config.viewportWidth, 1920)
+  assert.equal(config.viewportHeight, 1080)
   assert.equal(config.jpegQuality, 72)
   assert.equal(config.frameRate, 8)
   assert.equal(config.maxClients, 4)
@@ -265,7 +265,7 @@ test('the state route reports the frozen shape', () => {
   assert.equal(body.rfbPort, 5900)
   assert.equal(body.vncRunning, false)
   assert.equal(body.clients, 0)
-  assert.deepEqual(body.viewport, { width: 1280, height: 800 })
+  assert.deepEqual(body.viewport, { width: 1920, height: 1080 })
 })
 
 test('the state route carries the v2 browser fields', () => {
