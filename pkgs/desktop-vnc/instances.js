@@ -123,6 +123,10 @@ export function createInstanceRegistry({
    * window nothing can drive, and a model falls back to a browser of its own.
    */
   const claimedCdpPorts = new Set()
+  /** How long a debug port gets to answer before the instance is called failed. */
+  const CDP_READY_TIMEOUT_MS = 8000
+  /** How often the debug port is re-probed while waiting. */
+  const CDP_READY_POLL_MS = 150
   /** Fallback occupancy probe for a debug port, when the caller supplies none. */
   const cdpPortTaken = async (port) => {
     if (typeof probeCdp !== 'function') return false
@@ -274,93 +278,109 @@ export function createInstanceRegistry({
   }
 
   /**
-   * Confirm the port `create()` reserved is actually free, walking the pool when
-   * a foreign server already holds it.
+   * Confirm the resource `create()` reserved for one entry, or claim another from
+   * its pool.
    *
-   * `create()` cannot await, so it claims the lowest port this process does not
-   * hold; that says nothing about a *foreign* listener. This is where the two are
-   * told apart: the reserved port is probed first, and when something answers on
-   * it the claim is given back and the pool is walked again.
+   * All three reserved resources — the RFB port, the nested display and the debug
+   * port — share one lifecycle rule: the synchronous claim at `create()` only
+   * proves no other instance of this process holds the number; a foreign owner is
+   * discovered here, and the claim then walks the pool for the next free one.
+   * Writing that rule once (rather than three times) is what keeps a fix to it
+   * from having to land in three places, which is exactly how the display race
+   * and the dead debug port both survived review.
    *
-   * The reserve-then-probe order is what keeps the synchronous guarantee intact
-   * for concurrent boots: a candidate enters `claimedPorts` **before** its probe
-   * awaits, so a second instance never sees the same port as free, and a port
-   * that turns out to be free is simply kept.
+   * The caller supplies only what differs: the entry field, the pool, its claim
+   * set, the readiness probe, and how to release and read a candidate.
    *
-   * @param {object} entry the entry whose reserved port to confirm.
-   * @returns {Promise<number|null>} a claimed, free port, or null when none is left.
+   * @param {object} entry the entry whose reservation to confirm.
+   * @param {object} spec the resource-specific parts.
+   * @param {string} spec.field entry field holding the reservation.
+   * @param {Array<string|number>} spec.pool candidate resources, in claim order.
+   * @param {Set<string|number>} spec.claimed resources this process holds.
+   * @param {(candidate: string|number) => Promise<boolean>} spec.taken is it taken?
+   * @param {(candidate: string|number) => void} spec.release give a claim back.
+   * @param {(value: unknown) => boolean} spec.usable is a value a real candidate?
+   * @returns {Promise<string|number|null>} the confirmed resource, or null when none is left.
    */
-  const confirmPort = async (entry) => {
-    const reserved = entry.port
-    if (Number.isInteger(reserved) && !await portTaken(reserved)) {
+  const confirmResource = async (entry, { field, pool, claimed, taken, release, usable }) => {
+    const reserved = entry[field]
+    if (usable(reserved) && !await taken(reserved)) {
       // close() may have given the claim back while the probe was in flight: the
-      // entry must not act on a port it no longer holds.
+      // entry must not act on a resource it no longer holds.
       if (entry.closed) return null
-      // Still ours unless the release above raced: claimPort() only skips ports
-      // in `claimedPorts`, so re-adding is a no-op in the normal case.
-      claimedPorts.add(reserved)
+      claimed.add(reserved)
       return reserved
     }
-    if (Number.isInteger(reserved)) releasePort(reserved)
-    entry.port = null
+    if (usable(reserved)) release(reserved)
+    entry[field] = null
 
-    for (const port of ports) {
-      // The reserved port was just probed and found taken; walking it again would
+    for (const candidate of pool) {
+      // The reserved one was just probed and found taken; walking it again would
       // only repeat the same answer.
-      if (port === reserved || claimedPorts.has(port)) continue
-      claimedPorts.add(port)
-      const taken = await portTaken(port)
+      if (candidate === reserved || claimed.has(candidate)) continue
+      claimed.add(candidate)
+      const isTaken = await taken(candidate)
       if (entry.closed) {
-        claimedPorts.delete(port)
+        claimed.delete(candidate)
         return null
       }
-      if (!taken) {
-        entry.port = port
-        return port
+      if (!isTaken) {
+        entry[field] = candidate
+        return candidate
       }
-      claimedPorts.delete(port)
+      claimed.delete(candidate)
     }
     return null
   }
 
-  /**
-   * Confirm the display reserved at create() time, or claim another one.
-   *
-   * The reserved number is only a claim against this process; a foreign X server
-   * on it means it was never really free. Confirming before `createBackend` is
-   * what lets the browser stack be handed an explicit display instead of probing
-   * for its own — probing there is what raced two boots onto `:N`.
-   *
-   * @param {object} entry the entry whose reserved display to confirm.
-   * @returns {Promise<string|null>} a claimed, free display, or null when none is left.
-   */
-  const confirmDisplay = async (entry) => {
-    const reserved = entry.displayClaim
-    if (typeof reserved === 'string' && !await displayTaken(reserved)) {
-      if (entry.closed) return null
-      claimedDisplays.add(reserved)
-      return reserved
-    }
-    if (typeof reserved === 'string') releaseDisplay(reserved)
-    entry.displayClaim = null
+  /** Confirm the RFB port `create()` reserved, walking the pool when it is taken. */
+  const confirmPort = (entry) => confirmResource(entry, {
+    field: 'port',
+    pool: ports,
+    claimed: claimedPorts,
+    taken: portTaken,
+    release: releasePort,
+    usable: Number.isInteger,
+  })
 
-    for (const display of displays) {
-      // The reserved display was just probed and found taken; walking it again
-      // would only repeat the same answer.
-      if (display === reserved || claimedDisplays.has(display)) continue
-      claimedDisplays.add(display)
-      const taken = await displayTaken(display)
-      if (entry.closed) {
-        claimedDisplays.delete(display)
-        return null
-      }
-      if (!taken) {
-        entry.displayClaim = display
-        return display
-      }
-      claimedDisplays.delete(display)
+  /** Confirm the nested display `create()` reserved, walking the pool when taken. */
+  const confirmDisplay = (entry) => confirmResource(entry, {
+    field: 'displayClaim',
+    pool: displays,
+    claimed: claimedDisplays,
+    taken: displayTaken,
+    release: releaseDisplay,
+    usable: (value) => typeof value === 'string' && value !== '',
+  })
+
+  /** Confirm the debug port `create()` reserved, walking the pool when taken. */
+  const confirmCdpPort = (entry) => confirmResource(entry, {
+    field: 'cdpPort',
+    pool: cdpPorts,
+    claimed: claimedCdpPorts,
+    taken: cdpPortTaken,
+    release: releaseCdpPort,
+    usable: Number.isInteger,
+  })
+
+  /**
+   * Wait until the debug port answers, or give up.
+   *
+   * Chromium publishes its CDP endpoint a moment after the window appears, so a
+   * single probe right after `prepareDisplay` is a race. The bound is short: a
+   * port that never answers means the browser did not take it, and a row that
+   * says `ready` must not outlive that fact.
+   *
+   * @param {number} port the debug port to wait for.
+   * @returns {Promise<boolean>} true once it accepts a connection.
+   */
+  const waitForCdpPort = async (port) => {
+    const deadline = Date.now() + CDP_READY_TIMEOUT_MS
+    for (;;) {
+      if (await cdpPortTaken(port)) return true
+      if (Date.now() >= deadline) return false
+      await new Promise((resolve) => { setTimeout(resolve, CDP_READY_POLL_MS) })
     }
-    return null
   }
 
   /** The 503 an exhausted pool produces, naming what is already open. */
@@ -423,7 +443,15 @@ export function createInstanceRegistry({
       if (entry.closed) return
       if (display === null) throw exhaustedDisplay()
 
-      const backend = createBackend({ id: entry.id, port, display, cdpPort: entry.cdpPort })
+      // `undefined` when no debug-port pool is configured: the stack then launches
+      // without one, as it did before the pool existed.
+      const cdpPort = entry.cdpPort === undefined
+        ? undefined
+        : await confirmCdpPort(entry)
+      if (entry.closed) return
+      if (cdpPort === null) throw instanceError(503, '没有空闲的调试端口（no free debug port in the configured range）')
+
+      const backend = createBackend({ id: entry.id, port, display, cdpPort })
       entry.browser = backend.browser ?? null
       entry.vnc = backend.vnc ?? null
       entry.capture = backend.capture ?? null
@@ -455,6 +483,20 @@ export function createInstanceRegistry({
         await disposeBackend(entry)
         return
       }
+      // `ready` promises the caller can drive this browser, so the debug port has
+      // to be answering before the row says so. Chromium asked to bind an occupied
+      // number may exit, or quietly fall back to another address; either way the
+      // `cdpPort` on the row would be a port nothing listens on, and a model
+      // following it would fail to connect and fall back to a browser of its own.
+      //
+      // Skipped when the display choice reports that no browser was started: the
+      // v1 path mirrors the host desktop and owns no debug port, so demanding one
+      // would fail a configuration that is working as designed.
+      const startedBrowser = target?.browser !== false
+      if (startedBrowser && cdpPort !== undefined && !await waitForCdpPort(cdpPort)) {
+        throw new Error(`调试端口 ${cdpPort} 未就绪（debug port ${cdpPort} never accepted a connection）`)
+      }
+
       entry.state = 'ready'
       note('info', `desktop-vnc: browser instance ${entry.id} is ready on 127.0.0.1:${entry.port}`)
     } catch (error) {

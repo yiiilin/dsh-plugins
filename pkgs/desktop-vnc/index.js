@@ -247,7 +247,9 @@ export async function resolvePanelDisplay({
   browserEnabled = true,
   hostDisplay = ':0',
 } = {}) {
-  if (!browserEnabled) return { display: hostDisplay }
+  // The v1 path mirrors the host desktop and starts no browser at all: the caller
+  // must not expect a debug port to exist, because nothing was launched to own one.
+  if (!browserEnabled) return { display: hostDisplay, browser: false }
   let result
   try {
     result = await browser.ensure()
@@ -274,7 +276,7 @@ export async function resolvePanelDisplay({
     // The RFB server draws from the same display, so it needs the same cookie.
     vnc?.setAuthority?.(result.authority)
   }
-  return { display: nested }
+  return { display: nested, browser: true }
 }
 
 export function apply(ctx, config = {}) {
@@ -336,6 +338,24 @@ export function apply(ctx, config = {}) {
   const nextInstanceKey = newInstanceKeyer()
 
   /**
+   * Where the Nth window lands on the host desktop.
+   *
+   * A sequential slot, not a hash of the id: a hash collides (six ids landed on
+   * two slots in testing), and two windows in the same slot are exactly the
+   * one-window-with-a-hidden-duplicate problem this is here to avoid. The offsets
+   * are small and bounded, wrapping after twelve so a long session does not march
+   * every window off the right edge.
+   *
+   * @returns {string} an X geometry offset such as `60,80`.
+   */
+  let windowSlot = 0
+  const windowPositionFor = () => {
+    const slot = windowSlot % 12
+    windowSlot += 1
+    return `${60 + (slot % 4) * 70},${80 + Math.floor(slot / 4) * 70}`
+  }
+
+  /**
    * The nested display numbers this process may hand out, in claim order.
    *
    * The registry claims one per instance before any await, which is the only way
@@ -389,6 +409,10 @@ export function apply(ctx, config = {}) {
           // person can tell two windows apart on the desktop.
           ...(cdpPort === undefined ? {} : { debugPort: cdpPort }),
           windowTitle: `${browserConfig.windowTitle ?? 'DSH Browser'} ${id}`,
+          // Each window lands a little further along, so two instances are two
+          // windows rather than one window and a hidden duplicate underneath it.
+          // Wrapped by the desktop width so a long session does not march off-screen.
+          windowPosition: windowPositionFor(),
         },
       },
       log,

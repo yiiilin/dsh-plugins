@@ -558,7 +558,7 @@ test('a healthy nested stack retargets both x11vnc and capture', async () => {
 
   const result = await resolvePanelDisplay({ browser, vnc, capture })
 
-  assert.deepEqual(result, { display: ':96' })
+  assert.deepEqual(result, { display: ':96', browser: true })
   assert.deepEqual(vnc.calls, [':96'])
   assert.deepEqual(capture.calls, [':96'])
 })
@@ -579,7 +579,7 @@ test('the Xvfb fallback is accepted even though it carries an error note', async
 
   const result = await resolvePanelDisplay({ browser, vnc, capture })
 
-  assert.deepEqual(result, { display: ':90' })
+  assert.deepEqual(result, { display: ':90', browser: true })
   assert.deepEqual(vnc.calls, [':90'])
   assert.deepEqual(capture.calls, [':90'])
 })
@@ -630,7 +630,7 @@ test('browser.enabled=false keeps the v1 mirror and never calls ensure()', async
     hostDisplay: ':7',
   })
 
-  assert.deepEqual(result, { display: ':7' })
+  assert.deepEqual(result, { display: ':7', browser: false })
   assert.equal(browser.state.calls, 0, 'the browser stack must not be started on the v1 path')
   assert.deepEqual(vnc.calls, [])
   assert.deepEqual(capture.calls, [])

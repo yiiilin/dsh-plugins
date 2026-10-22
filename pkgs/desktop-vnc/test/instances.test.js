@@ -60,28 +60,36 @@ function fakeBackend({ display = ':200', port = 5900 } = {}) {
 function makeRegistry({
   ports = [5900, 5901, 5902],
   displays = [],
+  cdpPorts = [],
   prepareDisplay,
   backend,
   clock = fakeClock(),
   probe = async () => false,
   probeDisplay,
+  probeCdp,
 } = {}) {
   const backends = []
   const registry = createInstanceRegistry({
     createBackend: (context) => {
       // The real factory binds the port the table claimed for this instance, so
       // the fake does too: whatever ensure() reports must be that port.
+      // The factory receives the whole context, so a backend can mirror whatever
+      // the registry claimed for this instance (port, display, debug port).
       const created = backend === undefined
         ? fakeBackend({ display: ':200', port: context.port })
-        : backend(backends.length)
+        : backend(context)
       backends.push(created)
       return created
     },
-    prepareDisplay: prepareDisplay ?? (async () => ({ display: ':200' })),
+    // `browser: true` mirrors what `resolvePanelDisplay` reports for a real nested
+    // stack: the display choice also says whether a browser was actually started.
+    prepareDisplay: prepareDisplay ?? (async () => ({ display: ':200', browser: true })),
     ports,
     probe,
     displays,
     probeDisplay,
+    cdpPorts,
+    probeCdp,
     viewport: { width: 1280, height: 800 },
     now: clock.now,
     log: () => {},
@@ -177,6 +185,64 @@ test('two instances created at once claim different nested displays', async () =
   const displays = [registry.get(first.id).displayClaim, registry.get(second.id).displayClaim]
   assert.notEqual(displays[0], displays[1], 'the two live instances never share a display claim')
   assert.deepEqual(displays.slice().sort(), [':200', ':201'])
+})
+
+test('an instance is not ready until its debug port actually answers', async () => {
+  // `ready` is a promise the caller can drive this browser. Chromium asked to bind
+  // an occupied debug port either exits or falls back to another address, so a row
+  // that says ready while nothing answers on its cdpPort sends an agent to a dead
+  // port — and it then launches a browser of its own, the exact failure this field
+  // exists to prevent.
+  const { registry } = makeRegistry({
+    cdpPorts: [9222],
+    // The probe never turns true: the browser never took the port.
+    probeCdp: async () => false,
+    backend: () => fakeBackend({ display: ':200', port: 5900 }),
+  })
+  const created = registry.create({ ownerSessionId: 'session-a' })
+  await registry.get(created.id).ready
+
+  const entry = registry.get(created.id)
+  assert.equal(entry.state, 'failed', 'a dead debug port must not be reported as ready')
+  assert.match(entry.error ?? '', /调试端口/u)
+})
+
+test('a debug port a foreign listener holds is skipped, not shared', async () => {
+  // One probe answers both questions — "is this taken?" and "is it answering?" —
+  // because on a real machine they are the same TCP connect. 9222 is held by a
+  // foreign listener and must be skipped; once the instance owns 9223 that port
+  // answers, which is what makes the row `ready`.
+  const owned = new Set()
+  const { registry } = makeRegistry({
+    cdpPorts: [9222, 9223],
+    probeCdp: async (port) => port === 9222 || owned.has(port),
+    backend: ({ cdpPort }) => {
+      owned.add(cdpPort)
+      return fakeBackend({ display: ':200', port: 5900, cdpPort })
+    },
+  })
+  const created = registry.create({ ownerSessionId: 'session-a' })
+  await registry.get(created.id).ready
+
+  assert.equal(registry.get(created.id).state, 'ready')
+  assert.equal(registry.get(created.id).cdpPort, 9223, 'the occupied port is skipped')
+})
+
+test('the debug port of a closed instance is released for the next one', async () => {
+  const { registry } = makeRegistry({
+    cdpPorts: [9222],
+    probeCdp: async () => false,
+    backend: ({ cdpPort }) => fakeBackend({ display: ':200', port: 5900, cdpPort }),
+  })
+  const first = registry.create({ ownerSessionId: 'session-a' })
+  await registry.get(first.id).ready
+  assert.equal(registry.get(first.id).cdpPort, 9222)
+
+  assert.deepEqual(await registry.close(first.id), { closed: true })
+
+  const second = registry.create({ ownerSessionId: 'session-a' })
+  await registry.get(second.id).ready
+  assert.equal(registry.get(second.id).cdpPort, 9222, 'the only debug port in the pool is free again')
 })
 
 test('the display of a closed instance is released for the next one', async () => {
