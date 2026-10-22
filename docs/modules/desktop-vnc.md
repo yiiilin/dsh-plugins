@@ -32,7 +32,7 @@ English: a right-sidebar tab that auto-connects on open and shows **a browser** 
 | --- | --- | --- |
 | Host | `index.js` | 路由注册、状态汇总、生命周期回收、浏览器栈与 x11vnc 的接线 |
 | Host | `browser.js` | Xephyr 嵌套显示 + Chromium 的启动/复用/停止（Xephyr 缺失时降级 Xvfb） |
-| Host | `x11vnc.js` | 按需启动/复用/停止 `x11vnc` 子进程 |
+| Host | `x11vnc.js` | 从 `rfbPortRange` 分配端口、按需启动/复用/停止 `x11vnc` 子进程 |
 | Host | `ws.js` | 手写 RFC6455 WebSocket 服务端，把 WS 帧与 VNC TCP 字节流双向直通 |
 | Host | `capture.js` | 通过 ImageMagick `import` 抓取单帧 JPEG 与 MJPEG 流 |
 | Client | `client.js` | 右侧栏标签页、自动连接、noVNC 视图、工具栏、中英双语字典 |
@@ -59,7 +59,8 @@ English: a right-sidebar tab that auto-connects on open and shows **a browser** 
   config:
     enabled: true          # 关闭后所有路由返回禁用态，客户端给出提示
     display: ':0'          # 宿主桌面：Xephyr 窗口落在这里（浏览器「桌面可见」的地方）
-    rfbPort: 5900          # x11vnc 监听端口（仅 127.0.0.1）
+    rfbPort: 5900          # v1 兼容的单端口；未设 rfbPortRange 时优先尝试它
+    rfbPortRange: [5900, 5999]  # 每个实例从这个区间里分配自己的 RFB 端口
     viewportWidth: 1280
     viewportHeight: 800
     jpegQuality: 72        # 降级预览的 JPEG 质量
@@ -68,7 +69,7 @@ English: a right-sidebar tab that auto-connects on open and shows **a browser** 
     browser:
       enabled: true        # false 退回 v1：直接镜像 display 本身，不启 Xephyr/Chromium
       executable: chromium
-      nestedDisplay: auto  # auto = 在 :90..:120 里挑一个空闲显示号
+      nestedDisplay: auto  # auto = 在 :200..:999 里挑一个空闲显示号
       windowTitle: DSH Desktop Browser
       startUrl: about:blank
       extraArgs: []
@@ -79,7 +80,14 @@ English: a right-sidebar tab that auto-connects on open and shows **a browser** 
 - `x11vnc` 只监听 `127.0.0.1`（`-localhost`），外部网络无法直连 RFB 端口。
 - WebSocket 升级路由做**同源校验**：Origin 的 host 必须等于本次请求的 Host。因为宿主同一个端口同时绑定回环、多个 LAN 地址与反代域名，字面量地址白名单无法覆盖（早期实现只放行回环，导致 LAN/反代访问时 WS 被 403、面板停在"未连接"）；而「Origin 指向别的主机」正是要拦截的情况，外部页面无法借用户浏览器连本机 VNC。
 - 点开标签页即自动连接（这是用户要求的行为）；断开与重连仍受用户控制，自动连接失败最多再自动重试一次，之后停在错误态等用户手动「重新连接」，不会无限刷。
-- 插件只终止**自己启动的** `x11vnc`、`Xephyr` 与 `Chromium`（按记录的 pid，绝不按名字 `pkill`）；端口上已有他人启动的 VNC 服务时直接复用，不抢占也不结束。
+- 插件只终止**自己启动的** `x11vnc`、`Xephyr` 与 `Chromium`（按记录的 pid，绝不按名字 `pkill`）。
+- **端口只复用自己启动的服务。** 分配时从 `rfbPortRange` 里从低到高取第一个没人监听的端口；
+  某端口上已经有人在监听，说明那不是本实例的 x11vnc（可能是别的实例、系统服务或残留进程），
+  于是**跳过它继续找下一个**，既不连接也不结束它。区间耗尽时返回明确错误，不静默降级。
+  早期实现是「有人监听就复用」，那会让第二个实例的面板静默显示第一个实例的桌面且零报错。
+- **路径按实例隔离。** 每个浏览器实例有自己的目录（`$TMPDIR/dsh-desktop-vnc-<实例标识>/`），
+  里面放 Chromium 的 `profile` 与 Xauthority；两者都不与别的实例共享。实例停止时整个目录一起删除，
+  Xauthority 不会残留（它是凭据，不该比它授权的显示活得更久）。
 
 ## 依赖
 

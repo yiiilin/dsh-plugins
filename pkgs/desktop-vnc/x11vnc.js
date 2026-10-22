@@ -2,14 +2,16 @@
  * desktop-vnc Host half — x11vnc process lifecycle.
  *
  * The panel is useless without a VNC server on `127.0.0.1:<rfbPort>`, so the
- * plugin starts and owns one: `ensure()` reuses whatever already listens on that
- * port and otherwise spawns `x11vnc` against the configured display. Two
- * properties are load-bearing:
+ * plugin starts and owns one: `ensure()` allocates a port out of the configured
+ * range and spawns `x11vnc` against the configured display. Two properties are
+ * load-bearing:
  *
  * - **Never touch a process this controller did not start.** A port already in
- *   listening state means somebody else's VNC server (a system unit, an earlier
- *   `x11vnc` invocation) and it is reused verbatim; no `pkill`, no pattern
- *   matching, no second server fighting for the same port.
+ *   listening state belongs to somebody else's VNC server (a system unit, an
+ *   earlier `x11vnc` invocation, another instance in this process) and is
+ *   *skipped*, not adopted: connecting to a foreign server would make this
+ *   panel silently show another instance's desktop with no error anywhere.
+ *   Only the server this controller started is reused, and only it is stopped.
  * - **One spawn under concurrency.** The sidebar can mount, remount and open two
  *   tabs while a previous `ensure()` is still polling the port, so the in-flight
  *   promise is shared instead of starting one x11vnc per caller.
@@ -37,6 +39,9 @@ const DEFAULT_PROBE_INTERVAL_MS = 120
 const DEFAULT_PROBE_TIMEOUT_MS = 300
 /** Collected stdout/stderr cap; x11vnc's own chatter is never surfaced raw. */
 const LOG_CAPTURE_BYTES = 16 * 1024
+/** Default RFB range: the VNC display numbers, one port per instance. */
+const DEFAULT_PORT_RANGE_MIN = 5900
+const DEFAULT_PORT_RANGE_MAX = 5999
 
 /**
  * Resolve when `127.0.0.1:<port>` accepts a TCP connection.
@@ -106,6 +111,53 @@ export function normalizePort(value) {
 }
 
 /**
+ * The inclusive port range an instance allocates from.
+ *
+ * A malformed range falls back to `[5900, 5999]` rather than reaching a bind,
+ * and a reversed one is put back in order instead of silently matching nothing.
+ *
+ * @param {unknown} value the configured `rfbPortRange`.
+ * @returns {{min: number, max: number}} the range in force.
+ */
+export function normalizePortRange(value) {
+  const fallback = { min: DEFAULT_PORT_RANGE_MIN, max: DEFAULT_PORT_RANGE_MAX }
+  if (!Array.isArray(value) || value.length !== 2) return fallback
+  const [first, second] = value.map((entry) => Number(entry))
+  const usable = (port) => Number.isInteger(port) && port > 0 && port < 65536
+  if (!usable(first) || !usable(second)) return fallback
+  return first <= second ? { min: first, max: second } : { min: second, max: first }
+}
+
+/**
+ * The ports to try, in order, for one instance.
+ *
+ * The range is the pool, taken low to high — that is the v2 rule, and it is what
+ * keeps two instances from landing on the same port. The v1 single value
+ * `rfbPort` is kept working by moving it to the front of that pool:
+ *
+ * - inside the range, it is simply tried first, so an existing profile keeps the
+ *   exact port it had while a second instance falls through to the next free one;
+ * - outside the range, it is still honoured when the range is the *default* one,
+ *   so a v1 profile with an unusual port does not silently move. A range the
+ *   operator actually chose is authoritative and is not widened by a stale field.
+ *
+ * @param {{rfbPortRange?: unknown, rfbPort?: unknown}} [config] plugin Config.
+ * @returns {number[]} candidate ports, preferred first, without duplicates.
+ */
+export function portCandidates(config = {}) {
+  const explicit = config?.rfbPortRange !== undefined && config?.rfbPortRange !== null
+  const range = normalizePortRange(config?.rfbPortRange)
+  const pool = []
+  for (let candidate = range.min; candidate <= range.max; candidate += 1) pool.push(candidate)
+  if (config?.rfbPort === undefined || config?.rfbPort === null) return pool
+  const preferred = normalizePort(config.rfbPort)
+  const rest = pool.filter((candidate) => candidate !== preferred)
+  if (pool.includes(preferred)) return [preferred, ...rest]
+  const isDefaultRange = range.min === DEFAULT_PORT_RANGE_MIN && range.max === DEFAULT_PORT_RANGE_MAX
+  return explicit || !isDefaultRange ? rest : [preferred, ...rest]
+}
+
+/**
  * A display spec fit for `-display`: a local `:N` only.
  *
  * x11vnc receives this as an argv element, so anything that could read as a
@@ -153,7 +205,13 @@ export function createX11VncController({
   // stack has picked its nested one.
   let authority = null
   let displayFor = null
-  const port = normalizePort(config.rfbPort)
+  // The ports this instance may take, preferred first, and the one it holds.
+  // `port` is null until an allocation succeeds; it is the port this controller
+  // spawned against, so a foreign listener on the same number is never mistaken
+  // for our own server.
+  const candidates = portCandidates(config)
+  const range = normalizePortRange(config.rfbPortRange)
+  let port = null
   const cwd = typeof config.cwd === 'string' && config.cwd !== '' ? config.cwd : tmpdir()
   const enabled = config.enabled !== false
 
@@ -242,8 +300,38 @@ export function createX11VncController({
     () => true,
   )
 
+  /** True while the child this controller started is still alive. */
+  const ownsLiveServer = () => handle !== null && port !== null && exitReasonFor(handle) === null
+
+  /**
+   * Claim a port out of the configured range, lowest first.
+   *
+   * A port that already answers belongs to somebody else — a system unit, an
+   * earlier x11vnc, another instance of this plugin — and is **skipped**. The
+   * one exception is the port this controller's own live child holds, which is
+   * what "reuse" now means: connecting to a foreign server instead would show
+   * that instance's desktop in this panel with no error to notice.
+   *
+   * @returns {Promise<number|null>} the claimed port, or null when the range is full.
+   */
+  const allocatePort = async () => {
+    if (ownsLiveServer()) return port
+    for (const candidate of candidates) {
+      let taken = false
+      try {
+        taken = (await probe(candidate)) === true
+      } catch {
+        // An unreadable probe is not proof of occupancy: the bind attempt reports
+        // the real failure rather than this one hiding it.
+        taken = false
+      }
+      if (!taken) return candidate
+    }
+    return null
+  }
+
   /** Wait until the port answers, or give up and report why. */
-  const waitForBind = async (started) => {
+  const waitForBind = async (started, boundPort) => {
     const exited = hasExited(started)
     let done = false
     exited.then(() => {
@@ -251,7 +339,7 @@ export function createX11VncController({
     })
     const deadline = Date.now() + startTimeoutMs
     for (;;) {
-      if (await probe(port)) return true
+      if (await probe(boundPort)) return true
       if (done) return false
       if (Date.now() >= deadline) return false
       await new Promise((resolve) => {
@@ -268,7 +356,9 @@ export function createX11VncController({
    * reported separately through {@link display}.
    */
   const status = () => {
-    const result = { running: false, port }
+    // Before the first allocation the preferred port is reported, so the shape
+    // stays a number and a v1 consumer sees the port it configured.
+    const result = { running: false, port: port ?? candidates[0] }
     if (handle !== null && exitReasonFor(handle) === null) {
       result.running = true
       if (typeof handle.pid === 'number') result.pid = handle.pid
@@ -307,6 +397,7 @@ export function createX11VncController({
       const stale = handle
       requestedStops.add(stale)
       clearHandle()
+      port = null
       try {
         stale.terminate?.()
       } catch {
@@ -324,6 +415,7 @@ export function createX11VncController({
       const stale = handle
       requestedStops.add(stale)
       clearHandle()
+      port = null
       try {
         stale.terminate?.()
       } catch {
@@ -343,11 +435,20 @@ export function createX11VncController({
     if (terminated) throw new Error('desktop-vnc: controller disposed')
     if (!enabled) throw new Error('desktop-vnc: disabled by configuration')
 
-    // Somebody else already serves this port: reuse it and never adopt or kill it.
-    if (await probe(port)) {
-      note('info', `desktop-vnc: reusing the VNC server already listening on 127.0.0.1:${port}`)
+    // Reuse means "the server this controller started is still up", never "some
+    // server answers this port": the latter is another instance's desktop.
+    if (ownsLiveServer()) {
+      note('info', `desktop-vnc: reusing the VNC server this instance started on 127.0.0.1:${port}`)
       return { running: true, port, started: false }
     }
+
+    const allocated = await allocatePort()
+    if (allocated === null) {
+      const message = `没有空闲的 RFB 端口（127.0.0.1:${range.min}..:${range.max} 都被占用）`
+      note('warn', `desktop-vnc: ${message}`)
+      return { running: false, port: candidates[0], started: false, error: message }
+    }
+    port = allocated
 
     let executable = 'x11vnc'
     if (typeof resolveExecutable === 'function') {
@@ -391,7 +492,7 @@ export function createX11VncController({
     exitInfo = null
     watch(started)
 
-    if (await waitForBind(started)) {
+    if (await waitForBind(started, port)) {
       note('info', `desktop-vnc: started x11vnc on 127.0.0.1:${port} (display ${display})`)
       return { running: true, port, started: true }
     }
@@ -422,6 +523,9 @@ export function createX11VncController({
   const stop = async () => {
     const started = handle
     clearHandle()
+    // The port is released with the server: the next ensure() allocates afresh
+    // rather than reporting a port this instance no longer holds.
+    port = null
     if (started === null) return
     requestedStops.add(started)
     try {

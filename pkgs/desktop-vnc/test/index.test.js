@@ -8,6 +8,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { Config, apply, assetContentType, inject, name, resolveAssetPath, resolvePanelDisplay } from '../index.js'
+import { portCandidates } from '../x11vnc.js'
 
 test('the mount identity matches the bundle row', () => {
   assert.equal(name, 'desktop-vnc')
@@ -25,6 +26,34 @@ test('the Config schema carries the frozen defaults', () => {
   assert.equal(config.jpegQuality, 72)
   assert.equal(config.frameRate, 8)
   assert.equal(config.maxClients, 4)
+})
+
+test('the Config schema carries the v2 port range and keeps the v1 single port', () => {
+  const config = new Config({})
+  // One port per browser instance: the pool an instance allocates from.
+  assert.deepEqual(config.rfbPortRange, [5900, 5999])
+  // `rfbPort` stays a v1-compatible single value; it is the preferred first port.
+  assert.equal(config.rfbPort, 5900)
+
+  const custom = new Config({ rfbPortRange: [6000, 6010] })
+  assert.deepEqual(custom.rfbPortRange, [6000, 6010])
+  assert.equal(custom.rfbPort, 5900, 'the v1 field keeps its own default')
+})
+
+test('the port range helper reads the range, the v1 single port, and nonsense', () => {
+  // An explicit range is the pool, low to high.
+  assert.deepEqual(portCandidates({ rfbPortRange: [6000, 6002] }), [6000, 6001, 6002])
+  // A reversed range is put back in order rather than matching nothing.
+  assert.deepEqual(portCandidates({ rfbPortRange: [6002, 6000] }), [6000, 6001, 6002])
+  // No range: the v1 single port is preferred, then the default pool follows, so
+  // an existing profile keeps its port while a second instance can still start.
+  const legacy = portCandidates({ rfbPort: 5905 })
+  assert.equal(legacy[0], 5905)
+  assert.equal(legacy[1], 5900)
+  assert.equal(new Set(legacy).size, legacy.length, 'no port is offered twice')
+  // Unusable input falls back to the default pool instead of reaching a bind.
+  assert.deepEqual(portCandidates({ rfbPortRange: ['x', 'y'] }).slice(0, 2), [5900, 5901])
+  assert.deepEqual(portCandidates({ rfbPortRange: [1, 2, 3] }).slice(0, 2), [5900, 5901])
 })
 
 test('the Config schema carries the v2 browser defaults', () => {

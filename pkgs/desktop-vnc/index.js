@@ -41,6 +41,7 @@
 
 import { readFileSync } from 'node:fs'
 import { connect } from 'node:net'
+import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import z from '@deepseek-ai/schemastery'
@@ -68,7 +69,13 @@ export const Config = z.object({
   enabled: z.boolean().default(true),
   /** Host desktop: the Xephyr window lands here, and the v1 mirror when browser.enabled=false. */
   display: z.string().default(':0'),
+  /** v1 single port. Preferred first when `rfbPortRange` is not configured. */
   rfbPort: z.number().default(5900),
+  /**
+   * The RFB port pool one browser instance allocates from, lowest first. A port
+   * that already answers belongs to somebody else and is skipped, never adopted.
+   */
+  rfbPortRange: z.array(z.number()).default([5900, 5999]),
   viewportWidth: z.number().default(1280),
   viewportHeight: z.number().default(800),
   jpegQuality: z.number().default(72),
@@ -79,7 +86,7 @@ export const Config = z.object({
     /** false reverts to v1: mirror `display` itself, no Xephyr/Chromium. */
     enabled: z.boolean().default(true),
     executable: z.string().default('chromium'),
-    /** 'auto' picks the first free `:90`..`:120`; an explicit `:N` is used verbatim. */
+    /** 'auto' picks the first free `:200`..`:999`; an explicit `:N` is used verbatim. */
     nestedDisplay: z.string().default('auto'),
     /** The desktop window's title, also used to identify/clean up. */
     windowTitle: z.string().default('DSH Desktop Browser'),
@@ -204,6 +211,9 @@ export function apply(ctx, config = {}) {
   const enabled = config.enabled !== false
   const display = typeof config.display === 'string' && config.display !== '' ? config.display : ':0'
   const rfbPort = Number.isInteger(config.rfbPort) ? config.rfbPort : 5900
+  // The pool an instance allocates its RFB port from. Unset falls back to the v1
+  // single value first, then the default pool (see `portCandidates`).
+  const rfbPortRange = config.rfbPortRange
   // Zero is a legitimate "no concurrent preview" setting; only nonsense falls back.
   const maxClients = Number.isInteger(config.maxClients) && config.maxClients >= 0 ? config.maxClients : 4
   const frameRate = Number.isFinite(config.frameRate) ? config.frameRate : 8
@@ -242,6 +252,14 @@ export function apply(ctx, config = {}) {
   // The v2 stack: one nested Xephyr display holding one Chromium, whose Xephyr
   // window is simultaneously a real window on `display`. Created even when
   // disabled so `state` can report `enabled: false` and stop() is a no-op.
+  //
+  // The identity below is what keeps this stack's Chromium profile and
+  // Xauthority file in a directory of their own. It is passed explicitly rather
+  // than left to the factory defaults because it is the seam the instance table
+  // widens: every browser instance gets its own identity, and two of them in one
+  // process must not share a profile (SingletonLock) or a cookie (last writer
+  // wins, first instance locked out of its own display).
+  const instanceIdentity = { tmpDir: tmpdir(), pid: process.pid }
   const browser = createBrowserStack({
     spawn,
     resolveExecutable,
@@ -252,6 +270,8 @@ export function apply(ctx, config = {}) {
       browser: browserConfig,
     },
     log,
+    tmpDir: instanceIdentity.tmpDir,
+    pid: instanceIdentity.pid,
   })
 
   const vnc = createX11VncController({
@@ -259,7 +279,7 @@ export function apply(ctx, config = {}) {
     resolveExecutable,
     // v2 retargets this to the nested display once the browser stack is up; the
     // host desktop is only the initial/v1 value.
-    config: { enabled, display, rfbPort },
+    config: { enabled, display, rfbPort, rfbPortRange },
     log,
   })
 
@@ -535,7 +555,9 @@ export function apply(ctx, config = {}) {
         tcp = await openTcp({ port: started.port ?? rfbPort })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        log('warn', `desktop-vnc: cannot reach x11vnc on 127.0.0.1:${rfbPort}: ${message}`)
+        // The allocated port, not the configured preference: with a pool the two
+        // differ, and the diagnostic is worthless if it names the wrong one.
+        log('warn', `desktop-vnc: cannot reach x11vnc on 127.0.0.1:${started.port ?? rfbPort}: ${message}`)
         writeHttpError(socket, 503, `cannot reach the VNC server: ${message}`.slice(0, 200))
         return
       }
