@@ -25,6 +25,10 @@
  * - `/_dsh/desktop-vnc/ws` is a hand-written RFC 6455 server that pumps
  *   WebSocket frames to the x11vnc TCP port. The workspace has no usable `ws`
  *   dependency, so {@link ./ws.js} implements the framing itself.
+ * - Three **agent tools** ({@link ./tools.js}) manage the same table: list,
+ *   create for an owning session, and close by id. They call the table directly
+ *   rather than the HTTP endpoints, so an agent's change appears in the panel at
+ *   once; an id that does not exist is an error, never a fallback.
  *
  * v2 layering: {@link ./instances.js} is the table, and each entry owns a whole
  * stack. {@link ./browser.js} owns a nested Xephyr display with a single Chromium
@@ -65,6 +69,7 @@ import z from '@deepseek-ai/schemastery'
 import { createBrowserStack } from './browser.js'
 import { createCaptureService, streamMjpeg } from './capture.js'
 import { createInstanceRegistry, isInstanceId } from './instances.js'
+import { browserInstanceTools } from './tools.js'
 import { createX11VncController, portCandidates } from './x11vnc.js'
 import {
   DEFAULT_MAX_FRAME_BYTES,
@@ -919,6 +924,29 @@ export function apply(ctx, config = {}) {
     const created = registry.create(options)
     mountInstanceUpgrade(created.id)
     return created
+  }
+
+  // --- 4.6 agent tools -------------------------------------------------------
+  // `tools` is optional: a profile can mount this plugin for its panel alone, and
+  // a deployment without the tool registry must still get the routes. Injection is
+  // therefore requested here rather than declared in `inject`, so an absent service
+  // simply means no tools instead of an unmounted plugin. The method guard is the
+  // same one the `session/disposed` wiring above uses, so a duck-typed Host context
+  // without the registry still mounts the routes.
+  //
+  // The tools drive the same table the routes do — never the HTTP endpoints — and
+  // create goes through `createInstance` so a tool-created instance also gets its
+  // own viewer route.
+  if (typeof ctx.inject === 'function') {
+    ctx.inject(['tools'], (toolCtx) => {
+      for (const definition of browserInstanceTools({
+        list: () => registry.list(),
+        create: (options) => createInstance(options),
+        close: (id) => registry.close(id),
+      })) {
+        toolCtx.tools.register(definition)
+      }
+    })
   }
 
   // --- teardown --------------------------------------------------------------

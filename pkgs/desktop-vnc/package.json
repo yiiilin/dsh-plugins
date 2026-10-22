@@ -11,6 +11,7 @@
     "index.js",
     "instances.js",
     "novnc",
+    "tools.js",
     "ws.js",
     "x11vnc.js",
     "cordis.patch.yml",
