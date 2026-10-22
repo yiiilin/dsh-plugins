@@ -76,16 +76,193 @@ function scriptedProbe(sequence) {
 }
 
 /** Collect the spawn specs a controller received. */
-function recordingSpawn(handles = []) {
+function recordingSpawn(handles = [], onSpawn) {
   const specs = []
   const spawn = (spec) => {
     specs.push(spec)
+    onSpawn?.(spec, specs.length - 1)
     const handle = handles[specs.length - 1] ?? fakeHandle()
     handles.push(handle)
     return handle
   }
   return { spawn, specs, handles }
 }
+
+/** The `-rfbport` value in a recorded spawn spec. */
+function spawnedPort(spec) {
+  return Number(spec.argv[spec.argv.indexOf('-rfbport') + 1])
+}
+
+/**
+ * A port probe whose listening set the test drives. Every probed port is
+ * recorded, so a test can assert which ports the allocator considered.
+ */
+function portProbe(initial = []) {
+  const listening = new Set(initial)
+  const probed = []
+  const probe = async (port) => {
+    probed.push(port)
+    return listening.has(port)
+  }
+  return { probe, listening, probed }
+}
+
+/** Spawn hook that publishes a controller's port the moment its child starts. */
+function publishPortWhenServerStarts(listening) {
+  return (spec) => {
+    listening.add(spawnedPort(spec))
+  }
+}
+
+test('an externally occupied port is skipped, never connected to', async () => {
+  // "Somebody is listening" must never mean "that is my VNC server": adopting a
+  // foreign one makes the second panel silently show the first one's desktop.
+  const { probe, listening } = portProbe([5900])
+  const { spawn, specs } = recordingSpawn([fakeHandle()], publishPortWhenServerStarts(listening))
+  const vnc = createX11VncController({
+    spawn,
+    resolveExecutable: async () => '/usr/bin/x11vnc',
+    config: { display: ':0', rfbPort: 5900 },
+    probe,
+    probeIntervalMs: 1,
+  })
+
+  const result = await vnc.ensure()
+  assert.deepEqual(result, { running: true, port: 5901, started: true })
+  assert.equal(specs.length, 1)
+  assert.equal(spawnedPort(specs[0]), 5901, 'the foreign 5900 was never spawned against')
+  // The port is the one this controller bound, not the configured preference.
+  assert.equal(vnc.status().port, 5901)
+  assert.equal(vnc.status().running, true)
+})
+
+test('two controllers in one process take two different ports', async () => {
+  const { probe, listening } = portProbe()
+  const make = () => {
+    const { spawn, specs } = recordingSpawn([fakeHandle()], publishPortWhenServerStarts(listening))
+    const vnc = createX11VncController({
+      spawn,
+      resolveExecutable: async () => '/usr/bin/x11vnc',
+      config: { display: ':0', rfbPort: 5900 },
+      probe,
+      probeIntervalMs: 1,
+    })
+    return { vnc, specs }
+  }
+  const first = make()
+  const second = make()
+
+  const a = await first.vnc.ensure()
+  const b = await second.vnc.ensure()
+
+  assert.equal(a.port, 5900)
+  assert.equal(b.port, 5901)
+  assert.notEqual(a.port, b.port)
+  assert.equal(first.specs.length, 1)
+  assert.equal(second.specs.length, 1)
+  assert.equal(spawnedPort(second.specs[0]), 5901)
+})
+
+test('the port comes from the configured range, low to high', async () => {
+  const { probe, listening } = portProbe([6000, 6001])
+  const { spawn, specs } = recordingSpawn([fakeHandle()], publishPortWhenServerStarts(listening))
+  const vnc = createX11VncController({
+    spawn,
+    resolveExecutable: async () => '/usr/bin/x11vnc',
+    config: { display: ':0', rfbPortRange: [6000, 6004] },
+    probe,
+    probeIntervalMs: 1,
+  })
+
+  const result = await vnc.ensure()
+  assert.equal(result.port, 6002)
+  assert.equal(spawnedPort(specs[0]), 6002)
+})
+
+test('the exhaustion error names the configured range, not a candidate-derived one', async () => {
+  // A v1 single port *inside* the pool is tried first, so the candidate list no
+  // longer starts at the range's low end. An operator reading the error needs the
+  // range they configured, not the reordered candidate window.
+  const { probe } = portProbe([6000, 6001, 6002, 6003, 6004])
+  const { spawn, specs } = recordingSpawn()
+  const vnc = createX11VncController({
+    spawn,
+    resolveExecutable: async () => '/usr/bin/x11vnc',
+    config: { display: ':0', rfbPortRange: [6000, 6004], rfbPort: 6002 },
+    probe,
+  })
+
+  const result = await vnc.ensure()
+  assert.equal(result.running, false)
+  assert.match(result.error, /6000\.\.:6004/)
+  assert.equal(specs.length, 0)
+})
+
+test('an exhausted port range fails with a readable error and starts nothing', async () => {
+  const { probe } = portProbe([5900, 5901])
+  const { spawn, specs } = recordingSpawn()
+  const logs = []
+  const vnc = createX11VncController({
+    spawn,
+    resolveExecutable: async () => '/usr/bin/x11vnc',
+    config: { display: ':0', rfbPortRange: [5900, 5901] },
+    probe,
+    probeIntervalMs: 1,
+    log: (level, message) => logs.push([level, message]),
+  })
+
+  const result = await vnc.ensure()
+  assert.equal(result.running, false)
+  assert.equal(result.started, false)
+  // The failure names the range, so an operator knows what to widen.
+  assert.match(result.error, /5900/)
+  assert.match(result.error, /5901/)
+  assert.match(result.error, /端口/)
+  // Never a silent reuse and never a doomed spawn.
+  assert.equal(specs.length, 0)
+  assert.equal(vnc.status().running, false)
+  assert.equal(logs.some(([level]) => level === 'warn'), true)
+})
+
+test('an ensure() after its own start reuses that server instead of respawning', async () => {
+  const { probe, listening } = portProbe()
+  const { spawn, specs } = recordingSpawn([fakeHandle()], publishPortWhenServerStarts(listening))
+  const vnc = createX11VncController({
+    spawn,
+    resolveExecutable: async () => '/usr/bin/x11vnc',
+    config: { display: ':0', rfbPort: 5900 },
+    probe,
+    probeIntervalMs: 1,
+  })
+
+  const first = await vnc.ensure()
+  const second = await vnc.ensure()
+
+  assert.deepEqual(first, { running: true, port: 5900, started: true })
+  assert.deepEqual(second, { running: true, port: 5900, started: false })
+  assert.equal(specs.length, 1, 'the server this controller started is reused')
+})
+
+test('an externally occupied port is reused by nobody, even after a retarget', async () => {
+  // Everything in range belongs to somebody else: the controller reports that
+  // instead of adopting a server it did not start.
+  const { probe } = portProbe([5900, 5901, 5902])
+  const { spawn, specs } = recordingSpawn()
+  const vnc = createX11VncController({
+    spawn,
+    resolveExecutable: async () => '/usr/bin/x11vnc',
+    config: { display: ':0', rfbPortRange: [5900, 5902] },
+    probe,
+  })
+
+  await vnc.ensure()
+  vnc.setDisplay(':96')
+  await vnc.stop()
+
+  assert.equal(specs.length, 0)
+  assert.equal(vnc.display(), ':96')
+  assert.equal(vnc.status().running, false)
+})
 
 test('the frozen argv exposes only the local TCP port of the display', () => {
   const argv = x11vncArgv('/usr/bin/x11vnc', { display: ':0', port: 5900 })
@@ -104,22 +281,27 @@ test('the frozen argv exposes only the local TCP port of the display', () => {
   ])
 })
 
-test('a port already in listening state is reused, never spawned against', async () => {
+test('a listening port is never adopted: it is skipped, not reused', async () => {
+  // The pre-v2 contract reused whatever answered the port. That made a second
+  // panel silently show the first instance's desktop, so adoption is gone: a
+  // listening port is somebody else's server and is passed over.
   const { probe, state } = controllableProbe(true)
   const { spawn, specs } = recordingSpawn()
   const vnc = createX11VncController({
     spawn,
     resolveExecutable: async () => '/usr/bin/x11vnc',
-    config: { display: ':0', rfbPort: 5900 },
+    config: { display: ':0', rfbPortRange: [5900, 5900] },
     probe,
   })
 
   const result = await vnc.ensure()
-  assert.deepEqual(result, { running: true, port: 5900, started: false })
-  // The whole point: an existing server is adopted, not duplicated or killed.
+  assert.equal(result.running, false)
+  assert.equal(result.started, false)
+  assert.match(result.error, /5900/)
+  // Nothing was adopted and nothing was spawned against a foreign server.
   assert.equal(specs.length, 0)
   assert.ok(state.calls >= 1)
-  // status() reports the pre-existing server as not ours.
+  // status() never reports somebody else's server as ours.
   assert.equal(vnc.status().running, false)
 })
 
@@ -218,13 +400,13 @@ test('stop() terminates and waits for exactly the process it started', async () 
   assert.equal(handle.terminated, 1)
 })
 
-test('a reusing ensure() leaves stop() with nothing to kill', async () => {
+test('a controller that adopted nothing has nothing to stop', async () => {
   const { probe } = controllableProbe(true)
   const { spawn, specs } = recordingSpawn()
   const vnc = createX11VncController({
     spawn,
     resolveExecutable: async () => '/usr/bin/x11vnc',
-    config: { display: ':0', rfbPort: 5900 },
+    config: { display: ':0', rfbPortRange: [5900, 5900] },
     probe,
   })
 

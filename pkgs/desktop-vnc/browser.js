@@ -53,8 +53,15 @@ export const XVFB_EXECUTABLE = 'Xvfb'
  * the panel mirrors. Starting well above that range keeps this display ours.
  */
 export const NESTED_DISPLAY_MIN = 200
-/** High end of the nested display range this stack claims. */
-export const NESTED_DISPLAY_MAX = 250
+/**
+ * High end of the nested display range this stack claims.
+ *
+ * Wide on purpose: one process now opens browser instances for as long as it
+ * runs, so the pool must not impose an artificial ceiling. With a per-instance
+ * RFB port range of 100 addresses the port range is the tighter limit; this
+ * number only has to stay above it.
+ */
+export const NESTED_DISPLAY_MAX = 999
 /** Default window title, also the human handle for the window on the desktop. */
 export const DEFAULT_WINDOW_TITLE = 'DSH Desktop Browser'
 /** Chromium's default landing page when the config leaves `startUrl` empty. */
@@ -386,6 +393,10 @@ export function createBrowserStack({
   const cwd = textOr(config.cwd, tmpdir())
   const baseDir = textOr(tmpDir, tmpdir())
   const instancePid = Number.isInteger(pid) && pid >= 0 ? pid : process.pid
+  // One directory per browser instance, holding both the Chromium profile and the
+  // Xauthority cookie this display trusts. Two instances in one process therefore
+  // never share a SingletonLock and never overwrite each other's cookie.
+  const instanceDir = join(baseDir, `dsh-desktop-vnc-${instancePid}`)
   const probeDisplay = typeof probe === 'function' ? probe : defaultProbe
 
   /**
@@ -637,7 +648,7 @@ export function createBrowserStack({
 
     // One profile per plugin instance: nothing here can read or lock the user's
     // own Chromium profile, and stop() removes exactly this directory.
-    const profileDir = join(baseDir, `dsh-desktop-vnc-${instancePid}`, 'profile')
+    const profileDir = join(instanceDir, 'profile')
     state.profileDir = profileDir
 
     let handle
@@ -743,11 +754,10 @@ export function createBrowserStack({
     // The cookie has to exist before the display starts: the server is told to
     // trust exactly this file, and the browser presents it. Both are per instance.
     if (state.authFile === null) {
-      const authDir = join(baseDir, `dsh-desktop-vnc-${instancePid}`)
       try {
-        mkdirSync(authDir, { recursive: true, mode: 0o700 })
+        mkdirSync(instanceDir, { recursive: true, mode: 0o700 })
         state.authFile = writeXauthority(
-          join(authDir, 'Xauthority'),
+          join(instanceDir, 'Xauthority'),
           String(state.display).replace(/^:/u, ''),
           randomBytes(16),
         )
@@ -791,11 +801,16 @@ export function createBrowserStack({
     return starting
   }
 
-  /** Terminate exactly the children this stack started, then drop their profile. */
+  /**
+   * Terminate exactly the children this stack started, then drop their instance
+   * directory — the profile *and* the Xauthority cookie, which would otherwise
+   * outlive the display it authorizes.
+   */
   const stop = async () => {
     const browser = state.browser
     const server = state.server
-    const profileDir = state.profileDir
+    // Only remove a directory this stack actually created something in.
+    const createdDir = state.profileDir !== null || state.authFile !== null
 
     state.browser = null
     state.server = null
@@ -810,11 +825,11 @@ export function createBrowserStack({
     await endEntry(browser)
     await endEntry(server)
 
-    if (profileDir !== null) {
+    if (createdDir) {
       try {
-        await removeDir(profileDir)
+        await removeDir(instanceDir)
       } catch {
-        // Best-effort: a leftover temp profile must not fail unload.
+        // Best-effort: a leftover temp directory must not fail unload.
       }
     }
   }

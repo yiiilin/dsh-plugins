@@ -455,6 +455,29 @@ test('auto-pick skips occupied nested displays', async () => {
   assert.equal(specs[1].env.DISPLAY, `:${first + 3}`)
 })
 
+test('the nested display range is wide enough to keep opening instances', () => {
+  // The pool used to stop at :250, so a long-lived process that kept opening
+  // browsers eventually hit an artificial wall while plenty of numbers above it
+  // were free. The real limit is memory and process count, not this constant.
+  assert.ok(
+    NESTED_DISPLAY_MAX >= 999,
+    `the pool must reach :999, got :${NESTED_DISPLAY_MAX}`,
+  )
+  assert.ok(NESTED_DISPLAY_MAX > NESTED_DISPLAY_MIN)
+})
+
+test('walking the whole widened pool still reports exhaustion instead of looping', async () => {
+  // A 999-wide range is scanned once, in order, and then declared full — the
+  // pick must not wrap, retry or fall back to an occupied number.
+  const every = []
+  for (let number = NESTED_DISPLAY_MIN; number <= NESTED_DISPLAY_MAX; number += 1) {
+    every.push(`:${number}`)
+  }
+  const { probe, probed } = displayProbe(every)
+  assert.equal(await pickFreeDisplay({ probe }), null)
+  assert.equal(probed.length, NESTED_DISPLAY_MAX - NESTED_DISPLAY_MIN + 1)
+})
+
 test('a full nested range fails with a readable reason and starts nothing', async () => {
   const every = []
   for (let number = NESTED_DISPLAY_MIN; number <= NESTED_DISPLAY_MAX; number += 1) {
@@ -541,7 +564,7 @@ test('a crashed chromium is re-started without respawning the Xephyr it runs in'
 
 // --- teardown ---------------------------------------------------------------
 
-test('stop() signals only the pids it started and removes only its own profile', async () => {
+test('stop() signals only the pids it started and removes only its own instance directory', async () => {
   const displays = displayProbe()
   const xephyr = fakeHandle({ pid: 111 })
   const chromium = fakeHandle({ pid: 222 })
@@ -565,10 +588,45 @@ test('stop() signals only the pids it started and removes only its own profile',
   assert.equal(xephyr.terminated, 1)
   assert.equal(chromium.terminated, 1)
 
-  // The per-instance user-data-dir is ours to delete.
-  assert.deepEqual(removeDir.calls, [join('/tmp/dsh-test', 'dsh-desktop-vnc-777', 'profile')])
+  // The per-instance directory holds both the Chromium profile and the
+  // Xauthority cookie, so removing it is the whole cleanup: the credential must
+  // not outlive the stack that wrote it.
+  assert.deepEqual(removeDir.calls, [join('/tmp/dsh-test', 'dsh-desktop-vnc-777')])
   assert.equal(stack.status().running, false)
   assert.deepEqual(stack.status().pids, {})
+})
+
+test('two stacks with different instance ids keep their profile and cookie apart', async () => {
+  // Two browser instances in one process must not share the Chromium profile
+  // (SingletonLock) or the Xauthority file (the second write would overwrite the
+  // first cookie and lock the first browser out of its own display).
+  const first = happyStack({ pid: 1001 })
+  const second = happyStack({ pid: 1002 })
+
+  const [a, b] = await Promise.all([first.stack.ensure(), second.stack.ensure()])
+  assert.equal(a.ok, true)
+  assert.equal(b.ok, true)
+
+  assert.equal(a.profileDir, join('/tmp/dsh-test', 'dsh-desktop-vnc-1001', 'profile'))
+  assert.equal(b.profileDir, join('/tmp/dsh-test', 'dsh-desktop-vnc-1002', 'profile'))
+  assert.notEqual(a.profileDir, b.profileDir)
+  assert.equal(a.authority, join('/tmp/dsh-test', 'dsh-desktop-vnc-1001', 'Xauthority'))
+  assert.equal(b.authority, join('/tmp/dsh-test', 'dsh-desktop-vnc-1002', 'Xauthority'))
+  assert.notEqual(a.authority, b.authority)
+
+  // The children are told the same thing the snapshot reports.
+  const firstChromium = first.specs.find((spec) => commandName(spec.argv) === 'chromium')
+  const secondChromium = second.specs.find((spec) => commandName(spec.argv) === 'chromium')
+  assert.ok(firstChromium.argv.includes(`--user-data-dir=${a.profileDir}`))
+  assert.ok(secondChromium.argv.includes(`--user-data-dir=${b.profileDir}`))
+  assert.equal(firstChromium.env.XAUTHORITY, a.authority)
+  assert.equal(secondChromium.env.XAUTHORITY, b.authority)
+
+  // Teardown of one instance removes only its own directory.
+  await first.stack.stop()
+  assert.deepEqual(first.removeDir.calls, [join('/tmp/dsh-test', 'dsh-desktop-vnc-1001')])
+  assert.deepEqual(second.removeDir.calls, [])
+  assert.equal(second.stack.status().running, true)
 })
 
 test('a child that ignores SIGTERM is escalated to SIGKILL after the grace period', async () => {

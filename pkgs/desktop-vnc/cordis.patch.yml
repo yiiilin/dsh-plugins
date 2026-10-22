@@ -16,7 +16,10 @@
         enabled: true
         # 宿主桌面：Xephyr 窗口落在这里，也是浏览器「桌面可见」的地方。
         display: ':0'
+        # v1 兼容的单端口；未设 rfbPortRange 时优先尝试它。
         rfbPort: 5900
+        # 每个浏览器实例从这个区间里分配自己的 RFB 端口（仅 127.0.0.1）。
+        rfbPortRange: [5900, 5999]
         viewportWidth: 1280
         viewportHeight: 800
         jpegQuality: 72
@@ -26,7 +29,7 @@
           # false 退回 v1 行为：直接镜像 display 本身，不启 Xephyr/Chromium。
           enabled: true
           executable: chromium
-          # auto = 在 :90..:120 里挑一个空闲显示号
+          # auto = 在 :200..:999 里挑一个空闲显示号
           nestedDisplay: auto
           # 桌面上那扇窗口的标题，也用于识别与清理。
           windowTitle: DSH Desktop Browser
