@@ -8,20 +8,20 @@ dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/desktop-vnc"
 
 See the [root README](../../README.md) for the workspace layout, migration and testing.
 
-右侧栏的一个标签页，**点开即自动连接**，面板里是一个**浏览器**（Chromium），而不是整个桌面。宿主用 [Xephyr](https://www.x.org/) 起一个嵌套 X 显示，Chromium 跑在里面；那个 Xephyr 窗口同时是真实桌面上的一个窗口，所以**同一个浏览器桌面可见、面板可见，只有一个实例**，两边完全同步。面板侧用内置的 [noVNC](https://github.com/novnc/noVNC) 客户端显示。
+右侧栏的一个标签页，**点开即自动连接**，左侧是**浏览器实例列表**，右侧是聚焦实例的画面。每个实例是一台独立的浏览器（Chromium），而不是整个桌面。宿主用 [Xephyr](https://www.x.org/) 给每个实例起一个自己的嵌套 X 显示，Chromium 跑在里面；那个 Xephyr 窗口同时是真实桌面上的一个窗口，所以**浏览器桌面可见、面板可见**，两边完全同步。面板侧用内置的 [noVNC](https://github.com/novnc/noVNC) 客户端显示。
 
-English: a right-sidebar tab that auto-connects on open and shows **a browser** (not a whole desktop). The Host runs Chromium inside a nested X display hosted by Xephyr; that Xephyr window is also a real window on the desktop, so one browser instance is visible both on the desktop and in the panel. The panel renders it through a bundled noVNC client.
+English: a right-sidebar tab that auto-connects on open. It lists the **browser instances** on the left and shows the focused instance's screen on the right. Each instance is its own browser (Chromium), not a whole desktop: the Host runs it inside a nested X display hosted by Xephyr, and that Xephyr window is also a real window on the desktop. The panel renders the focused instance through a bundled noVNC client. The list is the Host's table, so every client sees the same instances; the **focus** is per-client UI state that never leaves the page, so two clients can watch two different instances at once.
 
 ## 架构
 
 ```text
 :0 真实桌面
- └─ Xephyr 窗口「DSH Desktop Browser」（嵌套显示 :N，窗口在 :0 上可见、可操作）
-     └─ Chromium（唯一实例）
+ └─ 每个实例一个 Xephyr 窗口「DSH Desktop Browser」（嵌套显示 :N，窗口在 :0 上可见、可操作）
+     └─ Chromium（该实例独占）
         ↑
-   x11vnc -display :N  (仅 127.0.0.1)
+   x11vnc -display :N  (仅 127.0.0.1，每个实例一个端口)
         ↑
-   WS 桥 /_dsh/desktop-vnc/ws  →  右侧栏 noVNC 面板（自动连接）
+   WS 桥 /_dsh/desktop-vnc/sessions/<id>/ws  →  右侧栏「实例列表 + 聚焦实例画面」
 ```
 
 这样面板不受真实桌面锁屏/息屏影响：`:0` 被 light-locker 锁住时，嵌套显示里的浏览器依然正常显示。
@@ -37,7 +37,7 @@ English: a right-sidebar tab that auto-connects on open and shows **a browser** 
 | Host | `x11vnc.js` | 从 `rfbPortRange` 分配端口、按需启动/复用/停止 `x11vnc` 子进程 |
 | Host | `ws.js` | 手写 RFC6455 WebSocket 服务端，把 WS 帧与 VNC TCP 字节流双向直通 |
 | Host | `capture.js` | 通过 ImageMagick `import` 抓取单帧 JPEG 与 MJPEG 流 |
-| Client | `client.js` | 右侧栏标签页、自动连接、noVNC 视图、工具栏、中英双语字典 |
+| Client | `client.js` | 右侧栏标签页：实例列表 + 聚焦实例的 noVNC 视图、自动连接、工具栏、中英双语字典 |
 | 资源 | `novnc/` | 内置的 noVNC `core/` 与 `vendor/`（仅 `.js`，由 Host 原样服务） |
 
 ## 路由
@@ -65,6 +65,10 @@ English: a right-sidebar tab that auto-connects on open and shows **a browser** 
 `state` 为 `starting` | `ready` | `failed`。浏览器实例属于创建它的会话：该会话
 `session/disposed` 时，它名下的实例全部关闭，其他会话的实例不受影响；`agent/disposed`
 不关闭任何实例（agent 结束但会话仍在时，实例继续存活）。
+
+列表里**没有**「焦点」字段：焦点是每个客户端各自的界面状态（见 `GLOSSARY.md` 的
+**焦点实例**），不写服务端、不跨客户端同步。侧边栏只在本地记住自己聚焦哪个实例，
+切换实例时按 `key` 重挂载查看器，旧 WebSocket 随之释放。
 
 浏览器只与 DSH 的 Web 源交互；`x11vnc` 始终绑定 `127.0.0.1`，从不直接暴露。
 
@@ -119,7 +123,9 @@ agent 通过三个工具管理浏览器实例。它们直接调用实例表（�
 
 - `x11vnc` 只监听 `127.0.0.1`（`-localhost`），外部网络无法直连 RFB 端口。
 - WebSocket 升级路由做**同源校验**：Origin 的 host 必须等于本次请求的 Host。因为宿主同一个端口同时绑定回环、多个 LAN 地址与反代域名，字面量地址白名单无法覆盖（早期实现只放行回环，导致 LAN/反代访问时 WS 被 403、面板停在"未连接"）；而「Origin 指向别的主机」正是要拦截的情况，外部页面无法借用户浏览器连本机 VNC。
-- 点开标签页即自动连接（这是用户要求的行为）；断开与重连仍受用户控制，自动连接失败最多再自动重试一次，之后停在错误态等用户手动「重新连接」，不会无限刷。
+- 点开标签页即自动连接（这是用户要求的行为）；断开与重连仍受用户控制，自动连接失败最多再自动重试一次，之后停在错误态等用户手动「重新连接」，不会无限刷。未选中任何实例时显示空态，不挂空画布、不开连接。
+- **切换实例先释放旧连接。** 查看器按聚焦的实例 `key` 挂载：换一行就是换一个组件，旧组件的清理直接断开它的 WebSocket（以及 x11vnc 那个 viewer），不留悬挂连接。
+- **焦点是客户端本地状态。** 不写服务端、不跨客户端同步；聚焦的实例被关闭（或从列表消失）时回到「未选中」，**不自动跳到别的实例**。列表读取失败不算实例关闭，焦点保留。
 - 插件只终止**自己启动的** `x11vnc`、`Xephyr` 与 `Chromium`（按记录的 pid，绝不按名字 `pkill`）。
 - **端口只复用自己启动的服务。** 分配时从 `rfbPortRange` 里从低到高取第一个没人监听的端口；
   某端口上已经有人在监听，说明那不是本实例的 x11vnc（可能是别的实例、系统服务或残留进程），
