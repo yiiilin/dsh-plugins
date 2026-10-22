@@ -57,7 +57,15 @@ function fakeBackend({ display = ':200', port = 5900 } = {}) {
 }
 
 /** A registry wired to fake infrastructure, fast timings and a hand-driven clock. */
-function makeRegistry({ ports = [5900, 5901, 5902], prepareDisplay, backend, clock = fakeClock(), probe = async () => false } = {}) {
+function makeRegistry({
+  ports = [5900, 5901, 5902],
+  displays = [],
+  prepareDisplay,
+  backend,
+  clock = fakeClock(),
+  probe = async () => false,
+  probeDisplay,
+} = {}) {
   const backends = []
   const registry = createInstanceRegistry({
     createBackend: (context) => {
@@ -72,6 +80,8 @@ function makeRegistry({ ports = [5900, 5901, 5902], prepareDisplay, backend, clo
     prepareDisplay: prepareDisplay ?? (async () => ({ display: ':200' })),
     ports,
     probe,
+    displays,
+    probeDisplay,
     viewport: { width: 1280, height: 800 },
     now: clock.now,
     log: () => {},
@@ -147,6 +157,60 @@ test('two instances created at once reserve different RFB ports', async () => {
   const ports = [registry.get(first.id).port, registry.get(second.id).port]
   assert.deepEqual(ports.slice().sort(), [5900, 5901])
   assert.equal(registry.list().length, 2)
+})
+
+test('two instances created at once claim different nested displays', async () => {
+  // `pickFreeDisplay` probes and returns without claiming, so two boots in one
+  // tick both see the same number as free: both start Xephyr on it and the loser
+  // dies with exit code 1 while its row still says `starting`. Claiming in the
+  // table before any await is what makes the choice atomic.
+  const claimed = []
+  const { registry } = makeRegistry({
+    displays: [':200', ':201', ':202'],
+    backend: () => fakeBackend({ display: ':200', port: 5900 }),
+  })
+  const createBackendSees = []
+  const first = registry.create({ ownerSessionId: 'session-a' })
+  const second = registry.create({ ownerSessionId: 'session-a' })
+  await Promise.all([registry.get(first.id).ready, registry.get(second.id).ready])
+
+  const displays = [registry.get(first.id).displayClaim, registry.get(second.id).displayClaim]
+  assert.notEqual(displays[0], displays[1], 'the two live instances never share a display claim')
+  assert.deepEqual(displays.slice().sort(), [':200', ':201'])
+})
+
+test('the display of a closed instance is released for the next one', async () => {
+  const { registry } = makeRegistry({ displays: [':200'] })
+  const first = registry.create({ ownerSessionId: 'session-a' })
+  await registry.get(first.id).ready
+  assert.equal(registry.get(first.id).displayClaim, ':200')
+
+  assert.deepEqual(await registry.close(first.id), { closed: true })
+
+  const second = registry.create({ ownerSessionId: 'session-a' })
+  await registry.get(second.id).ready
+  assert.equal(registry.get(second.id).displayClaim, ':200', 'the only display in the pool is free again')
+})
+
+test('a display something else already owns is skipped, not shared', async () => {
+  const { registry } = makeRegistry({
+    displays: [':200', ':201'],
+    probeDisplay: async (display) => display === ':200',
+  })
+  const only = registry.create({ ownerSessionId: 'session-a' })
+  await registry.get(only.id).ready
+  assert.equal(registry.get(only.id).displayClaim, ':201', 'the occupied display is skipped')
+})
+
+test('a full display pool refuses the create instead of sharing a display', async () => {
+  const { registry } = makeRegistry({ displays: [':200'] })
+  const first = registry.create({ ownerSessionId: 'session-a' })
+  await registry.get(first.id).ready
+
+  assert.throws(
+    () => registry.create({ ownerSessionId: 'session-a' }),
+    (error) => error.status === 503 && /嵌套显示号/.test(error.message),
+  )
 })
 
 test('the port of a closed instance is released for the next one', async () => {

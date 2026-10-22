@@ -68,7 +68,12 @@ import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import z from '@deepseek-ai/schemastery'
 
-import { createBrowserStack } from './browser.js'
+import {
+  NESTED_DISPLAY_MAX,
+  NESTED_DISPLAY_MIN,
+  createBrowserStack,
+  defaultProbe as defaultDisplayProbe,
+} from './browser.js'
 import { createCaptureService, streamMjpeg } from './capture.js'
 import { cleanStaleInstanceDirs, newInstanceKeyer } from './instance-dirs.js'
 import { createInstanceRegistry, isInstanceId } from './instances.js'
@@ -297,6 +302,19 @@ export function apply(ctx, config = {}) {
   const nextInstanceKey = newInstanceKeyer()
 
   /**
+   * The nested display numbers this process may hand out, in claim order.
+   *
+   * The registry claims one per instance before any await, which is the only way
+   * two concurrent boots can be kept off the same number: `pickFreeDisplay` probes
+   * and returns, and two probes in one tick both see the same number as free.
+   */
+  const nestedDisplays = () => {
+    const pool = []
+    for (let number = NESTED_DISPLAY_MIN; number <= NESTED_DISPLAY_MAX; number += 1) pool.push(`:${number}`)
+    return pool
+  }
+
+  /**
    * Build the browser/vnc/capture trio for one browser instance.
    *
    * Every instance gets its own identity in the temp directory. That is what keeps
@@ -307,7 +325,7 @@ export function apply(ctx, config = {}) {
    * @param {{id: string, port: number}} context the registry's claim for this instance.
    * @returns {{browser: object, vnc: object, capture: object, dispose: () => Promise<void>}} the trio.
    */
-  const createBackend = ({ id, port }) => {
+  const createBackend = ({ id, port, display: claimedDisplay }) => {
     const browser = createBrowserStack({
       spawn,
       resolveExecutable,
@@ -315,7 +333,11 @@ export function apply(ctx, config = {}) {
         display,
         viewportWidth: viewport.width,
         viewportHeight: viewport.height,
-        browser: browserConfig,
+        // Hand the stack the display the registry already claimed. Passing `auto`
+        // here is what let two boots race onto the same number.
+        browser: claimedDisplay === undefined
+          ? browserConfig
+          : { ...browserConfig, nestedDisplay: claimedDisplay },
       },
       log,
       tmpDir: tmpdir(),
@@ -382,6 +404,11 @@ export function apply(ctx, config = {}) {
     createBackend,
     prepareDisplay,
     ports: portCandidates({ rfbPortRange, rfbPort }),
+    // The nested display pool the registry claims from. Claiming here — instead of
+    // letting each browser stack probe for itself — is what makes the choice
+    // atomic: two stacks probing in the same tick both see `:N` free.
+    displays: nestedDisplays(),
+    probeDisplay: defaultDisplayProbe,
     viewport,
     log,
   })

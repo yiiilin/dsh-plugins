@@ -821,6 +821,10 @@ export function createBrowserStack({
     const server = state.server
     // Only remove a directory this stack actually created something in.
     const createdDir = state.profileDir !== null || state.authFile !== null
+    // Remember the display before clearing it: its lock file and socket are ours
+    // to remove, and a stale lock makes `defaultProbe` treat the number as taken
+    // forever, silently burning one number per crash.
+    const ownedDisplay = state.display
 
     state.browser = null
     state.server = null
@@ -840,6 +844,31 @@ export function createBrowserStack({
         await removeDir(instanceDir)
       } catch {
         // Best-effort: a leftover temp directory must not fail unload.
+      }
+    }
+
+    await releaseDisplayFiles(ownedDisplay)
+  }
+
+  /**
+   * Remove the lock file and socket this stack's own X server left behind.
+   *
+   * Called only after the server has been ended, and only for the display this
+   * stack started on — a display it never owned is left alone. Both removals are
+   * best-effort: the number being reclaimed matters more than the failure of one
+   * unlink, and an unlink that fails leaves the old behaviour (a skipped number).
+   *
+   * @param {string|null} display the display this stack was running on.
+   */
+  const releaseDisplayFiles = async (display) => {
+    if (typeof display !== 'string') return
+    for (const path of [lockPathFor(display), socketPathFor(display)]) {
+      if (path === null) continue
+      try {
+        await rm(path, { force: true })
+      } catch {
+        // Best-effort: a number that stays claimed is worse than a loud failure
+        // only in theory — this is exactly the case where staying quiet is right.
       }
     }
   }

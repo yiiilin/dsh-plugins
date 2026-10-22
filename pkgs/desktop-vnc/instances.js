@@ -90,6 +90,8 @@ export function createInstanceRegistry({
   prepareDisplay,
   ports = [],
   probe = probePort,
+  displays = [],
+  probeDisplay = undefined,
   viewport = { width: 1280, height: 800 },
   now = Date.now,
   log,
@@ -99,6 +101,29 @@ export function createInstanceRegistry({
   const entries = new Map()
   /** Ports claimed by this process, so two boots never reach for the same one. */
   const claimedPorts = new Set()
+  /**
+   * Nested displays claimed by this process.
+   *
+   * The port claim exists because probing is not atomic: two boots in the same
+   * tick both see a free port and race for it. Displays have exactly the same
+   * shape of race — two `pickFreeDisplay` calls both see `:N` free because
+   * neither has written its lock file yet, both start Xephyr on `:N`, and the
+   * loser dies with exit code 1 while its row still says `starting`. Claiming
+   * the number here is the only thing that makes the choice atomic; the browser
+   * stack is then handed the claimed display instead of probing for its own.
+   */
+  const claimedDisplays = new Set()
+  /** Fallback occupancy probe for a display candidate, when the caller supplies none. */
+  const displayTaken = async (display) => {
+    if (typeof probeDisplay !== 'function') return false
+    try {
+      return (await probeDisplay(display)) === true
+    } catch {
+      // An unreadable probe is not proof of occupancy: the start attempt reports
+      // the real failure rather than this one hiding it.
+      return false
+    }
+  }
   /** Callbacks run once per closed instance, in registration order. */
   const closeListeners = new Set()
   if (typeof onClose === 'function') closeListeners.add(onClose)
@@ -173,6 +198,32 @@ export function createInstanceRegistry({
     if (Number.isInteger(port)) claimedPorts.delete(port)
   }
 
+  /**
+   * Claim the first display no live instance of this process holds.
+   *
+   * Synchronous on purpose: the claim must land before any await, or two creates
+   * in the same tick both see the same number as free — the exact race the port
+   * claim already prevents. `confirmDisplay` then re-checks the candidate against
+   * the real display sockets, because a synchronous claim cannot know whether a
+   * foreign X server already owns it.
+   *
+   * @returns {string|null} a display such as `:200`, or null when the pool is full.
+   */
+  const claimDisplay = () => {
+    for (const display of displays) {
+      if (!claimedDisplays.has(display)) {
+        claimedDisplays.add(display)
+        return display
+      }
+    }
+    return null
+  }
+
+  /** Give a display back so the next instance may claim it. */
+  const releaseDisplay = (display) => {
+    if (typeof display === 'string') claimedDisplays.delete(display)
+  }
+
   /** True when something already answers on `port`; an unreadable probe is not occupancy. */
   const portTaken = async (port) => {
     try {
@@ -234,12 +285,61 @@ export function createInstanceRegistry({
     return null
   }
 
+  /**
+   * Confirm the display reserved at create() time, or claim another one.
+   *
+   * The reserved number is only a claim against this process; a foreign X server
+   * on it means it was never really free. Confirming before `createBackend` is
+   * what lets the browser stack be handed an explicit display instead of probing
+   * for its own — probing there is what raced two boots onto `:N`.
+   *
+   * @param {object} entry the entry whose reserved display to confirm.
+   * @returns {Promise<string|null>} a claimed, free display, or null when none is left.
+   */
+  const confirmDisplay = async (entry) => {
+    const reserved = entry.displayClaim
+    if (typeof reserved === 'string' && !await displayTaken(reserved)) {
+      if (entry.closed) return null
+      claimedDisplays.add(reserved)
+      return reserved
+    }
+    if (typeof reserved === 'string') releaseDisplay(reserved)
+    entry.displayClaim = null
+
+    for (const display of displays) {
+      // The reserved display was just probed and found taken; walking it again
+      // would only repeat the same answer.
+      if (display === reserved || claimedDisplays.has(display)) continue
+      claimedDisplays.add(display)
+      const taken = await displayTaken(display)
+      if (entry.closed) {
+        claimedDisplays.delete(display)
+        return null
+      }
+      if (!taken) {
+        entry.displayClaim = display
+        return display
+      }
+      claimedDisplays.delete(display)
+    }
+    return null
+  }
+
   /** The 503 an exhausted pool produces, naming what is already open. */
   const exhausted = () => {
     const open = [...entries.values()].map((entry) => `${entry.id}:${entry.state}`).join(', ')
     return instanceError(
       503,
       `没有空闲的 RFB 端口（no free RFB port in the configured range）; open instances: ${open || 'none'}`,
+    )
+  }
+
+  /** The 503 an exhausted nested-display pool produces, naming what is open. */
+  const exhaustedDisplay = () => {
+    const open = [...entries.values()].map((entry) => `${entry.id}:${entry.state}`).join(', ')
+    return instanceError(
+      503,
+      `没有空闲的嵌套显示号（no free nested display in the configured range）; open instances: ${open || 'none'}`,
     )
   }
 
@@ -277,7 +377,15 @@ export function createInstanceRegistry({
       if (entry.closed) return
       if (port === null) throw exhausted()
 
-      const backend = createBackend({ id: entry.id, port })
+      // `undefined` when no display pool is configured: the stack then picks its
+      // own number, as it did before the pool existed.
+      const display = entry.displayClaim === undefined
+        ? undefined
+        : await confirmDisplay(entry)
+      if (entry.closed) return
+      if (display === null) throw exhaustedDisplay()
+
+      const backend = createBackend({ id: entry.id, port, display })
       entry.browser = backend.browser ?? null
       entry.vnc = backend.vnc ?? null
       entry.capture = backend.capture ?? null
@@ -338,6 +446,19 @@ export function createInstanceRegistry({
     const port = claimPort()
     if (port === null) throw exhausted()
 
+    // Claimed in the same synchronous block as the port, for the same reason: the
+    // display probe cannot be atomic, so two creates in one tick would otherwise
+    // both land on the same number and the losing Xephyr would die on startup.
+    //
+    // An empty pool means "not configured" rather than "exhausted": a caller that
+    // supplies no displays keeps the old behaviour, where the browser stack picks
+    // its own number. Production always supplies the pool (see `nestedDisplays`).
+    const displayClaim = displays.length === 0 ? undefined : claimDisplay()
+    if (displayClaim === null) {
+      releasePort(port)
+      throw exhaustedDisplay()
+    }
+
     const id = newInstanceId()
     const createdAt = now()
     const entry = {
@@ -353,6 +474,10 @@ export function createInstanceRegistry({
       backend: null,
       port,
       display: null,
+      // The nested display reserved for this instance, confirmed in `boot` before
+      // the backend is built. Distinct from `display`, which only carries a value
+      // once the stack has actually started on it.
+      displayClaim,
       error: null,
       // Set when close() wins the race against an in-flight boot, so that boot
       // stops instead of building a stack nobody can address or dispose.
@@ -401,6 +526,10 @@ export function createInstanceRegistry({
     entry.closed = true
     releasePort(entry.port)
     entry.port = null
+    // The display claim is released with the port: a closed instance must not keep
+    // a nested display number reserved, or the pool leaks one number per close.
+    releaseDisplay(entry.displayClaim)
+    entry.displayClaim = null
     entry.state = 'failed'
     entry.error = 'closed'
 
