@@ -123,17 +123,30 @@ export function createInstanceRegistry({
   /** Milliseconds to the whole seconds the list contract uses. */
   const seconds = (ms) => Math.floor(ms / 1000)
 
-  /** One list row: the only shape the HTTP list and the agent tools report. */
-  const row = (entry) => ({
-    id: entry.id,
-    state: entry.state,
-    width: viewport.width,
-    height: viewport.height,
-    createdAt: seconds(entry.createdAt),
-    ownerSessionId: entry.ownerSessionId,
-    lastActiveAt: seconds(entry.lastActiveAt),
-    viewers: entry.viewers,
-  })
+  /**
+   * One list row: the only shape the HTTP list and the agent tools report.
+   *
+   * `error` is conditional on purpose: a `failed` row has to explain itself
+   * without a second request, while a `starting`/`ready` row must not carry an
+   * empty or `undefined` field — an absent key is the honest "no failure".
+   */
+  const row = (entry) => {
+    const base = {
+      id: entry.id,
+      state: entry.state,
+      width: viewport.width,
+      height: viewport.height,
+      createdAt: seconds(entry.createdAt),
+      ownerSessionId: entry.ownerSessionId,
+      lastActiveAt: seconds(entry.lastActiveAt),
+      viewers: entry.viewers,
+    }
+    if (entry.state !== 'failed') return base
+    return {
+      ...base,
+      error: typeof entry.error === 'string' && entry.error !== '' ? entry.error : 'browser instance failed',
+    }
+  }
 
   /** Claim the lowest port no live instance of this process holds. */
   const claimPort = () => {

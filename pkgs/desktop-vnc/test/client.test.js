@@ -62,6 +62,17 @@ const CONTRACT_KEYS = [
   "state.ready",
   "state.failed",
   "state.unknown",
+  // The row details a user needs to judge an instance.
+  "list.rowLabelDetail",
+  "list.size",
+  "list.owner",
+  "list.ownerUnknown",
+  "list.lastActive",
+  "list.viewers",
+  "list.viewersNone",
+  "list.unavailable",
+  "list.failureReason",
+  "list.failureUnknown",
 ];
 
 const REACT_STUB = new Proxy({}, {
@@ -216,6 +227,41 @@ test("parses the sessions list defensively", () => {
   // (An array crosses the VM realm, so length is the comparable fact.)
   assert.equal(__test.parseInstanceList(undefined).length, 0);
   assert.equal(__test.parseInstanceList({ not: "an array" }).length, 0);
+});
+
+test("offers only a ready instance as a focus target", () => {
+  const { __test } = exportsOf();
+  // A starting instance has no browser yet and a failed one has nothing to show:
+  // focusing either would open a socket the Host refuses.
+  assert.equal(__test.isInstanceSelectable({ id: "aaaa1111", state: "ready" }), true);
+  assert.equal(__test.isInstanceSelectable({ id: "bbbb2222", state: "starting" }), false);
+  assert.equal(__test.isInstanceSelectable({ id: "cccc3333", state: "failed" }), false);
+  assert.equal(__test.isInstanceSelectable({ id: "dddd4444", state: "unknown" }), false);
+  assert.equal(__test.isInstanceSelectable(null), false);
+  assert.equal(__test.isInstanceSelectable(undefined), false);
+});
+
+test("renders an epoch-seconds timestamp as a readable local time", () => {
+  const { __test } = exportsOf();
+  // Epoch seconds, not milliseconds: the value is what the Host's row() sends.
+  const seconds = 1792637200;
+  const at = new Date(seconds * 1000);
+  // The expected clock comes from Intl, an implementation independent of the
+  // formatter, so this asserts the wall-clock reading rather than restating it —
+  // and stays true in any timezone the suite runs in.
+  const clock = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(at);
+  assert.equal(__test.formatLastActive(seconds, at.getTime()), clock);
+
+  // A stamp from another day also carries its date, so yesterday cannot read as
+  // today. Forty days on is unambiguously a different day in every timezone.
+  const later = new Date(at.getTime() + 40 * 24 * 3600 * 1000);
+  const day = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+  assert.equal(__test.formatLastActive(seconds, later.getTime()), `${day} ${clock}`);
+
+  // Nothing usable renders nothing rather than `NaN` or a raw number.
+  for (const value of [undefined, null, 0, -1, "1792637200", Number.NaN]) {
+    assert.equal(__test.formatLastActive(value, at.getTime()), null, `${String(value)} must not render`);
+  }
 });
 
 test("keeps a focus only while the instance is still listed", () => {

@@ -6,8 +6,11 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { EventEmitter } from 'node:events'
+import { createServer } from 'node:net'
 
 import { Config, apply, assetContentType, inject, name, resolveAssetPath, resolvePanelDisplay } from '../index.js'
+import { createInstanceRegistry } from '../instances.js'
 import { portCandidates } from '../x11vnc.js'
 
 test('the mount identity matches the bundle row', () => {
@@ -973,4 +976,120 @@ test('the per-instance WS route starts that instance\'s RFB server before bridgi
   // than upgrading a socket to a server that is not there.
   assert.match(Buffer.concat(written).toString(), /^HTTP\/1\.1 503 /)
   assert.ok(!Buffer.concat(written).toString().includes('101 Switching Protocols'))
+})
+
+// --- viewer counts come from the real bridge, not from a stored number -------
+
+/**
+ * A socket double with independent directions, as `handleUpgrade` expects.
+ *
+ * The bridge attaches its own listeners (`data`, `end`, `error`, `close`) and the
+ * route attaches the release listener, so this has to be an EventEmitter rather
+ * than a plain object.
+ */
+function bridgeSocket() {
+  const socket = new EventEmitter()
+  const written = []
+  socket.destroyed = false
+  socket.writableEnded = false
+  socket.write = (chunk) => {
+    written.push(Buffer.isBuffer(chunk) ? Buffer.from(chunk) : Buffer.from(String(chunk)))
+    return true
+  }
+  socket.end = () => {
+    if (socket.writableEnded) return
+    socket.writableEnded = true
+    socket.emit('end')
+  }
+  socket.destroy = () => {
+    socket.destroyed = true
+  }
+  socket.setNoDelay = () => {}
+  socket.pause = () => {}
+  socket.resume = () => {}
+  return { socket, written, response: () => Buffer.concat(written).toString() }
+}
+
+/** The upgrade request a same-origin browser sends. */
+const UPGRADE_HEADERS = {
+  origin: 'http://127.0.0.1:3080',
+  upgrade: 'websocket',
+  connection: 'Upgrade',
+  'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
+  'sec-websocket-version': '13',
+  'sec-websocket-protocol': 'binary',
+}
+
+test('two clients watching one instance make the row say two, and the count follows real closes', async (t) => {
+  // A real RFB listener on loopback: the viewer count is only honest if it counts
+  // sockets the bridge actually holds, so nothing about the connection is faked
+  // except the bytes.
+  const accepted = new Set()
+  const rfbServer = createServer((socket) => {
+    accepted.add(socket)
+    socket.on('error', () => {})
+  })
+  await new Promise((resolve) => rfbServer.listen(0, '127.0.0.1', resolve))
+  const rfbPort = rfbServer.address().port
+
+  const registry = createInstanceRegistry({
+    createBackend: () => ({
+      browser: { ensure: async () => ({ ok: true, display: ':200' }), status: () => ({}) },
+      vnc: {
+        ensure: async () => ({ running: true, port: rfbPort }),
+        status: () => ({ running: true, port: rfbPort }),
+        display: () => ':200',
+      },
+      capture: null,
+      dispose: async () => {},
+    }),
+    prepareDisplay: async () => ({ display: ':200' }),
+    ports: [5999],
+    viewport: { width: 1280, height: 800 },
+    log: () => {},
+  })
+  // Cleanup runs even when an assertion fails: a leaked listener would keep the
+  // test process alive and turn one wrong count into a hung suite.
+  t.after(async () => {
+    for (const socket of accepted) socket.destroy()
+    await new Promise((resolve) => rfbServer.close(resolve))
+    await registry.disposeAll()
+  })
+
+  const fake = mountWithRegistry(registry)
+  const sessions = fake.routes.find((route) => route.path === '/_dsh/desktop-vnc/sessions')
+  const created = recordingResponse()
+  await sessions.handler({
+    method: 'POST',
+    url: '/_dsh/desktop-vnc/sessions',
+    headers: {},
+    [Symbol.asyncIterator]: async function* () {},
+  }, created)
+  const { id } = jsonBody(created.written)
+  await registry.get(id).ready
+  const upgrade = fake.upgrades.find((route) => route.path === `/_dsh/desktop-vnc/sessions/${id}/ws`)
+
+  const first = bridgeSocket()
+  const second = bridgeSocket()
+  t.after(() => {
+    first.socket.destroy()
+    second.socket.destroy()
+  })
+  // Both clients connect before either is closed: that is the "two people are
+  // looking at the same browser" case the row has to report.
+  await Promise.all([
+    upgrade.handler({ method: 'GET', url: upgrade.path, headers: UPGRADE_HEADERS }, first.socket, Buffer.alloc(0)),
+    upgrade.handler({ method: 'GET', url: upgrade.path, headers: UPGRADE_HEADERS }, second.socket, Buffer.alloc(0)),
+  ])
+  assert.match(first.response(), /^HTTP\/1\.1 101 /)
+  assert.match(second.response(), /^HTTP\/1\.1 101 /)
+  assert.equal(registry.list()[0].viewers, 2, 'two live sockets are two viewers')
+
+  // One client leaves. The count must drop by exactly one — a double release here
+  // would tell the remaining viewer they are alone while they are not.
+  first.socket.emit('close')
+  assert.equal(registry.list()[0].viewers, 1)
+
+  second.socket.emit('close')
+  assert.equal(registry.list()[0].viewers, 0)
 })

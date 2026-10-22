@@ -61,7 +61,15 @@ English: a right-sidebar tab that auto-connects on open. It lists the **browser 
    "lastActiveAt": 1792637200, "viewers": 1 }]
 ```
 
-`state` 为 `starting` | `ready` | `failed`。浏览器实例属于创建它的会话：该会话
+`state` 为 `starting` | `ready` | `failed`。`createdAt` / `lastActiveAt` 是 **epoch 秒**。
+
+`error` 是**条件字段**：只在 `state === "failed"` 时出现，携带失败原因；其余状态整个键
+缺席（不是 `null`，也不是 `undefined`）。侧边栏因此能在同一行里解释失败，不必再发一次请求。
+
+`viewers` 是当前真实的 WS 桥连接数（两个客户端同时看一个实例就是 2）。列表**不**报告
+「谁在看」：那是别的客户端自己的界面状态，既不可知也无用。
+
+浏览器实例属于创建它的会话：该会话
 `session/disposed` 时，它名下的实例全部关闭，其他会话的实例不受影响；`agent/disposed`
 不关闭任何实例（agent 结束但会话仍在时，实例继续存活）。
 

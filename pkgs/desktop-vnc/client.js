@@ -95,6 +95,16 @@ window.__ModuleLoader__.load({
       'list.error': '无法读取浏览器实例列表',
       'list.retry': '重试',
       'list.rowLabel': '浏览实例 {id}（{state}）',
+      'list.rowLabelDetail': '浏览实例 {id}（{state}）：{detail}',
+      'list.size': '{width}×{height}',
+      'list.owner': '会话 {id}',
+      'list.ownerUnknown': '未知会话',
+      'list.lastActive': '最后活动 {time}',
+      'list.viewers': '{count} 人观看',
+      'list.viewersNone': '无人观看',
+      'list.unavailable': '暂不可用',
+      'list.failureReason': '失败原因：{detail}',
+      'list.failureUnknown': '失败原因未知',
       'viewer.empty': '选择一个浏览器实例',
       'viewer.emptyHint': '在左侧列表里点一个实例，就能看到它的画面',
       'state.starting': '启动中',
@@ -138,6 +148,16 @@ window.__ModuleLoader__.load({
       'list.error': 'Could not read the browser instance list',
       'list.retry': 'Retry',
       'list.rowLabel': 'Browser instance {id} ({state})',
+      'list.rowLabelDetail': 'Browser instance {id} ({state}): {detail}',
+      'list.size': '{width}×{height}',
+      'list.owner': 'Session {id}',
+      'list.ownerUnknown': 'Unknown session',
+      'list.lastActive': 'Active {time}',
+      'list.viewers': '{count} watching',
+      'list.viewersNone': 'No viewers',
+      'list.unavailable': 'Not available yet',
+      'list.failureReason': 'Failed: {detail}',
+      'list.failureUnknown': 'Failure reason unavailable',
       'viewer.empty': 'Select a browser instance',
       'viewer.emptyHint': 'Pick an instance in the list on the left to see its screen',
       'state.starting': 'Starting',
@@ -328,6 +348,46 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Whether a row can be focused at all.
+     *
+     * Only a `ready` instance has a browser behind it: `starting` is still coming
+     * up, and `failed` has no socket to show. Offering either as a target would
+     * open a viewer the Host then refuses, so they are not offered at all.
+     *
+     * @param row - one parsed list row.
+     * @returns whether clicking it may set the focus.
+     */
+    function isInstanceSelectable(row) {
+      return row !== null && typeof row === 'object' && row.state === 'ready'
+    }
+
+    /** Two digits, so a clock never reads `9:5`. */
+    const pad2 = (value) => String(value).padStart(2, '0')
+
+    /**
+     * Render an epoch-seconds timestamp as local wall-clock time.
+     *
+     * The list contract sends seconds (see the Host's `row()`), and a raw number
+     * is unreadable. The same day gets `HH:MM`; anything older also carries its
+     * date, so yesterday's activity cannot be mistaken for today's.
+     *
+     * @param seconds - the row's epoch-seconds field, or anything else.
+     * @param nowMs - the reference instant, injectable for tests.
+     * @returns the readable stamp, or null when there is nothing usable.
+     */
+    function formatLastActive(seconds, nowMs = Date.now()) {
+      if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return null
+      const at = new Date(seconds * 1000)
+      if (Number.isNaN(at.getTime())) return null
+      const now = new Date(nowMs)
+      const clock = `${pad2(at.getHours())}:${pad2(at.getMinutes())}`
+      const sameDay = at.getFullYear() === now.getFullYear()
+        && at.getMonth() === now.getMonth()
+        && at.getDate() === now.getDate()
+      return sameDay ? clock : `${at.getFullYear()}-${pad2(at.getMonth() + 1)}-${pad2(at.getDate())} ${clock}`
+    }
+
+    /**
      * Reconcile the focus with a freshly read list.
      *
      * A focused instance that is no longer listed was closed. The page then goes
@@ -501,9 +561,10 @@ window.__ModuleLoader__.load({
   box-sizing: border-box;
 }
 .dsh-vnc-instance {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px;
+  gap: 2px 6px;
   width: 100%;
   padding: 5px 6px;
   box-sizing: border-box;
@@ -516,8 +577,38 @@ window.__ModuleLoader__.load({
   text-align: left;
   cursor: pointer;
 }
-.dsh-vnc-instance:hover {
+.dsh-vnc-instance:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover, var(--dsw-alias-bg-layer-2, #e7e5e4));
+}
+.dsh-vnc-instance:disabled {
+  cursor: default;
+  color: var(--dsw-alias-label-secondary, #57534e);
+}
+.dsh-vnc-instance-meta {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--dsw-alias-label-secondary, #57534e);
+}
+.dsh-vnc-instance-meta > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dsh-vnc-instance-note {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--dsw-alias-label-secondary, #57534e);
+  overflow-wrap: anywhere;
+}
+.dsh-vnc-instance-note[data-state="failed"] {
+  color: var(--dsw-alias-state-error-primary, #dc2626);
 }
 .dsh-vnc-instance:focus-visible {
   outline: none;
@@ -1570,6 +1661,69 @@ window.__ModuleLoader__.load({
           }
         }, [refreshKey, visible])
 
+        /**
+         * One list row: the identity line, the details that decide whether the
+         * instance is worth focusing, and — when it is not usable — why.
+         *
+         * Only a `ready` instance is offered as a target. `starting` and `failed`
+         * rows are disabled rather than merely dimmed, and each carries an explicit
+         * note: a grey row with no explanation reads as a bug in the list.
+         *
+         * @param row - one parsed list row.
+         */
+        const instanceRow = (row) => {
+          const selectable = isInstanceSelectable(row)
+          const stateLabel = t(`state.${row.state}`)
+          const reason = row.state === 'failed'
+            ? (typeof row.error === 'string' && row.error !== '' ? row.error : null)
+            : null
+          const note = row.state === 'failed'
+            ? (reason === null ? t('list.failureUnknown') : applyParams(t('list.failureReason'), { detail: reason }))
+            : selectable ? null : t('list.unavailable')
+          const stamp = formatLastActive(row.lastActiveAt)
+          const size = Number.isFinite(row.width) && Number.isFinite(row.height)
+            ? applyParams(t('list.size'), { width: row.width, height: row.height })
+            : null
+          const owner = typeof row.ownerSessionId === 'string' && row.ownerSessionId !== ''
+            ? applyParams(t('list.owner'), { id: row.ownerSessionId })
+            : t('list.ownerUnknown')
+          const viewers = Number.isFinite(row.viewers) && row.viewers > 0
+            ? applyParams(t('list.viewers'), { count: row.viewers })
+            : t('list.viewersNone')
+          const detail = note ?? (typeof row.viewers === 'number' ? viewers : '')
+          return React.createElement('button', {
+            key: row.id,
+            type: 'button',
+            className: 'dsh-vnc-instance',
+            'data-instance-id': row.id,
+            'data-state': row.state,
+            'aria-current': selectable && row.id === focusedId,
+            'aria-label': detail === ''
+              ? applyParams(t('list.rowLabel'), { id: row.id, state: stateLabel })
+              : applyParams(t('list.rowLabelDetail'), { id: row.id, state: stateLabel, detail }),
+            // A row that cannot be watched is not a control: disabling it is what
+            // keeps it out of the tab order, instead of only making it look inert.
+            disabled: !selectable,
+            onClick: () => {
+              if (selectable) setFocusedId(row.id)
+            },
+          },
+          React.createElement('span', { className: 'dsh-vnc-dot', 'data-state': row.state, 'aria-hidden': true }),
+          React.createElement('span', { className: 'dsh-vnc-instance-id', title: row.id }, row.id),
+          React.createElement('span', { className: 'dsh-vnc-instance-state' }, stateLabel),
+          React.createElement('span', { className: 'dsh-vnc-instance-meta' },
+            size === null ? null : React.createElement('span', { className: 'dsh-vnc-instance-size' }, size),
+            React.createElement('span', { className: 'dsh-vnc-instance-owner', title: row.ownerSessionId ?? '' }, owner),
+            stamp === null
+              ? null
+              : React.createElement('span', { className: 'dsh-vnc-instance-active' },
+                  applyParams(t('list.lastActive'), { time: stamp })),
+            React.createElement('span', { className: 'dsh-vnc-instance-viewers' }, viewers)),
+          note === null
+            ? null
+            : React.createElement('span', { className: 'dsh-vnc-instance-note', 'data-state': row.state }, note))
+        }
+
         const rows = listing?.rows ?? []
         const failed = listing?.error === true && rows.length === 0
         const loading = listing === null
@@ -1590,19 +1744,7 @@ window.__ModuleLoader__.load({
               ? React.createElement('div', { className: 'dsh-vnc-list-note' },
                   React.createElement('div', { className: 'dsh-vnc-overlay-title' }, t('list.empty')),
                   React.createElement('div', null, t('list.emptyHint')))
-              : rows.map((row) => React.createElement('button', {
-                key: row.id,
-                type: 'button',
-                className: 'dsh-vnc-instance',
-                'data-instance-id': row.id,
-                'data-state': row.state,
-                'aria-current': row.id === focusedId,
-                'aria-label': applyParams(t('list.rowLabel'), { id: row.id, state: t(`state.${row.state}`) }),
-                onClick: () => setFocusedId(row.id),
-              },
-              React.createElement('span', { className: 'dsh-vnc-dot', 'data-state': row.state, 'aria-hidden': true }),
-              React.createElement('span', { className: 'dsh-vnc-instance-id' }, row.id),
-              React.createElement('span', { className: 'dsh-vnc-instance-state' }, t(`state.${row.state}`))))
+              : rows.map((row) => instanceRow(row))
 
         return React.createElement('div', { className: 'dsh-vnc-shell' },
           React.createElement('div', { className: 'dsh-vnc-list' },
@@ -1724,6 +1866,8 @@ window.__ModuleLoader__.load({
         applyParams,
         parseInstanceList,
         focusAfterList,
+        isInstanceSelectable,
+        formatLastActive,
         readInstanceList,
         setRfbModuleImporter,
         createTabDefinition,

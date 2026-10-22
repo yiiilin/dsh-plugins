@@ -213,9 +213,29 @@ test('a failed start is reported on the row with its reason', async () => {
 
   const row = registry.list()[0]
   assert.equal(row.state, 'failed')
-  // The reason lives on the entry, not in the list row: the row keeps the frozen
-  // shape, and the failure detail is read by whoever asks for this instance.
-  assert.match(registry.get(id).error, /Xephyr 未安装/)
+  // The sidebar has to explain a failure without a second request, so the reason
+  // travels on the row itself.
+  assert.match(row.error, /Xephyr 未安装/)
+  assert.equal(row.error, registry.get(id).error, 'the row reports the entry\'s own reason')
+})
+
+test('a row that is not failed carries no error key at all', async () => {
+  // The field is conditional rather than `undefined`: `JSON.stringify` would drop
+  // an undefined value anyway, but a `null`/`undefined` key would still be a
+  // different row shape for a client that enumerates the fields.
+  const { registry } = makeRegistry()
+  const { id } = registry.create({ ownerSessionId: 'session-a' })
+  const starting = registry.list()[0]
+  assert.equal(starting.state, 'starting')
+  assert.equal(Object.hasOwn(starting, 'error'), false, 'a starting row has no error key')
+
+  await registry.get(id).ready
+  const ready = registry.list()[0]
+  assert.equal(ready.state, 'ready')
+  assert.equal(Object.hasOwn(ready, 'error'), false, 'a ready row has no error key')
+  assert.deepEqual(Object.keys(ready), [
+    'id', 'state', 'width', 'height', 'createdAt', 'ownerSessionId', 'lastActiveAt', 'viewers',
+  ])
 })
 
 test('the RFB server is not started until somebody watches', async () => {

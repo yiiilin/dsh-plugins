@@ -829,6 +829,32 @@ function listRows(page) {
   return rows;
 }
 
+/** Every node under `root` with the given className, in document order. */
+function byClass(root, className) {
+  const found = [];
+  const walk = (node) => {
+    if (node === null || node === undefined || typeof node !== "object") return;
+    if (node.props?.className === className) found.push(node);
+    if (node.child !== null && node.child !== undefined) walk(node.child.tree);
+    for (const child of node.children ?? []) walk(child);
+  };
+  walk(root);
+  return found;
+}
+
+/** The text one node's subtree renders, joined the way `textContent` would read. */
+function textOf(node) {
+  const parts = [];
+  const walk = (value) => {
+    if (typeof value === "string") { parts.push(value); return; }
+    if (value === null || value === undefined || typeof value !== "object") return;
+    if (value.child !== null && value.child !== undefined) walk(value.child.tree);
+    for (const child of value.children ?? []) walk(child);
+  };
+  walk(node);
+  return parts.join(" ");
+}
+
 test("renders one list row per browser instance, from the Host list", async () => {
   const page = await mountShell({ instances: INSTANCES });
   assert.deepEqual(page.sessionsCalls, ["http://127.0.0.1:3080/main/_dsh/desktop-vnc/sessions"],
@@ -872,7 +898,10 @@ test("selecting a row connects the viewer to that instance", async () => {
 });
 
 test("switching rows releases the previous viewer before opening the next", async () => {
-  const page = await mountShell({ instances: INSTANCES });
+  // Both instances are ready: a starting one is not a focus target (see the row
+  // details tests), so switching is exercised between two usable instances.
+  const ready = [INSTANCES[0], { ...INSTANCES[1], id: "bbbb2222", state: "ready" }];
+  const page = await mountShell({ instances: ready });
   listRows(page)[0].props.onClick();
   await page.settle();
   const first = page.viewer();
@@ -992,4 +1021,131 @@ test("labels each row's state, so the list is readable without a hover", async (
   // Each row still names its instance for a screen reader, state included.
   assert.match(rows[0].props["aria-label"], /aaaa1111/u);
   assert.match(rows[0].props["aria-label"], /就绪/u);
+});
+
+// ===== row details: what the user needs to decide about an instance ==========
+
+/** A row in the three states the Host reports, with the server's own fields. */
+const DETAIL_ROWS = [
+  {
+    id: "aaaa1111",
+    state: "ready",
+    width: 1280,
+    height: 800,
+    createdAt: 1792637133,
+    ownerSessionId: "sess-one",
+    lastActiveAt: 1792637200,
+    viewers: 2,
+  },
+  {
+    id: "bbbb2222",
+    state: "starting",
+    width: 1024,
+    height: 768,
+    createdAt: 1792637300,
+    ownerSessionId: "sess-two",
+    lastActiveAt: 1792637300,
+    viewers: 0,
+  },
+  {
+    id: "cccc3333",
+    state: "failed",
+    width: 1280,
+    height: 800,
+    createdAt: 1792637400,
+    ownerSessionId: "sess-two",
+    lastActiveAt: 1792637400,
+    viewers: 0,
+    error: "Xephyr 未安装（Xephyr not installed）",
+  },
+];
+
+test("a starting instance cannot be focused and says so, rather than only looking dimmed", async () => {
+  const page = await mountShell({ instances: DETAIL_ROWS });
+  const rows = listRows(page);
+  const starting = rows.find((row) => row.props["data-state"] === "starting");
+  const ready = rows.find((row) => row.props["data-state"] === "ready");
+
+  // "Starting" is not a usable instance yet: a click would open a viewer on a
+  // socket the Host will refuse, so the row is not offered as a target at all.
+  assert.equal(starting.props.disabled, true, "a starting row must not be clickable");
+  assert.ok(!ready.props.disabled, "a ready row stays clickable");
+  // Dimming alone is not an explanation: the row has to say it is unavailable.
+  assert.match(textOf(starting), /启动中/u);
+  assert.match(textOf(starting), /暂不可用/u);
+  assert.doesNotMatch(textOf(ready), /暂不可用/u);
+  // Clicking it must not focus anything, whatever the browser does with a
+  // disabled button's events.
+  starting.props.onClick();
+  await page.settle();
+  assert.equal(page.created.length, 0, "a starting instance opens no viewer");
+  assert.match(page.runtime.text(), /选择一个浏览器实例/u);
+});
+
+test("a failed row shows the reason the Host reported", async () => {
+  const page = await mountShell({ instances: DETAIL_ROWS });
+  const failed = listRows(page).find((row) => row.props["data-state"] === "failed");
+  assert.notEqual(failed, undefined, "the failed row is rendered");
+
+  assert.match(textOf(failed), /Xephyr 未安装/u, "the reason travels on the row, from the server's error field");
+  // The reason is visible text, not only a tooltip or an aria-label.
+  assert.match(page.runtime.text(), /Xephyr 未安装/u);
+  // A failure is not a target either: there is no browser behind it to show.
+  assert.equal(failed.props.disabled, true);
+});
+
+test("a failed row with no reason still explains itself", async () => {
+  // A Host that reports `failed` without a message must not leave the row blank;
+  // the fallback is copy, not an empty span.
+  const page = await mountShell({ instances: [{ ...DETAIL_ROWS[2], error: undefined }] });
+  assert.match(page.runtime.text(), /失败原因未知/u);
+});
+
+test("each row shows the size, the owning session, the last activity and the viewer count", async () => {
+  const page = await mountShell({ instances: DETAIL_ROWS });
+  const ready = listRows(page).find((row) => row.props["data-state"] === "ready");
+
+  const meta = textOf(ready);
+  assert.match(meta, /1280×800/u, "the instance's viewport size");
+  assert.match(meta, /sess-one/u, "the session that created it");
+  // Two clients watching one instance is what the count has to say: the row is
+  // how a user sees they are not alone.
+  assert.match(meta, /2/u);
+  // The timestamp is epoch seconds on the wire; the row has to render it as
+  // something a person can read, never as the raw number.
+  assert.doesNotMatch(meta, /1792637200/u);
+  assert.match(meta, /\d{1,2}:\d{2}/u, "a clock time is readable");
+});
+
+test("a row with nobody watching says so instead of showing a zero count", async () => {
+  const page = await mountShell({ instances: DETAIL_ROWS });
+  const starting = listRows(page).find((row) => row.props["data-state"] === "starting");
+  assert.doesNotMatch(textOf(starting), /0 人观看/u, "zero viewers is not a crowd");
+});
+
+test("the list never says who is watching, only how many", async () => {
+  // Who is watching is another client's UI state: unknowable here and useless to
+  // the reader. The count is the whole of what the row may say about viewers.
+  const page = await mountShell({ instances: DETAIL_ROWS });
+  assert.doesNotMatch(page.runtime.text(), /正在观看|观看者|viewer-|session-/u);
+  assert.doesNotMatch(CLIENT_SOURCE, /watchers?\.map|viewerNames|viewerIds/u);
+});
+
+test("the row details follow the table as it changes", async () => {
+  const page = await mountShell({ instances: DETAIL_ROWS });
+  const before = listRows(page).find((row) => row.props["data-instance-id"] === "aaaa1111");
+  assert.match(textOf(before), /2/u);
+
+  // A second client joins the same browser: the poll is what makes the row show
+  // it without any action from this one.
+  page.setInstances([
+    { ...DETAIL_ROWS[0], viewers: 3, lastActiveAt: 1792637500 },
+    DETAIL_ROWS[1],
+    DETAIL_ROWS[2],
+  ]);
+  await page.tick();
+
+  const after = listRows(page).find((row) => row.props["data-instance-id"] === "aaaa1111");
+  assert.match(textOf(after), /3/u, "the viewer count follows the server's count");
+  assert.doesNotMatch(textOf(after), /2 人观看/u);
 });
