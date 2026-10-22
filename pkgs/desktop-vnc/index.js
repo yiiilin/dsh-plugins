@@ -1,40 +1,56 @@
 /**
  * dsh-desktop-vnc — Host half of the desktop-vnc plugin.
  *
- * Adds a right-sidebar tab that embeds a noVNC client for **one browser**, plus
- * every host-side dependency that tab needs so nothing is fetched from a CDN and
- * no external VNC server has to exist first:
+ * Adds a right-sidebar tab that embeds a noVNC client, plus every host-side
+ * dependency that tab needs so nothing is fetched from a CDN and no external VNC
+ * server has to exist first:
  *
  * - `/_dsh/desktop-vnc/asset/**` serves the vendored noVNC ESM tree (`core/` and
  *   `vendor/`) straight from this package. noVNC imports its own modules with
  *   relative specifiers, so the browser resolves `./util/int.js` against the
  *   asset URL and only a prefix route serving the tree verbatim can answer it.
+ * - `/_dsh/desktop-vnc/sessions` is the **browser instance** table over HTTP: a
+ *   `GET` list, a `POST` create that answers before the browser is up, and a
+ *   `DELETE /<id>` close. One prefix route serves all three because route
+ *   registration throws on a duplicate path and ids are minted at runtime.
+ * - `/_dsh/desktop-vnc/sessions/<id>/ws` bridges one instance's RFB server. Each
+ *   instance also gets its own exact upgrade route: upgrade dispatch is an exact
+ *   pathname lookup, so there is no prefix form to share.
  * - `/_dsh/desktop-vnc/frame.jpg` and `/_dsh/desktop-vnc/stream.mjpg` capture the
  *   root window with ImageMagick for the thumbnail and degraded-preview paths.
+ *   They are v1-compatible and address the first instance in the table.
  * - `/_dsh/desktop-vnc/state` reports what the panel needs to show an honest
- *   status instead of a blank canvas.
+ *   status instead of a blank canvas. Its shape is frozen; the first instance is
+ *   projected into it rather than widening the document.
  * - `/_dsh/desktop-vnc/ws` is a hand-written RFC 6455 server that pumps
  *   WebSocket frames to the x11vnc TCP port. The workspace has no usable `ws`
  *   dependency, so {@link ./ws.js} implements the framing itself.
  *
- * v2 layering: {@link ./browser.js} owns a nested Xephyr display with a single
- * Chromium inside it, and that Xephyr window is simultaneously a real window on
- * the host desktop — so the same browser is visible on the desktop and in the
- * panel. x11vnc therefore mirrors the **nested** display, which is only known
- * once `browser.ensure()` has run; the capture service and the x11vnc controller
- * are retargeted to it through their `setDisplay()` seams. With
+ * v2 layering: {@link ./instances.js} is the table, and each entry owns a whole
+ * stack. {@link ./browser.js} owns a nested Xephyr display with a single Chromium
+ * inside it, and that Xephyr window is simultaneously a real window on the host
+ * desktop — so the same browser is visible on the desktop and in the panel. x11vnc
+ * therefore mirrors the **nested** display, which is only known once
+ * `browser.ensure()` has run; the capture service and the x11vnc controller are
+ * retargeted to it through their `setDisplay()` seams. With
  * `browser.enabled=false` the whole stack is bypassed and the panel mirrors
  * `config.display` exactly as v1 did.
  *
- * Two safety properties are load-bearing and tested:
+ * Four properties are load-bearing and tested:
  *
  * - **Same-origin only.** The upgrade handler refuses an `Origin` whose host is
  *   not the one this request was addressed to. Without that check any web page
  *   the user visits could borrow their browser to reach this machine's desktop.
- * - **Own only what we started.** x11vnc is reused when the port already answers
- *   and is never killed by pattern; unloading the plugin stops exactly the
- *   process this controller spawned, and the browser stack stops exactly the
- *   Xephyr/Chromium pids it recorded.
+ * - **Own only what we started.** x11vnc is reused only when it is *this
+ *   instance's* server and is never killed by pattern; unloading the plugin stops
+ *   exactly the processes each instance spawned, and each browser stack stops
+ *   exactly the Xephyr/Chromium pids it recorded.
+ * - **Ports are claimed before they are bound.** The table reserves a port when
+ *   the instance is created, so two concurrent creates cannot both pick the same
+ *   free-looking port and race for the bind.
+ * - **Ownership is the session's.** `session/disposed` closes that session's
+ *   instances; `agent/disposed` deliberately closes nothing, because an agent can
+ *   end while its session stays open and keeps driving the browser.
  *
  * @module @yiln-dsh/dsh-desktop-vnc
  */
@@ -48,7 +64,8 @@ import z from '@deepseek-ai/schemastery'
 
 import { createBrowserStack } from './browser.js'
 import { createCaptureService, streamMjpeg } from './capture.js'
-import { createX11VncController } from './x11vnc.js'
+import { createInstanceRegistry, isInstanceId } from './instances.js'
+import { createX11VncController, portCandidates } from './x11vnc.js'
 import {
   DEFAULT_MAX_FRAME_BYTES,
   createBridge,
@@ -103,6 +120,15 @@ const WS_PATH = `${PREFIX}/ws`
 const FRAME_PATH = `${PREFIX}/frame.jpg`
 const STREAM_PATH = `${PREFIX}/stream.mjpg`
 const STATE_PATH = `${PREFIX}/state`
+/**
+ * The instance collection. One **prefix** route owns the whole subtree — list,
+ * create and `/<id>` close — because route registration throws on a duplicate
+ * (kind, path) and instance ids are minted at runtime, so a route per id is
+ * impossible. The handler parses the trailing segment itself.
+ */
+const SESSIONS_PATH = `${PREFIX}/sessions`
+/** The per-instance VNC upgrade path, exact because upgrade routes have no prefix form. */
+const instanceWsPath = (id) => `${SESSIONS_PATH}/${id}/ws`
 
 const CORE_MIME = 'text/javascript; charset=utf-8'
 const ASSET_CACHE = 'public, max-age=31536000, immutable'
@@ -249,68 +275,130 @@ export function apply(ctx, config = {}) {
   const browserConfig = config.browser !== null && typeof config.browser === 'object' ? config.browser : {}
   const browserEnabled = browserConfig.enabled !== false
 
-  // The v2 stack: one nested Xephyr display holding one Chromium, whose Xephyr
-  // window is simultaneously a real window on `display`. Created even when
-  // disabled so `state` can report `enabled: false` and stop() is a no-op.
-  //
-  // The identity below is what keeps this stack's Chromium profile and
-  // Xauthority file in a directory of their own. It is passed explicitly rather
-  // than left to the factory defaults because it is the seam the instance table
-  // widens: every browser instance gets its own identity, and two of them in one
-  // process must not share a profile (SingletonLock) or a cookie (last writer
-  // wins, first instance locked out of its own display).
-  const instanceIdentity = { tmpDir: tmpdir(), pid: process.pid }
-  const browser = createBrowserStack({
-    spawn,
-    resolveExecutable,
-    config: {
-      display,
-      viewportWidth: viewport.width,
-      viewportHeight: viewport.height,
-      browser: browserConfig,
-    },
-    log,
-    tmpDir: instanceIdentity.tmpDir,
-    pid: instanceIdentity.pid,
-  })
+  /**
+   * The directory identity handed to each browser stack.
+   *
+   * `createBrowserStack` names its temp directory `dsh-desktop-vnc-<pid>`, and the
+   * field exists to give each stack a directory of its own. A monotonically
+   * increasing number is used rather than a hash of the instance id because
+   * uniqueness has to be guaranteed, not merely likely: two instances sharing a
+   * directory share a Chromium SingletonLock and an Xauthority cookie, which
+   * silently locks one of them out of its own display. Starting at 1 keeps it
+   * distinct from the process id default a v1 profile would have used.
+   */
+  let instanceSequence = 0
+  const nextInstancePid = () => {
+    instanceSequence += 1
+    return instanceSequence
+  }
 
-  const vnc = createX11VncController({
-    spawn,
-    resolveExecutable,
-    // v2 retargets this to the nested display once the browser stack is up; the
-    // host desktop is only the initial/v1 value.
-    config: { enabled, display, rfbPort, rfbPortRange },
-    log,
-  })
+  /**
+   * Build the browser/vnc/capture trio for one browser instance.
+   *
+   * Every instance gets its own identity in the temp directory. That is what keeps
+   * two instances in one process from sharing a Chromium profile (SingletonLock)
+   * or an Xauthority cookie (last writer wins, first instance locked out of its own
+   * display) — and the port it binds was already claimed by the registry.
+   *
+   * @param {{id: string, port: number}} context the registry's claim for this instance.
+   * @returns {{browser: object, vnc: object, capture: object, dispose: () => Promise<void>}} the trio.
+   */
+  const createBackend = ({ id, port }) => {
+    const browser = createBrowserStack({
+      spawn,
+      resolveExecutable,
+      config: {
+        display,
+        viewportWidth: viewport.width,
+        viewportHeight: viewport.height,
+        browser: browserConfig,
+      },
+      log,
+      tmpDir: tmpdir(),
+      // The instance identity, not the process id: two stacks in one process must
+      // land in different directories.
+      pid: nextInstancePid(),
+    })
 
-  const captureService = createCaptureService({
-    spawn,
-    resolveExecutable,
-    config: { display, jpegQuality },
-    log,
+    const vnc = createX11VncController({
+      spawn,
+      resolveExecutable,
+      // The registry claimed `port`; pin the controller to exactly that one so its
+      // own pool walk cannot pick a port another instance holds.
+      config: { enabled, display, rfbPort: port, rfbPortRange: [port, port] },
+      log,
+    })
+
+    const capture = createCaptureService({
+      spawn,
+      resolveExecutable,
+      config: { display, jpegQuality },
+      log,
+    })
+
+    return {
+      browser,
+      vnc,
+      capture,
+      // Reverse order of construction: the RFB server and the browser must both be
+      // gone before the plugin forgets the instance, and neither stop may throw.
+      dispose: async () => {
+        await Promise.allSettled([capture.dispose?.(), vnc.dispose(), browser.dispose()])
+      },
+    }
+  }
+
+  /**
+   * Resolve the display for one instance and retarget its backend.
+   *
+   * With `browser.enabled=false` this is the v1 path verbatim: `config.display`, no
+   * Xephyr and no Chromium. Otherwise the nested display is only known after
+   * `browser.ensure()`, which {@link resolvePanelDisplay} runs.
+   *
+   * @param {{browser: object, vnc: object, capture: object}} backend the instance's trio.
+   * @returns {Promise<{display: string}|{error: string}>} the display to mirror, or a readable failure.
+   */
+  const prepareDisplay = (backend) => resolvePanelDisplay({
+    browser: backend.browser,
+    vnc: backend.vnc,
+    capture: backend.capture,
+    browserEnabled,
+    hostDisplay: display,
   })
 
   /**
-   * Point the whole panel at the display it should mirror.
+   * The browser instance table.
    *
-   * With `browser.enabled=false` this is the v1 path verbatim: `config.display`,
-   * no Xephyr and no Chromium. Otherwise the nested display is only known after
-   * `browser.ensure()`, so both the x11vnc controller and the capture service
-   * are retargeted to it here.
-   *
-   * @returns {Promise<{display: string}|{error: string}>} the display to mirror, or a readable failure.
+   * `config.instanceRegistry` is the test seam: the routes are exercised against a
+   * fake table without spawning Xephyr, exactly like `resolvePanelDisplay` is
+   * injected to unit-test the display choice.
    */
-  const ensurePanelDisplay = () => resolvePanelDisplay({
-    browser,
-    vnc,
-    capture: captureService,
-    browserEnabled,
-    hostDisplay: display,
+  const registry = config.instanceRegistry ?? createInstanceRegistry({
+    createBackend,
+    prepareDisplay,
+    ports: portCandidates({ rfbPortRange, rfbPort }),
+    viewport,
+    log,
   })
 
   // Every route is registered as an effect so unloading the plugin releases it.
   const registerRoute = (route) => {
     ctx.effect(() => webServer.register(route))
+  }
+
+  // --- instance ownership ----------------------------------------------------
+  // A browser instance belongs to the session that created it, and when that
+  // session goes away its instances do too. Only `session/disposed` is listened
+  // to: `agent/disposed` fires while the session is still open and still able to
+  // drive the browser it opened, so closing on it would collect live instances.
+  if (typeof ctx.on === 'function') {
+    ctx.effect(() => ctx.on('session/disposed', (session) => {
+      const sessionId = typeof session === 'string' ? session : session?.id
+      if (typeof sessionId !== 'string' || sessionId === '') return
+      void Promise.resolve(registry.disposeSession?.(sessionId)).catch((error) => {
+        log('warn', `desktop-vnc: could not close the instances of session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
+      })
+    }))
   }
 
   const sendText = (res, status, body) => {
@@ -323,6 +411,30 @@ export function apply(ctx, config = {}) {
     const payload = Buffer.from(JSON.stringify(value), 'utf8')
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': payload.length })
     res.end(payload)
+  }
+
+  /**
+   * The instance the legacy single-panel routes address.
+   *
+   * v1 had exactly one browser, so `frame.jpg`, `stream.mjpg` and `ws` keep
+   * working by projecting the first instance in the table — and, when the table is
+   * empty, by starting one, which is what those routes did in v1 too. A new
+   * instance is not created when one exists: the legacy path never picks a second
+   * browser behind the caller's back.
+   *
+   * @returns {Promise<{entry: object, display: string}|{error: string}>} the instance or a readable failure.
+   */
+  const ensureLegacyInstance = async () => {
+    let entry = registry.first()
+    if (entry === undefined) {
+      const created = createInstance({ ownerSessionId: null })
+      entry = registry.get(created.id)
+    }
+    await entry.ready
+    if (entry.state === 'failed') {
+      return { error: typeof entry.error === 'string' && entry.error !== '' ? entry.error : 'desktop browser is unavailable' }
+    }
+    return { entry, display: entry.display ?? display }
   }
 
   // --- 4.1 asset route (prefix) ---------------------------------------------
@@ -380,17 +492,16 @@ export function apply(ctx, config = {}) {
         return
       }
       try {
-        // The panel mirrors the nested display in v2, so the stack must be up
-        // before there is anything to screenshot. Shared in-flight promise: a
-        // concurrent WS upgrade triggers the same single start.
-        const target = await ensurePanelDisplay()
+        // The legacy thumbnail belongs to the single panel v1 had, so it projects
+        // the first instance in the table rather than choosing a browser itself.
+        const target = await ensureLegacyInstance()
         if (target.error !== undefined) {
           log('warn', `desktop-vnc: frame.jpg unavailable: ${target.error}`)
           sendText(res, 503, target.error)
           return
         }
         const url = new URL(req.url ?? '/', 'http://dsh.local')
-        const body = await captureService.capture({ quality: url.searchParams.get('quality') })
+        const body = await target.entry.capture.capture({ quality: url.searchParams.get('quality') })
         res.writeHead(200, {
           'content-type': 'image/jpeg',
           'content-length': body.length,
@@ -427,7 +538,7 @@ export function apply(ctx, config = {}) {
       // Resolve the nested display before the first frame so the degraded
       // preview shows the browser and not the locked host desktop. `streamMjpeg`
       // writes its 200 head itself, so a failure here can still be a clean 503.
-      const target = await ensurePanelDisplay()
+      const target = await ensureLegacyInstance()
       if (target.error !== undefined) {
         log('warn', `desktop-vnc: stream.mjpg unavailable: ${target.error}`)
         sendText(res, 503, target.error)
@@ -438,7 +549,7 @@ export function apply(ctx, config = {}) {
       const fps = url.searchParams.get('fps') ?? frameRate
       const stream = streamMjpeg({
         res,
-        capture: (options) => captureService.capture(options),
+        capture: (options) => target.entry.capture.capture(options),
         fps,
         quality,
         log,
@@ -446,6 +557,85 @@ export function apply(ctx, config = {}) {
       streams.add(stream)
       // The client owns teardown through close/aborted; the set only tracks it.
       res.on('close', () => streams.delete(stream))
+    },
+  })
+
+  // --- 4.4 browser instances -------------------------------------------------
+  // One prefix route serves list, create and `/<id>` close. Route registration
+  // throws on a duplicate (kind, path) and instance ids are minted at runtime, so
+  // a route per id is impossible: the trailing segment is parsed here instead.
+  registerRoute({
+    kind: 'prefix',
+    path: SESSIONS_PATH,
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://dsh.local')
+      const pathname = url.pathname
+      const rest = pathname.startsWith(`${SESSIONS_PATH}/`)
+        ? pathname.slice(SESSIONS_PATH.length + 1)
+        : ''
+
+      // `/sessions` itself: the collection.
+      if (rest === '') {
+        if (req.method === 'GET' || req.method === 'HEAD') {
+          // A flat array, in table order. No focus (that is per client) and no
+          // total/limit (the port pool is the only cap).
+          sendJson(res, 200, registry.list())
+          return
+        }
+        if (req.method !== 'POST') {
+          res.writeHead(405, { allow: 'GET, HEAD, POST' })
+          res.end()
+          return
+        }
+        let body = {}
+        try {
+          body = await readJsonBody(req)
+        } catch (error) {
+          sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+          return
+        }
+        if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+          sendJson(res, 400, { error: 'request body must be an object' })
+          return
+        }
+        try {
+          // Answers immediately with `{id, state: 'starting'}`: the stack boots on
+          // a promise nobody here awaits.
+          sendJson(res, 200, createInstance({
+            ownerSessionId: typeof body.ownerSessionId === 'string' && body.ownerSessionId !== ''
+              ? body.ownerSessionId
+              : null,
+          }))
+        } catch (error) {
+          const status = Number.isInteger(error?.status) ? error.status : 500
+          log('warn', `desktop-vnc: cannot create a browser instance: ${error instanceof Error ? error.message : String(error)}`)
+          sendJson(res, status, { error: error instanceof Error ? error.message : String(error) })
+        }
+        return
+      }
+
+      // `/sessions/<id>`: one instance. Anything deeper is not a route we serve
+      // here (the per-instance WS path is an upgrade route, never an HTTP one).
+      const [id, ...trailing] = rest.split('/')
+      if (trailing.length > 0) {
+        sendJson(res, 404, { error: 'not found' })
+        return
+      }
+      if (!isInstanceId(id)) {
+        sendJson(res, 404, { error: `no such browser instance: ${id}` })
+        return
+      }
+      if (req.method !== 'DELETE') {
+        res.writeHead(405, { allow: 'DELETE' })
+        res.end()
+        return
+      }
+      try {
+        sendJson(res, 200, await registry.close(id))
+      } catch (error) {
+        const status = Number.isInteger(error?.status) ? error.status : 500
+        sendJson(res, status, { error: error instanceof Error ? error.message : String(error) })
+      }
     },
   })
 
@@ -459,28 +649,41 @@ export function apply(ctx, config = {}) {
         res.end()
         return
       }
-      const status = vnc.status()
-      // `browserStatus` is the browser stack's own snapshot: `display` is the
-      // nested display once ensure() has run, otherwise the host fallback.
-      const browserStatus = browser.status()
+      // The shape of this document is frozen: the existing client reads these
+      // fields and `test/index.test.js` asserts the `browser` object in full. The
+      // instance table is projected into it — the first instance stands in for the
+      // one browser v1 had — rather than widening the document.
+      const entry = registry.first()
+      const status = entry?.vnc?.status?.() ?? { running: false, port: rfbPort }
+      const browserStatus = entry?.browser?.status?.() ?? {
+        display: entry?.display ?? display,
+        xephyr: false,
+        chromium: false,
+        running: false,
+        mode: 'none',
+        degraded: false,
+        pids: {},
+      }
       sendJson(res, 200, {
         enabled,
         display,
         // The display the panel actually shows: the nested one in v2, or the
         // host display under the v1-compatible `browser.enabled=false` path.
-        vncDisplay: vnc.display(),
+        vncDisplay: entry?.vnc?.display?.() ?? display,
         rfbHost: '127.0.0.1',
-        rfbPort,
+        // The instance's allocated port once it has one; the configured
+        // preference before that, so the field stays a number.
+        rfbPort: Number.isInteger(entry?.port) ? entry.port : rfbPort,
         vncRunning: status.running === true,
         clients: sessions.size + streams.size,
         viewport: { width: viewport.width, height: viewport.height },
         browser: {
           enabled: browserEnabled,
-          display: browserStatus.display,
+          display: browserStatus.display ?? display,
           xephyr: browserStatus.xephyr === true,
           chromium: browserStatus.chromium === true,
           running: browserStatus.running === true,
-          mode: browserStatus.mode,
+          mode: browserStatus.mode ?? 'none',
           degraded: browserStatus.degraded === true,
           pids: browserStatus.pids ?? {},
           ...(browserStatus.warning === undefined ? {} : { warning: browserStatus.warning }),
@@ -505,81 +708,218 @@ export function apply(ctx, config = {}) {
     return origins
   }
 
+  /**
+   * Bridge one WebSocket to one browser instance's RFB server.
+   *
+   * Shared by the v1-compatible `ws` route and the per-instance `sessions/<id>/ws`
+   * route: the difference is only which instance is resolved, and every step after
+   * that is identical.
+   *
+   * @param {object} req the upgrade request.
+   * @param {object} socket the raw WebSocket socket.
+   * @param {Buffer} head bytes already read past the request line.
+   * @param {() => Promise<{entry?: object, error?: string, status?: number}>} resolveEntry
+   *   the instance this route addresses: `{entry}` when it exists, `{error, status}`
+   *   when it cannot be addressed at all.
+   */
+  const handleUpgrade = async (req, socket, head, resolveEntry) => {
+    if (!enabled) {
+      writeHttpError(socket, 503, 'desktop-vnc disabled')
+      return
+    }
+    const origin = req.headers?.origin
+    // Same-origin is decided against the Host the browser actually addressed,
+    // because one listener is reachable as loopback, as a LAN address and as a
+    // proxied public name — a literal address allow-list cannot cover those.
+    if (!isSameOriginRequest(origin, req.headers?.host, allowedOrigins())) {
+      log('warn', `desktop-vnc: refused websocket from origin ${origin} (host ${req.headers?.host})`)
+      writeHttpError(socket, 403, 'forbidden origin')
+      return
+    }
+    const handshake = parseHandshake(req)
+    if (!handshake.ok) {
+      log('warn', `desktop-vnc: rejected websocket handshake: ${handshake.error}`)
+      writeHttpError(socket, handshake.status, handshake.error, handshake.version ? { 'sec-websocket-version': handshake.version } : {})
+      return
+    }
+    if (sessions.size >= maxClients) {
+      writeHttpError(socket, 503, 'too many desktop sessions')
+      return
+    }
+
+    const resolved = await resolveEntry()
+    if (resolved?.entry === undefined) {
+      const status = Number.isInteger(resolved?.status) ? resolved.status : 404
+      writeHttpError(socket, status, resolved?.error ?? 'no such browser instance')
+      return
+    }
+    const entry = resolved.entry
+    // The instance's own start may still be in flight; awaiting it is what turns a
+    // failed boot into an HTTP error the panel can explain instead of a dead socket.
+    await entry.ready
+    if (entry.state !== 'ready') {
+      const message = typeof entry.error === 'string' && entry.error !== '' ? entry.error : 'browser instance is unavailable'
+      log('warn', `desktop-vnc: refusing websocket for instance ${entry.id}: ${message}`)
+      writeHttpError(socket, 503, message.slice(0, 200))
+      return
+    }
+
+    // The RFB server starts lazily, on the first viewer: starting one per instance
+    // up front would burn a process on every browser nobody looks at. It is
+    // started here, before the connect, because connecting first would always find
+    // nothing listening.
+    if (entry.vnc !== null && entry.vnc !== undefined) {
+      let started
+      try {
+        started = await entry.vnc.ensure()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        log('warn', `desktop-vnc: refusing websocket for instance ${entry.id}: ${message}`)
+        writeHttpError(socket, 503, message.slice(0, 200))
+        return
+      }
+      if (started?.running !== true) {
+        const message = typeof started?.error === 'string' ? started.error : 'x11vnc is unavailable'
+        log('warn', `desktop-vnc: refusing websocket for instance ${entry.id}: ${message}`)
+        writeHttpError(socket, 503, message.slice(0, 200))
+        return
+      }
+      // The allocated port, never the configured preference: `status()` answers
+      // the preferred port before the first allocation, so only ensure()'s return
+      // value names the port that actually bound.
+      if (Number.isInteger(started.port)) entry.port = started.port
+    }
+
+    let tcp
+    try {
+      // The instance's allocated port, never the configured preference: with a
+      // pool the two differ and the diagnostic is worthless if it names the wrong one.
+      tcp = await openTcp({ port: entry.port })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      log('warn', `desktop-vnc: cannot reach x11vnc on 127.0.0.1:${entry.port}: ${message}`)
+      writeHttpError(socket, 503, `cannot reach the VNC server: ${message}`.slice(0, 200))
+      return
+    }
+
+    writeUpgrade(socket, handshake)
+    socket.setNoDelay?.(true)
+    tcp.setNoDelay?.(true)
+
+    const bridge = createBridge({
+      wsSocket: socket,
+      tcpSocket: tcp,
+      subprotocol: handshake.subprotocol ?? 'binary',
+      maxFrameBytes: DEFAULT_MAX_FRAME_BYTES,
+      head,
+      log,
+    })
+    sessions.add(bridge)
+    // Viewers are counted per instance, and the count is what the sidebar shows:
+    // two clients watching one browser is `viewers: 2`, not two instances.
+    registry.attachViewer?.(entry.id)
+    // Both transports close, and whichever goes first must not decrement twice.
+    let released = false
+    const release = () => {
+      sessions.delete(bridge)
+      if (released) return
+      released = true
+      registry.detachViewer?.(entry.id)
+    }
+    socket.once('close', release)
+    tcp.once('close', release)
+  }
+
+  // v1-compatible single-panel route: the first instance in the table.
   ctx.effect(() => webServer.registerUpgrade({
     path: WS_PATH,
     handler: async (req, socket, head) => {
-      if (!enabled) {
-        writeHttpError(socket, 503, 'desktop-vnc disabled')
-        return
-      }
-      const origin = req.headers?.origin
-      // Same-origin is decided against the Host the browser actually addressed,
-      // because one listener is reachable as loopback, as a LAN address and as a
-      // proxied public name — a literal address allow-list cannot cover those.
-      if (!isSameOriginRequest(origin, req.headers?.host, allowedOrigins())) {
-        log('warn', `desktop-vnc: refused websocket from origin ${origin} (host ${req.headers?.host})`)
-        writeHttpError(socket, 403, 'forbidden origin')
-        return
-      }
-      const handshake = parseHandshake(req)
-      if (!handshake.ok) {
-        log('warn', `desktop-vnc: rejected websocket handshake: ${handshake.error}`)
-        writeHttpError(socket, handshake.status, handshake.error, handshake.version ? { 'sec-websocket-version': handshake.version } : {})
-        return
-      }
-      if (sessions.size >= maxClients) {
-        writeHttpError(socket, 503, 'too many desktop sessions')
-        return
-      }
-
-      // v2: the panel shows one browser, so the nested display must exist before
-      // x11vnc has anything worth mirroring. Both steps are in-flight-shared, so
-      // two tabs opening at once still start one Xephyr/Chromium and one x11vnc.
-      const target = await ensurePanelDisplay()
-      if (target.error !== undefined) {
-        log('warn', `desktop-vnc: refusing websocket: ${target.error}`)
-        writeHttpError(socket, 503, target.error)
-        return
-      }
-
-      // The RFB server must exist before the browser is told the socket is open,
-      // so a failed start becomes an HTTP error the panel can explain.
-      const started = await vnc.ensure()
-      if (started.running !== true) {
-        writeHttpError(socket, 503, started.error ?? 'x11vnc is unavailable')
-        return
-      }
-
-      let tcp
-      try {
-        tcp = await openTcp({ port: started.port ?? rfbPort })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        // The allocated port, not the configured preference: with a pool the two
-        // differ, and the diagnostic is worthless if it names the wrong one.
-        log('warn', `desktop-vnc: cannot reach x11vnc on 127.0.0.1:${started.port ?? rfbPort}: ${message}`)
-        writeHttpError(socket, 503, `cannot reach the VNC server: ${message}`.slice(0, 200))
-        return
-      }
-
-      writeUpgrade(socket, handshake)
-      socket.setNoDelay?.(true)
-      tcp.setNoDelay?.(true)
-
-      const bridge = createBridge({
-        wsSocket: socket,
-        tcpSocket: tcp,
-        subprotocol: handshake.subprotocol ?? 'binary',
-        maxFrameBytes: DEFAULT_MAX_FRAME_BYTES,
-        head,
-        log,
+      await handleUpgrade(req, socket, head, async () => {
+        const target = await ensureLegacyInstance()
+        // The legacy route never 404s: with no instance it starts one, so a
+        // failure here is always "the browser could not come up" (503).
+        if (target.error !== undefined) {
+          log('warn', `desktop-vnc: refusing websocket: ${target.error}`)
+          return { error: target.error, status: 503 }
+        }
+        return { entry: target.entry }
       })
-      sessions.add(bridge)
-      const release = () => sessions.delete(bridge)
-      socket.once('close', release)
-      tcp.once('close', release)
     },
   }))
+
+  // Per-instance routes are registered and released as instances come and go,
+  // because an upgrade route is matched by exact path only — there is no prefix
+  // form — while ids are minted at runtime.
+  const upgradeDisposers = new Map()
+
+  /**
+   * Register the exact upgrade route for one instance.
+   *
+   * Upgrade routes have no prefix form in the host web server (dispatch is an exact
+   * `Map.get` on the pathname), so each instance needs its own route. They are
+   * added on create and removed on close, which also keeps a closed instance from
+   * answering on its old path.
+   *
+   * @param {string} id the instance whose route to add.
+   */
+  const mountInstanceUpgrade = (id) => {
+    if (upgradeDisposers.has(id)) return
+    const path = instanceWsPath(id)
+    // Kept here as well as handed to the effect: closing one instance must release
+    // its route immediately, not only when the whole plugin unloads.
+    let disposeRoute = null
+    try {
+      ctx.effect(() => {
+        disposeRoute = webServer.registerUpgrade({
+          path,
+          handler: (req, socket, head) => handleUpgrade(req, socket, head, async () => {
+            const entry = registry.get(id)
+            return entry === undefined
+              ? { error: `no such browser instance: ${id}`, status: 404 }
+              : { entry }
+          }),
+        })
+        return disposeRoute
+      })
+      upgradeDisposers.set(id, () => {
+        try {
+          disposeRoute?.()
+        } catch {
+          // Already released.
+        }
+      })
+    } catch (error) {
+      log('warn', `desktop-vnc: cannot mount the upgrade route for ${id}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /** Remove one instance's upgrade route once it is closed. */
+  const unmountInstanceUpgrade = (id) => {
+    const dispose = upgradeDisposers.get(id)
+    if (dispose === undefined) return
+    upgradeDisposers.delete(id)
+    dispose()
+  }
+
+  // The registry reports every close, whichever path caused it (an explicit
+  // DELETE, a disposed session, or unload), so the route is released exactly once.
+  registry.subscribeClose?.(unmountInstanceUpgrade)
+
+  /**
+   * The registry's create, with this plugin's route bookkeeping around it.
+   *
+   * Every instance that appears gets its own WS upgrade route, and the registry's
+   * close hook takes it away again. Wrapping here (rather than teaching the
+   * registry about routes) keeps the table free of web-server concerns.
+   *
+   * @param {{ownerSessionId?: string|null}} [options] the owning session.
+   * @returns {{id: string, state: 'starting'}} the new instance's address.
+   */
+  const createInstance = (options) => {
+    const created = registry.create(options)
+    mountInstanceUpgrade(created.id)
+    return created
+  }
 
   // --- teardown --------------------------------------------------------------
   ctx.effect(() => () => {
@@ -601,18 +941,34 @@ export function apply(ctx, config = {}) {
     sessions.clear()
   })
 
-  // The x11vnc controller is its own effect: its disposer kills exactly the
-  // process this plugin started and never touches a pre-existing server.
+  // Every instance is its own effect: closing one stops exactly the Xephyr/Xvfb,
+  // Chromium and x11vnc pids that instance recorded (never by name) and removes
+  // its own profile directory. Unload therefore closes the whole table.
   ctx.effect(() => () => {
-    void vnc.dispose().catch(() => {})
+    void Promise.resolve(registry.disposeAll?.()).catch(() => {})
   })
+}
 
-  // The browser stack is a separate effect too: its disposer stops exactly the
-  // Xephyr/Xvfb and Chromium pids it recorded (never by name) and removes the
-  // per-instance Chromium profile directory.
-  ctx.effect(() => () => {
-    void browser.dispose().catch(() => {})
-  })
+/**
+ * Read one JSON request body.
+ *
+ * Bounded on purpose: a request body is the only unbounded input on these routes,
+ * and an instance create carries at most an owner id.
+ *
+ * @param {object} req the request stream.
+ * @param {number} [limit] byte cap.
+ * @returns {Promise<unknown>} the parsed body, `{}` when empty.
+ */
+async function readJsonBody(req, limit = 64 * 1024) {
+  let body = ''
+  let size = 0
+  for await (const chunk of req) {
+    size += chunk.length
+    if (size > limit) throw new Error('request body too large')
+    body += chunk
+  }
+  if (body.length === 0) return {}
+  return JSON.parse(body)
 }
 
 /** Open `127.0.0.1:<port>` and resolve once connected. */

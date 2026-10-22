@@ -9,6 +9,7 @@
     "capture.js",
     "client.js",
     "index.js",
+    "instances.js",
     "novnc",
     "ws.js",
     "x11vnc.js",
