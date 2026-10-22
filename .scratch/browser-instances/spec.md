@@ -1,6 +1,6 @@
 # 浏览器实例：把 desktop-vnc 从单例改成多实例
 
-Status: ready-for-agent
+Status: done
 
 ## Problem Statement
 

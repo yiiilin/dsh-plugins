@@ -9,17 +9,17 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 实例表持有每个实例的 id、归属会话、创建时间、最后活动时间、状态
-- [ ] 实例 id 由本插件生成，不取自任何外部工具
-- [ ] `GET /_dsh/desktop-vnc/sessions` 返回扁平数组，每项含 id、状态、尺寸、创建时间、归属会话、最后活动时间、观看人数
-- [ ] `POST /_dsh/desktop-vnc/sessions` 立即返回 `{id, state: "starting"}`，不阻塞等待启动
-- [ ] `DELETE /_dsh/desktop-vnc/sessions/<id>` 关闭指定实例；路径 id 由一条 prefix 路由自行解析
-- [ ] 监听会话消失事件，关闭该会话名下的全部实例
-- [ ] agent 结束但会话仍在时，实例**继续存活**
-- [ ] 关闭不存在的实例返回明确错误
-- [ ] 每实例的 VNC WebSocket 端点按 id 区分，连到各自实例的 RFB 端口
-- [ ] 既有的单实例状态端点形状保持不变
-- [ ] 新增测试：会话消失时该会话的实例被关闭，其他会话的实例不受影响
-- [ ] 新增测试：创建/列出/关闭三条路由的请求与响应形状
+- [x] 实例表持有每个实例的 id、归属会话、创建时间、最后活动时间、状态
+- [x] 实例 id 由本插件生成，不取自任何外部工具
+- [x] `GET /_dsh/desktop-vnc/sessions` 返回扁平数组，每项含 id、状态、尺寸、创建时间、归属会话、最后活动时间、观看人数
+- [x] `POST /_dsh/desktop-vnc/sessions` 立即返回 `{id, state: "starting"}`，不阻塞等待启动
+- [x] `DELETE /_dsh/desktop-vnc/sessions/<id>` 关闭指定实例；路径 id 由一条 prefix 路由自行解析
+- [x] 监听会话消失事件，关闭该会话名下的全部实例
+- [x] agent 结束但会话仍在时，实例**继续存活**
+- [x] 关闭不存在的实例返回明确错误
+- [x] 每实例的 VNC WebSocket 端点按 id 区分，连到各自实例的 RFB 端口
+- [x] 既有的单实例状态端点形状保持不变
+- [x] 新增测试：会话消失时该会话的实例被关闭，其他会话的实例不受影响
+- [x] 新增测试：创建/列出/关闭三条路由的请求与响应形状

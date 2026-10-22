@@ -6,12 +6,12 @@ agent 以为自己操作的是 A，实际开了 B。
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `browser_instance_list` 返回全部实例及其状态
-- [ ] `browser_instance_create` 接受归属会话，返回新实例的 id 与初始状态
-- [ ] `browser_instance_close` 按 id 关闭实例
-- [ ] 三个工具对不存在的 id 返回明确错误，不回退、不自动新建
-- [ ] 工具描述说明 id 是唯一依据，避免 agent 猜测
-- [ ] 不提供聚焦工具（焦点是客户端界面状态，服务端工具跨层修改语义不清）
-- [ ] 新增测试：三个工具的正常路径与 id 不存在路径
+- [x] `browser_instance_list` 返回全部实例及其状态
+- [x] `browser_instance_create` 接受归属会话，返回新实例的 id 与初始状态
+- [x] `browser_instance_close` 按 id 关闭实例
+- [x] 三个工具对不存在的 id 返回明确错误，不回退、不自动新建
+- [x] 工具描述说明 id 是唯一依据，避免 agent 猜测
+- [x] 不提供聚焦工具（焦点是客户端界面状态，服务端工具跨层修改语义不清）
+- [x] 新增测试：三个工具的正常路径与 id 不存在路径
