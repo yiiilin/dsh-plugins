@@ -31,6 +31,7 @@ English: a right-sidebar tab that auto-connects on open and shows **a browser** 
 | 半边 | 文件 | 职责 |
 | --- | --- | --- |
 | Host | `index.js` | 路由注册、状态汇总、生命周期回收、浏览器栈与 x11vnc 的接线 |
+| Host | `instances.js` | 浏览器实例表：实例 id、归属会话、状态、端口预留、观看人数 |
 | Host | `browser.js` | Xephyr 嵌套显示 + Chromium 的启动/复用/停止（Xephyr 缺失时降级 Xvfb） |
 | Host | `x11vnc.js` | 从 `rfbPortRange` 分配端口、按需启动/复用/停止 `x11vnc` 子进程 |
 | Host | `ws.js` | 手写 RFC6455 WebSocket 服务端，把 WS 帧与 VNC TCP 字节流双向直通 |
@@ -45,8 +46,24 @@ English: a right-sidebar tab that auto-connects on open and shows **a browser** 
 | GET | `/_dsh/desktop-vnc/asset/<file>` | 服务内置 noVNC 模块（`core/`、`vendor/`），长缓存 |
 | GET | `/_dsh/desktop-vnc/frame.jpg` | 单帧 JPEG 截图 |
 | GET | `/_dsh/desktop-vnc/stream.mjpg` | MJPEG 降级预览流 |
-| GET | `/_dsh/desktop-vnc/state` | 服务状态 JSON |
-| WS | `/_dsh/desktop-vnc/ws` | RFB 字节桥（noVNC 在此之上跑 VNC 协议） |
+| GET | `/_dsh/desktop-vnc/state` | 服务状态 JSON（形状冻结；投影表中第一个实例） |
+| WS | `/_dsh/desktop-vnc/ws` | RFB 字节桥，v1 兼容路径（指向表中第一个实例） |
+| GET | `/_dsh/desktop-vnc/sessions` | 浏览器实例列表，扁平数组 |
+| POST | `/_dsh/desktop-vnc/sessions` | 创建浏览器实例，**立即**返回 `{id, state:"starting"}` |
+| DELETE | `/_dsh/desktop-vnc/sessions/<id>` | 关闭浏览器实例；id 由一条 prefix 路由自行解析 |
+| WS | `/_dsh/desktop-vnc/sessions/<id>/ws` | 该浏览器实例的 RFB 字节桥 |
+
+列表项形状：
+
+```jsonc
+[{ "id": "1a2b3c4d", "state": "ready", "width": 1280, "height": 800,
+   "createdAt": 1792637133, "ownerSessionId": "session-1",
+   "lastActiveAt": 1792637200, "viewers": 1 }]
+```
+
+`state` 为 `starting` | `ready` | `failed`。浏览器实例属于创建它的会话：该会话
+`session/disposed` 时，它名下的实例全部关闭，其他会话的实例不受影响；`agent/disposed`
+不关闭任何实例（agent 结束但会话仍在时，实例继续存活）。
 
 浏览器只与 DSH 的 Web 源交互；`x11vnc` 始终绑定 `127.0.0.1`，从不直接暴露。
 

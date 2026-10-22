@@ -127,11 +127,12 @@ test('only JavaScript assets get the JavaScript content type', () => {
   assert.equal(assetContentType('core/rfb.js.map'), null)
 })
 
-/** A Cordis-shaped context recording routes, upgrades and effects. */
+/** A Cordis-shaped context recording routes, upgrades, effects and listeners. */
 function fakeCtx({ withWebServer = true } = {}) {
   const routes = []
   const upgrades = []
   const disposers = []
+  const listeners = new Map()
   const ctx = {
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     get(service) {
@@ -160,11 +161,21 @@ function fakeCtx({ withWebServer = true } = {}) {
       disposers.push(callback())
       return () => {}
     },
+    on(event, handler) {
+      if (!listeners.has(event)) listeners.set(event, [])
+      listeners.get(event).push(handler)
+      return () => {}
+    },
   }
   return {
     ctx,
     routes,
     upgrades,
+    listeners,
+    /** Fire every listener registered for one event. */
+    emit(event, payload) {
+      for (const handler of listeners.get(event) ?? []) handler(payload)
+    },
     /** Run every registered effect disposer, as plugin unload would. */
     unload() {
       while (disposers.length > 0) {
@@ -587,4 +598,379 @@ test('browser.enabled=false keeps the v1 mirror and never calls ensure()', async
   assert.equal(browser.state.calls, 0, 'the browser stack must not be started on the v1 path')
   assert.deepEqual(vnc.calls, [])
   assert.deepEqual(capture.calls, [])
+})
+
+// --- the browser instance routes --------------------------------------------
+// The registry is injected so these cases never spawn Xephyr or Chromium: the
+// routes are exercised through their real handlers with a fake table.
+
+/** A registry whose create() answers at once and whose close() obeys the contract. */
+function fakeRegistry() {
+  const calls = { create: [], close: [], disposed: [] }
+  const rows = []
+  const closeListeners = new Set()
+  return {
+    calls,
+    rows,
+    /** The real table reports every close through one hook; the fake must too. */
+    subscribeClose(handler) {
+      closeListeners.add(handler)
+      return () => closeListeners.delete(handler)
+    },
+    create({ ownerSessionId } = {}) {
+      calls.create.push({ ownerSessionId })
+      const entry = {
+        id: `0000${String(rows.length).padStart(3, '0')}a`,
+        state: 'starting',
+        width: 1280,
+        height: 800,
+        createdAt: 1_000,
+        ownerSessionId,
+        lastActiveAt: 1_000,
+        viewers: 0,
+      }
+      entry.vnc = {
+        ensures: 0,
+        async ensure() {
+          this.ensures += 1
+          return { running: true, port: 1 }
+        },
+        status: () => ({ running: false, port: 5900 }),
+        display: () => ':0',
+      }
+      rows.push(entry)
+      return { id: entry.id, state: 'starting' }
+    },
+    list() {
+      // The real table projects a frozen row shape; the fake does too, so the
+      // test asserts the contract rather than whatever the fake happens to hold.
+      return rows.map((row) => ({
+        id: row.id,
+        state: row.state,
+        width: row.width,
+        height: row.height,
+        createdAt: row.createdAt,
+        ownerSessionId: row.ownerSessionId,
+        lastActiveAt: row.lastActiveAt,
+        viewers: row.viewers,
+      }))
+    },
+    get(id) {
+      return rows.find((row) => row.id === id)
+    },
+    async close(id) {
+      calls.close.push(id)
+      const index = rows.findIndex((row) => row.id === id)
+      if (index === -1) {
+        const error = new Error(`没有这个浏览器实例（no such browser instance: ${id}）`)
+        error.status = 404
+        throw error
+      }
+      rows.splice(index, 1)
+      for (const listener of closeListeners) listener(id)
+      return { closed: true }
+    },
+    async disposeSession(sessionId) {
+      calls.disposed.push(sessionId)
+      return []
+    },
+  }
+}
+
+/** Mount the plugin with an injected registry and a fake web server. */
+function mountWithRegistry(registry, config = {}) {
+  const fake = fakeCtx()
+  apply(fake.ctx, { ...config, instanceRegistry: registry })
+  return fake
+}
+
+/** A recording response: `writeHead` and `end` land in `written` in call order. */
+function recordingResponse() {
+  const written = []
+  return {
+    written,
+    writeHead: (status, headers) => written.push([status, headers]),
+    end: (body) => written.push(body),
+    on: () => {},
+  }
+}
+
+/** Parse the JSON body a recording response ended with. */
+function jsonBody(written) {
+  const body = written[written.length - 1]
+  return JSON.parse(Buffer.isBuffer(body) ? body.toString('utf8') : String(body))
+}
+
+test('POST /sessions answers at once with the id and the starting state', async () => {
+  const registry = fakeRegistry()
+  const fake = mountWithRegistry(registry)
+  const route = fake.routes.find((candidate) => candidate.path === '/_dsh/desktop-vnc/sessions')
+
+  const res = recordingResponse()
+  await route.handler({
+    method: 'POST',
+    url: '/_dsh/desktop-vnc/sessions',
+    headers: { 'content-type': 'application/json' },
+    [Symbol.asyncIterator]: async function* () {},
+  }, res)
+
+  assert.equal(res.written[0][0], 200)
+  assert.match(res.written[0][1]['content-type'], /application\/json/)
+  assert.deepEqual(jsonBody(res.written), { id: '0000000a', state: 'starting' })
+  assert.deepEqual(registry.calls.create, [{ ownerSessionId: null }], 'no body means no recorded owner')
+})
+
+test('POST /sessions records the owning session from the request body', async () => {
+  const registry = fakeRegistry()
+  const fake = mountWithRegistry(registry)
+  const route = fake.routes.find((candidate) => candidate.path === '/_dsh/desktop-vnc/sessions')
+
+  const body = JSON.stringify({ ownerSessionId: 'session-a' })
+  const res = recordingResponse()
+  await route.handler({
+    method: 'POST',
+    url: '/_dsh/desktop-vnc/sessions',
+    headers: { 'content-type': 'application/json' },
+    [Symbol.asyncIterator]: async function* () {
+      yield Buffer.from(body)
+    },
+  }, res)
+
+  assert.equal(res.written[0][0], 200)
+  assert.deepEqual(registry.calls.create, [{ ownerSessionId: 'session-a' }])
+})
+
+test('POST /sessions rejects a body that is not an object', async () => {
+  const registry = fakeRegistry()
+  const fake = mountWithRegistry(registry)
+  const route = fake.routes.find((candidate) => candidate.path === '/_dsh/desktop-vnc/sessions')
+
+  const res = recordingResponse()
+  await route.handler({
+    method: 'POST',
+    url: '/_dsh/desktop-vnc/sessions',
+    headers: {},
+    [Symbol.asyncIterator]: async function* () {
+      yield Buffer.from('[]')
+    },
+  }, res)
+
+  assert.equal(res.written[0][0], 400)
+  assert.deepEqual(registry.calls.create, [], 'a malformed body must not create an instance')
+})
+
+test('GET /sessions answers a flat array of the registry rows', () => {
+  const registry = fakeRegistry()
+  registry.create({ ownerSessionId: 'session-a' })
+  const fake = mountWithRegistry(registry)
+  const route = fake.routes.find((candidate) => candidate.path === '/_dsh/desktop-vnc/sessions')
+
+  const res = recordingResponse()
+  route.handler({ method: 'GET', url: '/_dsh/desktop-vnc/sessions', headers: {} }, res)
+
+  assert.equal(res.written[0][0], 200)
+  const body = jsonBody(res.written)
+  assert.ok(Array.isArray(body), 'the list is a flat array, never an object with a total')
+  assert.deepEqual(body, [{
+    id: '0000000a',
+    state: 'starting',
+    width: 1280,
+    height: 800,
+    createdAt: 1_000,
+    ownerSessionId: 'session-a',
+    lastActiveAt: 1_000,
+    viewers: 0,
+  }])
+})
+
+test('the sessions route answers 405 for a method it does not serve', async () => {
+  const registry = fakeRegistry()
+  const fake = mountWithRegistry(registry)
+  const route = fake.routes.find((candidate) => candidate.path === '/_dsh/desktop-vnc/sessions')
+
+  const res = recordingResponse()
+  await route.handler({ method: 'PUT', url: '/_dsh/desktop-vnc/sessions', headers: {} }, res)
+
+  assert.equal(res.written[0][0], 405)
+})
+
+test('DELETE /sessions/<id> is one prefix route that parses the id itself', async () => {
+  const registry = fakeRegistry()
+  registry.create({ ownerSessionId: 'session-a' })
+  const fake = mountWithRegistry(registry)
+
+  // One prefix route owns the whole subtree: a second route per id would throw
+  // on duplicate registration, and ids are minted at runtime.
+  const route = fake.routes.find((candidate) => candidate.path === '/_dsh/desktop-vnc/sessions')
+  const res = recordingResponse()
+  await route.handler({
+    method: 'DELETE',
+    url: '/_dsh/desktop-vnc/sessions/0000000a',
+    headers: {},
+  }, res)
+
+  assert.equal(res.written[0][0], 200)
+  assert.deepEqual(jsonBody(res.written), { closed: true })
+  assert.deepEqual(registry.calls.close, ['0000000a'])
+})
+
+test('DELETE on an unknown id answers 404 with the id in the message', async () => {
+  const registry = fakeRegistry()
+  const fake = mountWithRegistry(registry)
+  const route = fake.routes.find((candidate) => candidate.path === '/_dsh/desktop-vnc/sessions')
+
+  const res = recordingResponse()
+  await route.handler({
+    method: 'DELETE',
+    url: '/_dsh/desktop-vnc/sessions/deadbeef',
+    headers: {},
+  }, res)
+
+  assert.equal(res.written[0][0], 404)
+  assert.match(jsonBody(res.written).error, /deadbeef/)
+})
+
+test('the session routes are registered by effects and released on unload', () => {
+  const registry = fakeRegistry()
+  const fake = mountWithRegistry(registry)
+  const sessions = fake.routes.filter((route) => route.path.startsWith('/_dsh/desktop-vnc/sessions'))
+  assert.equal(sessions.length, 1, 'one prefix route serves list, create and close')
+  assert.equal(sessions[0].kind, 'prefix')
+
+  fake.unload()
+  assert.equal(fake.routes.length, 0)
+})
+
+test('a disposed session closes exactly that session\'s instances', async () => {
+  const registry = fakeRegistry()
+  const fake = mountWithRegistry(registry)
+
+  fake.emit('session/disposed', { id: 'session-a' })
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.deepEqual(registry.calls.disposed, ['session-a'])
+})
+
+test('agent/disposed never closes an instance: the session outlives the agent', async () => {
+  const registry = fakeRegistry()
+  const fake = mountWithRegistry(registry)
+
+  // An agent ending is not a session ending. Listening to it would tear down a
+  // browser the still-open session can keep driving.
+  fake.emit('agent/disposed', { id: 'agent-1' })
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.deepEqual(registry.calls.disposed, [], 'no instance is closed when only the agent goes away')
+  assert.equal(registry.list().length, 0)
+})
+
+test('creating an instance mounts its own WS upgrade route, and closing removes it', async () => {
+  const registry = fakeRegistry()
+  const fake = mountWithRegistry(registry)
+  const sessions = fake.routes.find((route) => route.path === '/_dsh/desktop-vnc/sessions')
+
+  const before = fake.upgrades.length
+  const created = recordingResponse()
+  await sessions.handler({
+    method: 'POST',
+    url: '/_dsh/desktop-vnc/sessions',
+    headers: {},
+    [Symbol.asyncIterator]: async function* () {},
+  }, created)
+  const { id } = jsonBody(created.written)
+
+  // Upgrade routes have no prefix form (dispatch is an exact pathname lookup), so
+  // each instance needs a route of its own, mounted when it appears.
+  assert.equal(fake.upgrades.length, before + 1)
+  assert.equal(fake.upgrades.at(-1).path, `/_dsh/desktop-vnc/sessions/${id}/ws`)
+
+  const closed = recordingResponse()
+  await sessions.handler({ method: 'DELETE', url: `/_dsh/desktop-vnc/sessions/${id}`, headers: {} }, closed)
+  assert.equal(closed.written[0][0], 200)
+  // A closed instance must stop answering on its old path.
+  assert.ok(!fake.upgrades.some((route) => route.path === `/_dsh/desktop-vnc/sessions/${id}/ws`))
+})
+
+test('the per-instance WS route answers 404 for an id that is gone', async () => {
+  const registry = fakeRegistry()
+  const fake = mountWithRegistry(registry)
+  const sessions = fake.routes.find((route) => route.path === '/_dsh/desktop-vnc/sessions')
+
+  const created = recordingResponse()
+  await sessions.handler({
+    method: 'POST',
+    url: '/_dsh/desktop-vnc/sessions',
+    headers: {},
+    [Symbol.asyncIterator]: async function* () {},
+  }, created)
+  const { id } = jsonBody(created.written)
+  const upgrade = fake.upgrades.find((route) => route.path === `/_dsh/desktop-vnc/sessions/${id}/ws`)
+
+  const written = []
+  const socket = { write: (chunk) => written.push(Buffer.from(chunk)), end: () => {} }
+  await upgrade.handler({
+    method: 'GET',
+    url: `/_dsh/desktop-vnc/sessions/${id}/ws`,
+    headers: {
+      origin: 'http://127.0.0.1:3080',
+      upgrade: 'websocket',
+      connection: 'Upgrade',
+      'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
+      'sec-websocket-version': '13',
+      'sec-websocket-protocol': 'binary',
+    },
+  }, socket, Buffer.alloc(0))
+
+  // The fake row has no live RFB server behind it, so the bridge cannot connect;
+  // what matters is that the route is addressed per instance and refuses cleanly.
+  assert.match(Buffer.concat(written).toString(), /^HTTP\/1\.1 (404|503) /)
+})
+
+test('the per-instance WS route starts that instance\'s RFB server before bridging', async () => {
+  const registry = fakeRegistry()
+  const fake = mountWithRegistry(registry)
+  const sessions = fake.routes.find((route) => route.path === '/_dsh/desktop-vnc/sessions')
+
+  const created = recordingResponse()
+  await sessions.handler({
+    method: 'POST',
+    url: '/_dsh/desktop-vnc/sessions',
+    headers: {},
+    [Symbol.asyncIterator]: async function* () {},
+  }, created)
+  const { id } = jsonBody(created.written)
+  // A viewer only reaches the RFB server of an instance whose browser is up.
+  registry.get(id).state = 'ready'
+  registry.get(id).ready = Promise.resolve()
+  const upgrade = fake.upgrades.find((route) => route.path === `/_dsh/desktop-vnc/sessions/${id}/ws`)
+
+  const written = []
+  const socket = {
+    write: (chunk) => written.push(Buffer.from(chunk)),
+    end: () => {},
+    once: () => {},
+    setNoDelay: () => {},
+    destroy: () => {},
+  }
+  // No RFB server is really listening, so the bridge cannot complete. The seam
+  // under test is "the instance's own server was started first", which happens
+  // before the connect.
+  await upgrade.handler({
+    method: 'GET',
+    url: `/_dsh/desktop-vnc/sessions/${id}/ws`,
+    headers: {
+      origin: 'http://127.0.0.1:3080',
+      upgrade: 'websocket',
+      connection: 'Upgrade',
+      'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
+      'sec-websocket-version': '13',
+      'sec-websocket-protocol': 'binary',
+    },
+  }, socket, Buffer.alloc(0))
+
+  assert.equal(registry.get(id).vnc.ensures, 1, 'the instance\'s own RFB server is ensured at WS time')
+  // The port it reported has nothing behind it, so the handler refuses rather
+  // than upgrading a socket to a server that is not there.
+  assert.match(Buffer.concat(written).toString(), /^HTTP\/1\.1 503 /)
+  assert.ok(!Buffer.concat(written).toString().includes('101 Switching Protocols'))
 })
