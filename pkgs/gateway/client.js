@@ -290,6 +290,80 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Narrow-viewport rules for the panel.
+     *
+     * Every measurement in `styles` above is an inline style, and an inline style
+     * beats any stylesheet rule regardless of query. That is deliberate: the desktop
+     * values have one source, and they still apply when this sheet is missing (a
+     * sandboxed render, or a host that mounted the client without a document).
+     *
+     * A narrow panel therefore cannot be expressed by adding a rule — the inline
+     * `gridTemplateColumns` would win. The one override below is marked
+     * `!important` for exactly that reason, it is the only such rule in this sheet,
+     * and it lives *inside* the container query so it can never reach a wide panel.
+     * Everything else here adds a property the inline styles do not set (padding,
+     * font size, overscroll behaviour), so it merges with the baseline instead of
+     * competing with it.
+     *
+     * The query is a container query, not a media query, because the panel does not
+     * span the viewport: it sits in the middle column, so its width is the window
+     * minus the sidebar and any open right panel. A 900px window with the sidebar
+     * open leaves about 620px — the desktop problem arrives on a desktop window,
+     * where a `@media (max-width: 680px)` would never fire. `styles.root` already
+     * declares `containerType: 'inline-size'`, so the panel measures itself.
+     *
+     * 680px is the width Plugin Market's own two-column grid collapses at, and this
+     * panel's measurements come from that stylesheet. Market keeps the rule in a
+     * media query, but its panel is not in this column; the number is the same, the
+     * axis is the one that actually matters here.
+     */
+    const STYLE_ID = 'dsh-gateway-panel'
+    const NARROW_CSS = `
+/* Sits inside the container query below: nothing in this block reaches a wide panel. */
+@container (width <= 680px) {
+  /* The one rule allowed to beat an inline style. The grid's column count is set
+     inline (styles.grid) so a missing sheet keeps the desktop layout; a single
+     column is therefore only expressible as an override. Scoped to this query, it
+     applies at narrow widths and nowhere else. */
+  .dsg-grid { grid-template-columns: minmax(0, 1fr) !important }
+  .dsg-head { padding-left: 16px; padding-right: 16px }
+  .dsg-wrap { padding-left: 16px; padding-right: 16px }
+  /* A card at ~300px cannot show a name and a four-button action cluster on one
+     line: let them wrap rather than ellipsising the name away. */
+  .dsg-cardrow { flex-wrap: wrap }
+  .dsg-cardname { white-space: normal; overflow-wrap: anywhere }
+  /* Horizontal scrolling stays (the table has seven columns), but a flick should
+     not also drag the page behind it. */
+  .dsg-tablebox { overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch }
+  /* Element selectors: the body has a dozen cells and would drift from a class list. */
+  .dsg-tablebox th, .dsg-tablebox td { padding: 8px 6px }
+}
+/* iOS zooms the whole page on a focused input under 16px, which leaves the panel
+   scrolled sideways after the keyboard closes. The credential fields are the only
+   inputs here. Coarse pointers only, so a narrow desktop window keeps 12px. */
+@media (max-width: 680px) and (pointer: coarse) {
+  .dsg-input { font-size: 16px }
+}
+`
+
+    /** Mount the narrow-viewport rules; returns the disposer that removes them. */
+    function installStyle() {
+      // The sheet is an enhancement, never a requirement: a host or a render
+      // without a full document keeps the desktop inline styles and loses only the
+      // narrow-width adjustments, so a missing DOM is not an error here.
+      if (typeof document === 'undefined' || typeof document.createElement !== 'function') return () => {}
+      if (typeof document.head?.append !== 'function') return () => {}
+      const existing = typeof document.getElementById === 'function' ? document.getElementById(STYLE_ID) : null
+      if (existing !== null && existing !== undefined) return () => {}
+      const style = document.createElement('style')
+      style.id = STYLE_ID
+      style.setAttribute('data-plugin', '@yiln-dsh/dsh-plugins')
+      style.textContent = NARROW_CSS
+      document.head.append(style)
+      return () => style.remove()
+    }
+
+    /**
      * Request one of this daemon's own routes.
      *
      * The path is resolved against `document.baseURI`, not the origin: the GUI is
@@ -693,9 +767,9 @@ window.__ModuleLoader__.load({
         // name and metadata on the left, actions as pills on the right.
         const cards = state.environments.map((entry) => h('div', { key: entry.id, style: styles.card },
           // `.row1`: the name (and what it is) on the left, its actions on the right.
-          h('div', { style: styles.cardRow },
+          h('div', { className: 'dsg-cardrow', style: styles.cardRow },
             h('div', { style: styles.cardMain },
-              h('div', { style: styles.cardName }, entry.label),
+              h('div', { className: 'dsg-cardname', style: styles.cardName }, entry.label),
               h('div', { style: styles.cardMeta },
                 h('span', { style: entry.online ? styles.tagOk : styles.tag },
                   entry.online ? t('online') : t('offline')),
@@ -723,11 +797,11 @@ window.__ModuleLoader__.load({
           h('div', { style: styles.sectionTitle }, t('sectionEnvironments')),
           state.environments.length === 0
             ? h('div', { style: styles.note }, t('empty'))
-            : h('div', { style: styles.grid }, cards),
+            : h('div', { className: 'dsg-grid', style: styles.grid }, cards),
           h('div', { key: 'form', style: styles.form },
             h('label', { key: 'l', style: styles.formLabel }, t('labelLabel')),
             h('input', {
-              key: 'i', style: styles.input, value: label,
+              key: 'i', className: 'dsg-input', style: styles.input, value: label,
               placeholder: t('labelPlaceholder'),
               onChange: (event) => setLabel(event.target.value),
             }),
@@ -740,6 +814,7 @@ window.__ModuleLoader__.load({
       const credentialField = (name, labelKey) => h('label', { key: name, style: styles.field },
         h('span', { style: styles.fieldLabel }, t(labelKey)),
         h('input', {
+          className: 'dsg-input',
           style: styles.input,
           type: 'password',
           name,
@@ -827,7 +902,7 @@ window.__ModuleLoader__.load({
           return parts
         }
         const columns = ['colNode', 'colAddress', 'colClient', 'colLastSeen', 'colIssued', 'colExpires', 'colSessionId']
-        parts.push(h('div', { key: 'table', style: styles.tableBox },
+        parts.push(h('div', { key: 'table', className: 'dsg-tablebox', style: styles.tableBox },
           h('table', { style: styles.table },
             h('thead', null,
               h('tr', null, columns.map((key) => h('th', { key, style: styles.th }, t(key))))),
@@ -863,9 +938,9 @@ window.__ModuleLoader__.load({
       const body = tab === 'credential' ? credentialPage() : tab === 'sessions' ? sessionsPage() : environmentPage()
 
       // Mirrors the market's markup: a query container holding a head and a body.
-      return h('div', { style: styles.root },
-        h('div', { style: styles.head }, head),
-        h('div', { style: styles.wrap }, body))
+      return h('div', { className: 'dsg-root', style: styles.root },
+        h('div', { className: 'dsg-head', style: styles.head }, head),
+        h('div', { className: 'dsg-wrap', style: styles.wrap }, body))
     }
 
 
@@ -876,10 +951,25 @@ window.__ModuleLoader__.load({
      * The list is fetched once on mount and refreshed when the panel loads, since an
      * environment's online state changes without anything here noticing.
      */
-    const makeSwitcher = (t) => function EnvironmentSwitcher() {
+    /**
+     * The environment switcher, drawn only in the wide sidebar.
+     *
+     * `sidebar.footer.action` hands every occupant a `wide` flag: false when the
+     * column is collapsed to its 56px icon rail. The switcher is a label plus a
+     * native `select`, and neither fits a rail — the label is `nowrap` and the
+     * select refuses to shrink below its own text, so as one flex item the row
+     * pushes past the rail and breaks the column. It is simply withdrawn there
+     * (ds-bot does the same for its 连接插件 entry in the same seat); switching
+     * environment stays available from the panel's own environment list.
+     */
+    const makeSwitcher = (t) => function EnvironmentSwitcher({ wide }) {
       const [state, setState] = useState({ phase: 'loading', role: 'main', current: '', environments: [] })
 
       useEffect(() => {
+        // Collapsed rail: nothing is drawn, so nothing is asked for either. This is
+        // inside the effect rather than an early return above it, because the hook
+        // order has to survive a collapse and an expand of the same component.
+        if (!wide) return undefined
         let cancelled = false
         void (async () => {
           try {
@@ -900,8 +990,14 @@ window.__ModuleLoader__.load({
           }
         })()
         return () => { cancelled = true }
-      }, [])
+      }, [wide])
 
+      // A collapsed sidebar is a 56px icon rail: the label is `nowrap` and the
+      // select will not shrink below its own text, so one flex item there pushes
+      // past the rail and breaks the column. Withdrawn instead; the panel's own
+      // environment list still switches. ds-bot withdraws its own footer entry on
+      // the same flag.
+      if (!wide) return null
       // An edge has no other environments to offer, and no list to build one from.
       if (state.phase === 'loading' || state.role !== 'main' || state.environments.length === 0) return null
 
@@ -933,6 +1029,7 @@ window.__ModuleLoader__.load({
 
     const apply = (ctx) => {
       ctx.effect(() => ctx.locale.register(NS, { zh: ZH, en: EN }), 'daemon: locale')
+      ctx.effect(() => installStyle(), 'gateway: narrow-viewport stylesheet')
       const t = ctx.locale.bind(NS)
       // Rail button …
       ctx.effect(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
@@ -965,6 +1062,10 @@ window.__ModuleLoader__.load({
         call,
         ZH,
         EN,
+        makeSwitcher,
+        makePanelPage,
+        NARROW_CSS,
+        STYLE_ID,
         PANEL_TABS,
         DEFAULT_TAB,
         CREDENTIAL_MIN_LENGTH,

@@ -171,6 +171,40 @@ node cannot change this daemon's credential.
 - **Profile lifecycle**: create, start, stop, remove, plus `/admin` for operators.
 - **SSH deployment**: probe a host, then install a statically linked helper.
 
+## Narrow viewports
+
+The panel's measurements are inline styles copied from Plugin Market's stylesheet,
+which is drawn for a 968px content column. A single stylesheet adds the narrow-width
+adjustments; the desktop numbers are not touched by it.
+
+The query is a **container query** (`@container (width <= 680px)`), not a media
+query, because the panel does not span the window: it sits in the middle column, so
+its width is the window minus the sidebar and any open right panel. A 900px window
+with the sidebar open leaves about 620px — the narrow case arrives on a desktop
+window, where a viewport query would never fire. `styles.root` already declares
+`containerType: 'inline-size'`, so the panel measures itself. 680px is the width
+Plugin Market's own two-column grid collapses at.
+
+What changes at ≤680px of panel width: the environment grid becomes one column, a
+card lets its name and action row wrap instead of ellipsising the name to a single
+character, the head and body take 16px side padding, and the session table keeps its
+horizontal scroll but stops a flick from dragging the page behind it. On a touch
+device the credential inputs go to 16px, which is what stops iOS from zooming the
+page on focus and leaving it scrolled sideways.
+
+Only one declaration in that sheet uses `!important`. It has to: an inline style
+outranks every stylesheet rule, and the grid's column count is an inline style, so a
+single column can only be expressed as an override. It is scoped inside the
+container query, so it cannot reach a wide panel. Every other rule adds a property
+the inline styles do not set, which merges with the baseline instead of competing
+with it — and it means a host that mounts the client without a full document still
+gets the correct desktop panel.
+
+In the collapsed 56px sidebar the environment switcher is withdrawn entirely: a
+`nowrap` label plus a select that will not shrink below its text would push the
+column out. Switching environment stays available from the panel's own environment
+list.
+
 ## Why a profile cannot share a process
 
 `fs`, `subprocess` and `sandbox` are process-wide services. One `ctx.fs` means one
