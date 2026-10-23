@@ -338,21 +338,20 @@ export function apply(ctx, config = {}) {
   const nextInstanceKey = newInstanceKeyer()
 
   /**
-   * Where the Nth window lands on the host desktop.
+   * Where the Nth nested screen sits on the host desktop.
    *
-   * A sequential slot, not a hash of the id: a hash collides (six ids landed on
-   * two slots in testing), and two windows in the same slot are exactly the
-   * one-window-with-a-hidden-duplicate problem this is here to avoid. The offsets
-   * are small and bounded, wrapping after twelve so a long session does not march
-   * every window off the right edge.
+   * Staggering belongs here, at the Xephyr screen, not at the Chromium window
+   * inside it: that window is sized to fill its own screen, so an offset there
+   * pushes it off the screen it lives on and the panel shows a black border with
+   * the page hanging off one corner.
    *
-   * @returns {string} an X geometry offset such as `60,80`.
+   * @returns {string} an X screen origin such as `120,90`.
    */
-  let windowSlot = 0
-  const windowPositionFor = () => {
-    const slot = windowSlot % 12
-    windowSlot += 1
-    return `${60 + (slot % 4) * 70},${80 + Math.floor(slot / 4) * 70}`
+  let screenSlot = 0
+  const screenOriginFor = () => {
+    const slot = screenSlot % 8
+    screenSlot += 1
+    return `${(slot % 4) * 40},${Math.floor(slot / 4) * 40}`
   }
 
   /**
@@ -411,10 +410,12 @@ export function apply(ctx, config = {}) {
           // person can tell two windows apart on the desktop.
           ...(cdpPort === undefined ? {} : { debugPort: cdpPort }),
           windowTitle: `${browserConfig.windowTitle ?? 'DSH Browser'} ${id}`,
+          // The nested screen's place on the host desktop, so two browsers are two
+          // visible windows rather than one covering the other.
+          screenOrigin: screenOriginFor(),
           // Each window lands a little further along, so two instances are two
           // windows rather than one window and a hidden duplicate underneath it.
           // Wrapped by the desktop width so a long session does not march off-screen.
-          windowPosition: windowPositionFor(),
         },
       },
       log,

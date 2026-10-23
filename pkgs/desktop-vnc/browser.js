@@ -210,11 +210,17 @@ export function writeXauthority(path, display, cookie, host = hostname()) {
  * The argv that makes `:N` a real, resizable window on the host desktop.
  * `DISPLAY` for the *host* desktop travels in the spawn spec's environment.
  */
-export function xephyrArgv(executable, { display, width, height, title = DEFAULT_WINDOW_TITLE, authFile } = {}) {
+export function xephyrArgv(executable, { display, width, height, title = DEFAULT_WINDOW_TITLE, authFile, origin } = {}) {
+  // `-screen WxH+X+Y` places the *nested screen* at that offset on the host
+  // desktop. That is the right layer to stagger windows at: two Xephyr windows
+  // side by side are two visible browsers. Offsetting the Chromium inside them
+  // instead pushes a full-size window off its own screen, which shows as a black
+  // border with the page hanging off the corner.
+  const geometry = typeof origin === 'string' && origin !== '' ? `${width}x${height}+${origin}` : `${width}x${height}`
   return [
     executable,
     display,
-    '-screen', `${width}x${height}x24`,
+    '-screen', `${geometry}x24`,
     // Access control stays ON and is narrowed to this stack's own cookie. The
     // display is a general-purpose one that other tools on this machine also
     // start things on, so `-ac` let any local process draw onto what the panel
@@ -316,6 +322,8 @@ function normalizeBrowser(config) {
     // through, the title a person reads on the desktop, and where it lands.
     debugPort: Number.isInteger(raw.debugPort) && raw.debugPort > 0 ? raw.debugPort : undefined,
     windowPosition: typeof raw.windowPosition === 'string' && raw.windowPosition !== '' ? raw.windowPosition : undefined,
+    // Where the nested Xephyr screen sits on the host desktop; empty means 0,0.
+    screenOrigin: typeof raw.screenOrigin === 'string' && raw.screenOrigin !== '' ? raw.screenOrigin : undefined,
     startUrl: textOr(raw.startUrl, DEFAULT_START_URL),
     extraArgs: Array.isArray(raw.extraArgs)
       ? raw.extraArgs.filter((arg) => typeof arg === 'string' && arg !== '')
@@ -591,6 +599,7 @@ export function createBrowserStack({
           height,
           title: browserConfig.windowTitle,
           authFile: state.authFile ?? undefined,
+          origin: browserConfig.screenOrigin,
         }),
         { DISPLAY: hostDisplay },
       ))
