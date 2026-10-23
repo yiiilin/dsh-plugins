@@ -22,7 +22,7 @@
  *   nothing else does (see `disposeSession`, and the `session/disposed` wiring in
  *   index.js — `agent/disposed` is deliberately not listened to).
  *
- * @module @yiln-dsh/dsh-desktop-vnc/instances
+ * @module @yiln-dsh/dsh-browser-vnc/instances
  */
 
 import { randomUUID } from 'node:crypto'

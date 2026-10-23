@@ -1069,6 +1069,33 @@ test("folding the list keeps the viewer mounted on the same instance", async () 
   assert.match(page.runtime.text(), new RegExp(String(INSTANCES.length), "u"));
 });
 
+test("a freshly created instance takes the view once it becomes watchable", async () => {
+  // `create` answers while the stack is still starting, and a starting row cannot
+  // be focused. The user asked for a browser; the page must end up showing it,
+  // without them having to find and click the new row.
+  const page = await mountShell({ instances: [], createdId: "cccc3333" });
+  const create = byClass(page.runtime.tree, "dsh-vnc-tool")
+    .find((node) => node.children.includes("+"));
+  create.props.onClick();
+  await page.settle();
+
+  // Still starting: nothing is watchable yet, so no viewer is mounted.
+  assert.equal(byClass(page.runtime.tree, "dsh-vnc-canvas").length, 0,
+    "a starting instance is not mounted");
+  assert.equal(byClass(page.runtime.tree, "dsh-vnc-empty").length, 1,
+    "the empty stage stands in until the new instance is watchable");
+
+  // The boot finishes; the next poll sees it ready and focuses it.
+  page.setInstances([{ id: "cccc3333", state: "ready", width: 1920, height: 1080, createdAt: 1, ownerSessionId: null, lastActiveAt: 1, viewers: 0 }]);
+  await page.tick();
+  // The focus change mounts the viewer, whose own connect path needs a turn.
+  await page.settle();
+
+  assert.equal(byClass(page.runtime.tree, "dsh-vnc-canvas").length, 1,
+    "the new instance is on screen once it is ready");
+  assert.equal(byClass(page.runtime.tree, "dsh-vnc-empty").length, 0);
+});
+
 test("shows the empty list state rather than an empty list", async () => {
   const page = await mountShell({ instances: [] });
   assert.equal(listRows(page).length, 0);

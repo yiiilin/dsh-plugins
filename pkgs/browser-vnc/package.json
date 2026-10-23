@@ -1,5 +1,5 @@
 {
-  "name": "@yiln-dsh/dsh-desktop-vnc",
+  "name": "@yiln-dsh/dsh-browser-vnc",
   "version": "0.3.0",
   "private": false,
   "type": "module",

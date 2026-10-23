@@ -20,12 +20,19 @@
  * component effect below.
  */
 window.__ModuleLoader__.load({
-  id: '@yiln-dsh/dsh-desktop-vnc',
+  id: '@yiln-dsh/dsh-browser-vnc',
   factory: (require) => {
     const React = require('react')
 
     const LOCALE_NS = 'desktop-vnc'
     /** Tab-system identity: unique across every registration in the tab system. */
+    /**
+     * The tab identity, deliberately still the pre-rename string.
+     *
+     * It is persisted in each client's localStorage as part of the saved sidebar
+     * layout; changing it would leave every existing tab orphaned and lose the
+     * user's focus. The package was renamed, the identity was not.
+     */
     const VNC_TAB_ID = '@yiln-dsh/dsh-desktop-vnc'
     /** The tab type discriminator, also the pane-body registration key. */
     const VNC_TAB_KIND = 'desktop-vnc'
@@ -1828,6 +1835,15 @@ window.__ModuleLoader__.load({
          * state, like the focus: which rail a person likes is their own business.
          */
         const [collapsed, setCollapsed] = React.useState(false)
+        /**
+         * An instance the user just created, waiting to become watchable.
+         *
+         * `create` answers while the stack is still `starting`, and a `starting`
+         * row cannot be focused — mounting the viewer on it would show a blank
+         * stage. Remembering the id and focusing it once the poll reports `ready`
+         * is what makes "I created a browser" end with that browser on screen.
+         */
+        const pendingFocusRef = React.useRef(null)
         /** The last list read: `{ rows }`, or `{ error }`. `null` while loading. */
         const [listing, setListing] = React.useState(null)
         const [refreshKey, setRefreshKey] = React.useState(0)
@@ -1862,7 +1878,26 @@ window.__ModuleLoader__.load({
               )
               if (!live) return
               setListing({ rows })
-              setFocusedId((current) => focusAfterList(current, rows))
+              // A just-created instance takes the focus as soon as it can be
+              // watched; until then the previous focus stays put. A row that is
+              // merely absent from this read is not proof it failed — the create
+              // answer and the table are two different round trips — so the wait
+              // only ends when it appears as `failed` or the list stops mentioning
+              // it for a second consecutive read.
+              const pending = pendingFocusRef.current
+              const ready = pending === null
+                ? undefined
+                : rows.find((row) => row.id === pending && isInstanceSelectable(row))
+              if (ready !== undefined) {
+                pendingFocusRef.current = null
+                setFocusedId(ready.id)
+              } else {
+                if (pending !== null && rows.some((row) => row.id === pending && row.state === 'failed')) {
+                  // It failed to boot: stop waiting, and let the row explain itself.
+                  pendingFocusRef.current = null
+                }
+                setFocusedId((current) => focusAfterList(current, rows))
+              }
             } catch (error) {
               if (!live) return
               setListing((current) => ({ rows: current?.rows ?? [], error: true }))
@@ -1905,6 +1940,9 @@ window.__ModuleLoader__.load({
           try {
             const created = await createInstance(pageFetch(), owningSessionId)
             if (created !== null && typeof created.id === 'string') {
+              // Watch for it becoming ready; the poll is what turns this into a
+              // focused viewer.
+              pendingFocusRef.current = created.id
               setListing((current) => (current === null ? current : { ...current, rows: current.rows }))
             }
             setAction(null)

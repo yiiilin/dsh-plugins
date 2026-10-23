@@ -19,7 +19,7 @@
  * The runner is injected, so unit tests exercise the JPEG validation, the
  * multipart framing and the timer teardown without an X server.
  *
- * @module @yiln-dsh/dsh-desktop-vnc/capture
+ * @module @yiln-dsh/dsh-browser-vnc/capture
  */
 
 /** A JPEG starts with SOI (FF D8) and ends with EOI (FF D9). */

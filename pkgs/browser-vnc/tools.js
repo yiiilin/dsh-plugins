@@ -23,7 +23,7 @@
  * one the tool drives — a tool that called the registry directly would produce
  * an instance no viewer could ever connect to.
  *
- * @module @yiln-dsh/dsh-desktop-vnc/tools
+ * @module @yiln-dsh/dsh-browser-vnc/tools
  */
 
 import { defineTool } from '@deepseek-ai/dsh-tools'

@@ -17,7 +17,7 @@ Verified against DSH `0.2.1-rc.2`: the workspace suite passes 361 tests and
 | `delegate-mode` | `connection`, `locale`, `slots`, `sessions` |
 | `delete-session` | `slots`, `sessions` |
 | `git-graph` | `slots`, `locale`, `sidebarRight`, `sidebarRightTabs`, `remote`, `remote.session` |
-| `desktop-vnc` | `slots`, `locale`, `sidebarRightTabs`, `connection` |
+| `browser-vnc` (Loader row `dsh-desktop-vnc`) | `slots`, `locale`, `sidebarRightTabs`, `connection` |
 | `session-list-cache` | `sessions` |
 | `tool-restrict-presets` | `agents` |
 

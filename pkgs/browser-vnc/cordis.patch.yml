@@ -7,7 +7,7 @@
 
 - insert:
     - id: dsh-desktop-vnc
-      name: '@yiln-dsh/dsh-desktop-vnc'
+      name: '@yiln-dsh/dsh-browser-vnc'
       inject:
         - webServer
         - subprocess

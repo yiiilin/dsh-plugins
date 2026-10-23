@@ -58,7 +58,7 @@
  *   instances; `agent/disposed` deliberately closes nothing, because an agent can
  *   end while its session stays open and keeps driving the browser.
  *
- * @module @yiln-dsh/dsh-desktop-vnc
+ * @module @yiln-dsh/dsh-browser-vnc
  */
 
 import { readFileSync } from 'node:fs'

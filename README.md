@@ -71,7 +71,7 @@ are unchanged, so an existing profile only needs new package addresses — see
 | [`pkgs/supervisor`](pkgs/supervisor) | `supervisor` | Systemd management, server metrics and interrupted-session recovery. |
 | [`pkgs/delegate-mode`](pkgs/delegate-mode) | `delegate-mode` | Per-session `normal` / `delegate-writes` permissions with pruned catalogs and separate system prompts. |
 | [`pkgs/tool-restrict-presets`](pkgs/tool-restrict-presets) | `tool-restrict-presets` | Applies `agent.ctx.tools.restrict({ allow: [] })` to every Agent running a listed Agent Preset. |
-| [`pkgs/desktop-vnc`](pkgs/desktop-vnc) | `dsh-desktop-vnc` | Right-sidebar tab showing a Chromium browser inside a nested Xephyr display. |
+| [`pkgs/browser-vnc`](pkgs/browser-vnc) | `dsh-browser-vnc` | Right-sidebar tab listing the visible browser instances a session can open, and viewing any of them. |
 
 ## Install
 

@@ -1,4 +1,4 @@
-# @yiln-dsh/dsh-desktop-vnc
+# @yiln-dsh/dsh-browser-vnc
 
 Standalone DeepSeek Harness plugin. Installs on its own; it declares one
 `dsh.bundle` layer and mounts a single Loader row.

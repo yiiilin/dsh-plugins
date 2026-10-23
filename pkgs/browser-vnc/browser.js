@@ -27,7 +27,7 @@
  * `spawn`, `resolveExecutable`, `probe`, `kill` and `removeDir` are injected so
  * unit tests never start a real process or touch the real filesystem.
  *
- * @module @yiln-dsh/dsh-desktop-vnc/browser
+ * @module @yiln-dsh/dsh-browser-vnc/browser
  */
 
 import { randomBytes } from 'node:crypto'

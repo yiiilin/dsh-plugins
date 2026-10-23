@@ -22,7 +22,7 @@
  * Both the filesystem and the pid liveness check are injected, so tests neither
  * touch the real `/tmp` nor signal a real process.
  *
- * @module @yiln-dsh/dsh-desktop-vnc/instance-dirs
+ * @module @yiln-dsh/dsh-browser-vnc/instance-dirs
  */
 
 import { readdir, rm } from 'node:fs/promises'

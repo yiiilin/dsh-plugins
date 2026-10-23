@@ -15,7 +15,7 @@
  * event-emitting fakes, while production uses the raw socket handed to
  * `webServer.registerUpgrade`.
  *
- * @module @yiln-dsh/dsh-desktop-vnc/ws
+ * @module @yiln-dsh/dsh-browser-vnc/ws
  */
 
 import { createHash } from 'node:crypto'

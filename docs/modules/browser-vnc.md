@@ -1,9 +1,9 @@
-# Desktop VNC
+# Browser VNC
 
-Standalone package [`@yiln-dsh/dsh-desktop-vnc`](../../pkgs/desktop-vnc). Loader row: `dsh-desktop-vnc`.
+Standalone package [`@yiln-dsh/dsh-browser-vnc`](../../pkgs/browser-vnc). Loader row: `dsh-desktop-vnc`.
 
 ```bash
-dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/desktop-vnc"
+dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/browser-vnc"
 ```
 
 See the [root README](../../README.md) for the workspace layout, migration and testing.

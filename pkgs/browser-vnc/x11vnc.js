@@ -25,7 +25,7 @@
  * `spawn` and `resolveExecutable` are injected so unit tests never start a real
  * process; production passes the Host `subprocess` service.
  *
- * @module @yiln-dsh/dsh-desktop-vnc/x11vnc
+ * @module @yiln-dsh/dsh-browser-vnc/x11vnc
  */
 
 import { createConnection } from 'node:net'
