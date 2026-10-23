@@ -480,6 +480,34 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Ask the Host to type text into one instance's focused element.
+     *
+     * The Host owns the nested display, so it — not this page — is the side that
+     * can inject key events that survive UTF-8.
+     *
+     * @param fetchImpl - the `fetch` to use.
+     * @param instanceId - which instance to type into.
+     * @param text - the text to type.
+     * @throws when the Host refuses.
+     */
+    async function typeIntoInstance(fetchImpl, instanceId, text) {
+      if (typeof instanceId !== 'string' || instanceId === '') {
+        throw new Error('no instance to type into')
+      }
+      const response = await fetchImpl(`${SESSIONS_PATH()}/${encodeURIComponent(instanceId)}`, {
+        method: 'PATCH',
+        headers: { accept: 'application/json', 'content-type': 'application/json' },
+        body: JSON.stringify({ text }),
+      })
+      if (response?.ok === true) return
+      const body = await response.json().catch(() => null)
+      const reason = typeof body?.error === 'string' && body.error !== ''
+        ? body.error
+        : `desktop-vnc sessions returned HTTP ${response?.status}`
+      throw new Error(reason)
+    }
+
+    /**
      * Ask the Host to close one browser instance.
      * @param fetchImpl - the `fetch` to use.
      * @param id - the instance to close.
@@ -1588,24 +1616,36 @@ window.__ModuleLoader__.load({
         async function pasteClipboard() {
           const rfb = rfbRef.current
           if (rfb === null || viewOnly) return
-          // `navigator.clipboard` only exists in a secure context, and a page
-          // served over plain HTTP from a LAN address is not one — `localhost` is
-          // the exception, which is why this works on 127.0.0.1 and not on
-          // http://<host-ip>. Reading the clipboard has no legacy equivalent (the
-          // `execCommand` fallback only writes), so the honest answer there is to
-          // say the browser withheld it and let the user paste into the field.
+          // The RFB clipboard cannot carry non-Latin text: this x11vnc has no
+          // extended-clipboard support, so `ClientCutText` is ISO 8859-1 only and
+          // CJK arrives as `?`. The Host types into the nested display with
+          // `xdotool` instead, which injects real key events and keeps UTF-8.
+          //
+          // Reading the local clipboard still needs `navigator.clipboard`, which
+          // does not exist in a non-secure context (plain HTTP from a LAN
+          // address). When it is absent the user still has Ctrl+V over
+          // `clipboardData`, which the secure-context rule does not cover.
           if (typeof navigator === 'undefined' || navigator.clipboard?.readText === undefined) {
             setNote('clipboard.insecure')
             return
           }
+          let text
           try {
-            const text = await navigator.clipboard.readText()
+            text = await navigator.clipboard.readText()
+          } catch {
+            setNote('clipboard.denied')
+            return
+          }
+          try {
+            await typeIntoInstance(
+              typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch.bind(window) : fetch,
+              props.instanceId,
+              text,
+            )
             rfb.clipboardPasteFrom(text)
             setNote('clipboard.pasted')
           } catch {
-            // A denied permission is a different failure from an absent API: the
-            // browser has the clipboard, the user just has not allowed this page.
-            setNote('clipboard.denied')
+            setNote('clipboard.unavailable')
           }
         }
 

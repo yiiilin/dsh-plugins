@@ -742,6 +742,28 @@ export function createInstanceRegistry({
   }
 
   /**
+   * Type text into one instance's focused element.
+   *
+   * The text goes through the browser stack rather than the RFB clipboard: that
+   * clipboard is ISO 8859-1 only on this x11vnc, so anything outside Latin-1 would
+   * arrive as question marks.
+   *
+   * @param {string} id the instance to type into.
+   * @param {string} text the text to type.
+   * @returns {Promise<{id: string}|undefined>} the instance id, or undefined when unknown.
+   */
+  const typeText = async (id, text) => {
+    const entry = entries.get(id)
+    if (entry === undefined) return undefined
+    if (typeof text !== 'string' || text === '') return { id: entry.id }
+    const apply = entry.backend?.typeText
+    if (typeof apply !== 'function') throw new Error('this browser instance cannot take typed text')
+    await apply(text)
+    entry.lastActiveAt = now()
+    return { id: entry.id }
+  }
+
+  /**
    * Record one fewer client watching an instance, never below zero.
    *
    * @param {string} id the instance that lost a viewer.
@@ -784,6 +806,7 @@ export function createInstanceRegistry({
     attachViewer,
     detachViewer,
     resize,
+    typeText,
     row,
     seconds,
     entries,

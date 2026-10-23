@@ -923,6 +923,10 @@ export function createBrowserStack({
       enabled: browserConfig.enabled,
       degraded: state.mode === 'xvfb',
       ...(state.fallbackReason === null ? {} : { warning: state.fallbackReason }),
+      // The cookie file this stack's display trusts. Anything that draws into the
+      // nested screen (the paste injector, a screenshot tool) has to present it,
+      // and the caller has no other way to learn the path.
+      ...(state.authFile === null ? {} : { authority: state.authFile }),
       pids,
     }
   }

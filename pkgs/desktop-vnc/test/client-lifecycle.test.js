@@ -319,6 +319,13 @@ async function mountPage(options = {}) {
         const created = { id: options.createdId ?? "cccc3333", state: "starting" };
         return { ok: true, status: 200, json: async () => created };
       }
+      if (method === "PATCH") {
+        // The paste path asks the Host to type into the nested display.
+        if (options.typeFails === true) {
+          return { ok: false, status: 500, json: async () => ({ error: "xdotool failed" }) };
+        }
+        return { ok: true, status: 200, json: async () => ({ id: "aaaa1111", typed: 12 }) };
+      }
       if (method === "DELETE") {
         if (options.closeFails === true) {
           return { ok: false, status: 404, json: async () => ({ error: "no such browser instance" }) };
@@ -404,7 +411,12 @@ async function mountPage(options = {}) {
     // No `sessionId` prop: the seat does not pass one. The body's identity comes from
     // the tab the hook reports, exactly as it does in the real seat.
     let tabId = options.tabId ?? "tab-1"
-    const pageProps = { useTabInfo: () => ({ tab: { id: tabId, visible: tabVisible } }) }
+    const pageProps = {
+      useTabInfo: () => ({ tab: { id: tabId, visible: tabVisible } }),
+      // The seat mounts one viewer per focused instance, so the page always has an
+      // instance id; the paste path uses it to name the typing target.
+      instanceId: options.instanceId ?? "aaaa1111",
+    }
     const body = typeof options.component === "function"
       ? options.component(exported.__test, t, connection)
       : exported.__test.createVncPage(t, connection)
@@ -553,7 +565,9 @@ test("connects with the contract URL, options, and subprotocols", async () => {
   assert.deepEqual(page.importedPaths, [EXPECTED_RFB_PATH]);
   assert.equal(page.created.length, 1);
   const rfb = page.viewer();
-  assert.equal(rfb.url, "ws://127.0.0.1:3080/main/_dsh/desktop-vnc/ws");
+  // A page always drives one named instance now, so it connects through that
+  // instance's own route rather than the v1 single-panel one.
+  assert.equal(rfb.url, "ws://127.0.0.1:3080/main/_dsh/desktop-vnc/sessions/aaaa1111/ws");
   assert.equal(rfb.options.resizeSession, false, "the desktop resolution must not be changed");
   assert.equal(rfb.options.scaleViewport, true);
   assert.equal(rfb.options.viewOnly, false);
@@ -799,6 +813,22 @@ test("pasting with no Clipboard API says the address is not secure", async () =>
   await page.settle();
   assert.equal(rfb.pasted, null, "nothing was pasted");
   assert.match(page.runtime.text(), /HTTPS|localhost|不提供剪贴板/u);
+});
+
+test("pasting asks the Host to type, so non-Latin text survives", async () => {
+  // The RFB clipboard is ISO 8859-1 only on this x11vnc, so a CJK paste through it
+  // would arrive as question marks. The page therefore sends the text to the Host,
+  // which types it into the nested display with real key events.
+  const page = await mountPage();
+  await page.settle();
+  const rfb = page.viewer();
+  rfb.emit("connect", {});
+  page.findByLabel("粘贴剪贴板").props.onClick();
+  await page.settle();
+
+  const patched = page.requests.filter((request) => request.method === "PATCH");
+  assert.equal(patched.length, 1, "the Host is asked to type exactly once");
+  assert.match(patched[0].url, /sessions\/aaaa1111$/u);
 });
 
 test("keeps every toolbar control labeled and correctly disabled", async () => {

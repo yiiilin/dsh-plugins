@@ -477,11 +477,54 @@ export function apply(ctx, config = {}) {
       }
     }
 
+    /**
+     * Type text into whatever the nested display has focused.
+     *
+     * This exists because the VNC clipboard cannot carry it: x11vnc 0.9.16 has no
+     * extended-clipboard support, so `ClientCutText` is limited to ISO 8859-1 and
+     * every non-Latin character arrives as `?`. `xdotool type` injects real key
+     * events through XTEST instead of going through the RFB clipboard, so UTF-8
+     * survives intact.
+     *
+     * The text is passed on stdin rather than as an argv element: argv would put
+     * the user's clipboard in the process table, visible to every local user.
+     *
+     * @param {string} text the text to type.
+     */
+    const typeText = async (text) => {
+      if (typeof spawn !== 'function') throw new Error('subprocess service unavailable')
+      const status = browser.status()
+      if (typeof status.display !== 'string' || status.display === '') {
+        throw new Error('this browser instance has no display to type into')
+      }
+      const env = { DISPLAY: status.display }
+      if (typeof status.authority === 'string') env.XAUTHORITY = status.authority
+      const handle = spawn({
+        argv: ['xdotool', 'type', '--clearmodifiers', '--delay', '20', '--file', '-'],
+        cwd: tmpdir(),
+        env,
+        stdio: { stdin: 'pipe', stdout: { maxBytes: 4096 }, stderr: { maxBytes: 4096 } },
+        graceMs: 2000,
+      })
+      // Written rather than passed in argv so the clipboard text never appears in
+      // the process table.
+      try {
+        handle.stdin?.end?.(String(text))
+      } catch {
+        // A child that exited before reading is reported by the exit code below.
+      }
+      const outcome = await handle.done
+      if (outcome?.exitCode !== 0) {
+        throw new Error(handle.stderrText?.trim() || `xdotool exited with code ${outcome?.exitCode}`)
+      }
+    }
+
     return {
       browser,
       vnc,
       capture,
       resize,
+      typeText,
       // Reverse order of construction: the RFB server and the browser must both be
       // gone before the plugin forgets the instance, and neither stop may throw.
       dispose: async () => {
@@ -807,8 +850,23 @@ export function apply(ctx, config = {}) {
           sendJson(res, 400, { error: 'request body must be an object' })
           return
         }
+        // A PATCH either resizes or types; one body, two intents, never both.
+        if (typeof body.text === 'string') {
+          try {
+            const typed = await registry.typeText(id, body.text)
+            if (typed === undefined) {
+              sendJson(res, 404, { error: `no such browser instance: ${id}` })
+              return
+            }
+            sendJson(res, 200, { id: typed.id, typed: body.text.length })
+          } catch (error) {
+            const status = Number.isInteger(error?.status) ? error.status : 500
+            sendJson(res, status, { error: error instanceof Error ? error.message : String(error) })
+          }
+          return
+        }
         if (!Number.isFinite(body.width) && !Number.isFinite(body.height)) {
-          sendJson(res, 400, { error: 'width or height must be a number' })
+          sendJson(res, 400, { error: 'width, height or text is required' })
           return
         }
         try {
