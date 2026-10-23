@@ -87,6 +87,8 @@ window.__ModuleLoader__.load({
       'error.state': '无法读取桌面服务状态',
       'clipboard.pasted': '已粘贴剪贴板内容',
       'clipboard.unavailable': '无法读取本机剪贴板',
+      'clipboard.insecure': '浏览器在这个地址不提供剪贴板读取（需 HTTPS 或用 localhost 访问）；请直接在输入框里粘贴',
+      'clipboard.denied': '浏览器拒绝了这个页面读取剪贴板，请在地址栏的权限里允许',
       'list.title': '浏览器实例',
       'list.refresh': '刷新列表',
       'list.loading': '正在读取实例列表…',
@@ -148,6 +150,8 @@ window.__ModuleLoader__.load({
       'error.state': 'Could not read the desktop service state',
       'clipboard.pasted': 'Clipboard content pasted',
       'clipboard.unavailable': 'Could not read the local clipboard',
+      'clipboard.insecure': 'This address is not a secure context, so the browser withholds clipboard reads (use HTTPS or localhost); paste into the field instead',
+      'clipboard.denied': 'The browser denied this page clipboard access; allow it in the address-bar permissions',
       'list.title': 'Browser instances',
       'list.refresh': 'Refresh list',
       'list.loading': 'Reading the instance list…',
@@ -1584,12 +1588,24 @@ window.__ModuleLoader__.load({
         async function pasteClipboard() {
           const rfb = rfbRef.current
           if (rfb === null || viewOnly) return
+          // `navigator.clipboard` only exists in a secure context, and a page
+          // served over plain HTTP from a LAN address is not one — `localhost` is
+          // the exception, which is why this works on 127.0.0.1 and not on
+          // http://<host-ip>. Reading the clipboard has no legacy equivalent (the
+          // `execCommand` fallback only writes), so the honest answer there is to
+          // say the browser withheld it and let the user paste into the field.
+          if (typeof navigator === 'undefined' || navigator.clipboard?.readText === undefined) {
+            setNote('clipboard.insecure')
+            return
+          }
           try {
             const text = await navigator.clipboard.readText()
             rfb.clipboardPasteFrom(text)
             setNote('clipboard.pasted')
           } catch {
-            setNote('clipboard.unavailable')
+            // A denied permission is a different failure from an absent API: the
+            // browser has the clipboard, the user just has not allowed this page.
+            setNote('clipboard.denied')
           }
         }
 
@@ -1670,7 +1686,11 @@ window.__ModuleLoader__.load({
               onClick: toggleFullscreen,
             }, icon(fullscreen ? 'collapse' : 'expand', 15)))),
         React.createElement('div', { className: 'dsh-vnc-stage' },
-          React.createElement('div', { ref: hostRef, className: 'dsh-vnc-canvas' }),
+          // `tabIndex` is what makes Ctrl+V reach the remote side: a `paste` event
+          // is dispatched to the focused element, and a plain `div` is not
+          // focusable, so without it the listener above never fires and pasting
+          // silently does nothing.
+          React.createElement('div', { ref: hostRef, className: 'dsh-vnc-canvas', tabIndex: 0 }),
           prompt !== null
             ? React.createElement('div', { className: 'dsh-vnc-overlay' },
                 React.createElement('form', {

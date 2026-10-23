@@ -338,7 +338,11 @@ async function mountPage(options = {}) {
     fetch: fetchImpl,
     isSecureContext: true,
   };
-  const navigator = { clipboard: { readText: async () => "from-clipboard" } };
+  // `clipboard: undefined` models an insecure context (plain HTTP from a LAN
+  // address), where the API is absent rather than merely unpermitted.
+  const navigator = "clipboard" in options
+    ? (options.clipboard === undefined ? {} : { clipboard: options.clipboard })
+    : { clipboard: { readText: async () => "from-clipboard" } };
 
   // Platform timers the bundle may schedule — the list's poll — captured so a
   // test fires them on demand instead of waiting for wall-clock time.
@@ -768,6 +772,33 @@ test("pastes the local clipboard through the viewer", async () => {
   await page.settle();
   assert.equal(rfb.pasted, "from-clipboard");
   assert.match(page.runtime.text(), /已粘贴剪贴板内容/u);
+});
+
+test("the viewer canvas is focusable, so Ctrl+V reaches the remote side", async () => {
+  // A `paste` event is dispatched to the focused element. A plain `div` cannot
+  // take focus, so without `tabindex` the listener the page installs on it never
+  // fires and pasting silently does nothing — which is exactly what a user sees
+  // as "copy and paste does not work".
+  const page = await mountPage();
+  await page.settle();
+  const rfb = page.viewer();
+  rfb.emit("connect", {});
+  const canvas = page.runtime.find((node) => node.props?.className === "dsh-vnc-canvas");
+  assert.ok(canvas !== null && canvas !== undefined, "the canvas exists");
+  assert.equal(canvas.props.tabIndex, 0, "the canvas can take focus");
+});
+
+test("pasting with no Clipboard API says the address is not secure", async () => {
+  // Over plain HTTP from a LAN address `navigator.clipboard` does not exist at
+  // all; the button must explain that rather than claim a read failed.
+  const page = await mountPage({ clipboard: undefined });
+  await page.settle();
+  const rfb = page.viewer();
+  rfb.emit("connect", {});
+  page.findByLabel("粘贴剪贴板").props.onClick();
+  await page.settle();
+  assert.equal(rfb.pasted, null, "nothing was pasted");
+  assert.match(page.runtime.text(), /HTTPS|localhost|不提供剪贴板/u);
 });
 
 test("keeps every toolbar control labeled and correctly disabled", async () => {
