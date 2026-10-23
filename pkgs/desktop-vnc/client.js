@@ -1510,11 +1510,15 @@ window.__ModuleLoader__.load({
             const text = event?.clipboardData?.getData?.('text/plain')
             if (typeof text !== 'string' || text === '') return
             event.preventDefault()
-            try {
-              rfb.clipboardPasteFrom(text)
-            } catch (error) {
+            // Same reason as the toolbar button: the RFB clipboard is ISO 8859-1
+            // only here, so the Host types it instead. This path needs no
+            // `navigator.clipboard`, which is why it works over plain HTTP.
+            const fetchImpl = typeof window !== 'undefined' && typeof window.fetch === 'function'
+              ? window.fetch.bind(window)
+              : fetch
+            void typeIntoInstance(fetchImpl, instanceId, text).catch((error) => {
               console.warn('desktop-vnc: sending the clipboard to the remote side failed', error)
-            }
+            })
           }
           const container = hostRef.current
           container?.addEventListener?.('paste', onPaste)
@@ -1637,12 +1641,15 @@ window.__ModuleLoader__.load({
             return
           }
           try {
+            // Exactly one path, never both: the Host typing is what survives UTF-8,
+            // and following it with `clipboardPasteFrom` would paste the text a
+            // second time through the ISO 8859-1 channel — duplicated Latin text,
+            // and question marks for the rest.
             await typeIntoInstance(
               typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch.bind(window) : fetch,
-              props.instanceId,
+              instanceId,
               text,
             )
-            rfb.clipboardPasteFrom(text)
             setNote('clipboard.pasted')
           } catch {
             setNote('clipboard.unavailable')

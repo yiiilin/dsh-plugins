@@ -784,7 +784,11 @@ test("pastes the local clipboard through the viewer", async () => {
   rfb.emit("connect", {});
   page.findByLabel("粘贴剪贴板").props.onClick();
   await page.settle();
-  assert.equal(rfb.pasted, "from-clipboard");
+  // The text goes to the Host, which types it: the RFB clipboard is ISO 8859-1
+  // only on this x11vnc, so pasting through it would mangle anything else.
+  const patched = page.requests.filter((request) => request.method === "PATCH");
+  assert.equal(patched.length, 1, "the Host is asked to type once");
+  assert.equal(rfb.pasted, null, "the VNC clipboard path is not used");
   assert.match(page.runtime.text(), /已粘贴剪贴板内容/u);
 });
 
