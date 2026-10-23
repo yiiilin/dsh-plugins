@@ -21,6 +21,19 @@ permission control (the read-only / full-access selector). It is rendered in
 controls (28px tall, host radius and focus ring) and never competes for the
 `conversation.input.permission` seat, which is a single-occupant slot.
 
+**It gives way to the Bot surface.** The `ds-bot` bundle replaces the composer in
+its Bot interface and shadows the permission control, the plan toggle and the
+model picker into nothing; delegate mode is a main agent's permission switch, so
+it withdraws with them and no longer hangs beside a Bot's own input. The switch
+returns on a plain Agent Session opened *inside* the Bot surface, because ds-bot
+withdraws its whole conversation group there and the standard composer is the one
+on screen. The test is "does ds-bot's composer own this toolbar slot", not "is the
+Bot surface showing": it reads ds-bot's own entry in
+`conversation.input.left` and follows the slot's own mutation event, so a surface
+switch removes and restores the control in the same turn without a reload.
+`localStorage` cannot serve as that signal — ds-bot's Bot/Agent choice is written
+there, and a write from the same page fires no `storage` event.
+
 The switch states a condition — delegated writes on or off — rather than
 offering two named modes. Its label and both state words come from the Client
 locale dictionary, so the control is translated instead of showing a raw policy

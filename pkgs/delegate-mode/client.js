@@ -25,6 +25,36 @@ window.__ModuleLoader__.load({
       unsupported: 'This preset has no directly callable subagent tool.',
     }
 
+    // The toolbar slot this selector shares with ds-bot, and the entry ds-bot
+    // registers there while its own Bot composer is mounted: a
+    // `conversation.input.left` shadow registered as `{ id: 'bot-plus' }` in
+    // ds-bot 0.2.1 (`client.js:18646`, in its `installConversation` group).
+    // The group is mounted and disposed by ds-bot's surface store, so the entry's
+    // presence is exactly "a Bot composer owns this slot right now".
+    //
+    // A Bot's composer has no permission control at all — ds-bot shadows
+    // `conversation.input.permission`, `input.plan` and `input.model` into nothing —
+    // and delegate mode is a main agent's permission switch, so it withdraws with
+    // the rest of them. It comes back for a plain Agent Session opened *inside* the
+    // Bot surface: ds-bot withdraws its whole conversation group there, so the
+    // standard composer is the one on screen and the switch belongs on it.
+    //
+    // If ds-bot renames or drops that id this check simply stops matching, and the
+    // switch is shown again: the failure lands on "shown", the visible side, rather
+    // than on a control nobody can find again.
+    const BOT_COMPOSER_SLOT = 'conversation.input.left'
+    const BOT_COMPOSER_ENTRY = 'bot-plus'
+
+    /** Whether ds-bot's own composer currently occupies the shared toolbar slot. */
+    function botComposerMounted(slots) {
+      if (typeof slots?.entries !== 'function') return false
+      try {
+        return slots.entries(BOT_COMPOSER_SLOT).some((entry) => entry?.options?.id === BOT_COMPOSER_ENTRY)
+      } catch {
+        return false
+      }
+    }
+
     function createRpc(caller, shared) {
       const call = async (op, sessionId, extra = {}, signal) => {
         let carrier
@@ -48,16 +78,29 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function createSelector(t, rpc, connection, sessions) {
+    function createSelector(t, rpc, connection, sessions, slots) {
       return function ModeSelector(props) {
         if (typeof props.useSession !== 'function') return null
         const running = props.useSession((state) => state.running)
         const removed = props.useSession((state) => state.removed)
         const worker = props.useSession((state) => state.subagent !== null)
+        // Read at render rather than only from the subscription: ds-bot's entry may
+        // already be there before this component first renders.
+        const [botComposer, setBotComposer] = React.useState(botComposerMounted(slots))
+        React.useEffect(() => {
+          if (typeof slots?.subscribe !== 'function') return undefined
+          // ds-bot mounts and disposes that entry when the surface changes, and a
+          // slot mutation is what announces it. Subscribing is the only way to hear
+          // it in this page: the Bot/Agent switch is written to localStorage, and a
+          // write from the same page fires no `storage` event.
+          const sync = () => setBotComposer(botComposerMounted(slots))
+          sync()
+          return slots.subscribe(BOT_COMPOSER_SLOT, sync)
+        }, [])
         const [state, setState] = React.useState({ sessionId: props.sessionId, policy: null, saving: false, error: null })
         const active = React.useRef(null)
         React.useEffect(() => {
-          if (worker || removed) return
+          if (worker || removed || botComposer) return
           const life = { seq: 0, live: true, saving: false, controller: null }
           active.current = life
           const refresh = async (keepError = false) => {
@@ -94,8 +137,8 @@ window.__ModuleLoader__.load({
             if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible)
             if (typeof window !== 'undefined') window.removeEventListener('focus', onVisible)
           }
-        }, [props.sessionId, running, worker, removed])
-        if (worker || removed) return null
+        }, [props.sessionId, running, worker, removed, botComposer])
+        if (worker || removed || botComposer) return null
         const current = state.sessionId === props.sessionId ? state : { policy: null, saving: false, error: null }
         const disabled = running || current.saving || !current.policy || current.policy.worker
         const save = async (mode) => {
@@ -158,11 +201,11 @@ window.__ModuleLoader__.load({
       ctx.effect(() => ctx.locale.register(NS, { zh: ZH_DICT, en: EN_DICT }), 'delegate-mode: locale')
       ctx.effect(() => installStyle(), 'delegate-mode: stylesheet')
       const rpc = createRpc(ctx.connection.rpc, Reflect.has(ctx.connection, 'generation'))
-      const Selector = createSelector(ctx.locale.bind(NS), rpc, ctx.connection, ctx.sessions)
+      const Selector = createSelector(ctx.locale.bind(NS), rpc, ctx.connection, ctx.sessions, ctx.slots)
       ctx.effect(() => ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
         name: 'conversation.input.left', id: 'delegate-mode', order: 40, locale: NS, inject: () => ({}),
       }, Selector)), 'delegate-mode: selector')
     }
-    return { name: 'delegate-mode-client', inject: ['connection', 'locale', 'slots', 'sessions'], apply, __test: { createRpc, createSelector } }
+    return { name: 'delegate-mode-client', inject: ['connection', 'locale', 'slots', 'sessions'], apply, __test: { createRpc, createSelector, botComposerMounted, BOT_COMPOSER_ENTRY, BOT_COMPOSER_SLOT } }
   },
 })
