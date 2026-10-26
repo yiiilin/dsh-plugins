@@ -28,6 +28,9 @@ window.__ModuleLoader__.load({
 			memory: "内存",
 			"net.up": "上行 ",
 			"net.down": "下行 ",
+			"net.up.short": "↑",
+			"net.down.short": "↓",
+			"cpu.short": "CPU",
 			network: "网络：",
 			disk: "硬盘",
 			"disk.count": "{count} 个挂载点",
@@ -91,6 +94,9 @@ window.__ModuleLoader__.load({
 			memory: "Memory",
 			"net.up": "Up ",
 			"net.down": "Down ",
+			"net.up.short": "↑",
+			"net.down.short": "↓",
+			"cpu.short": "CPU",
 			network: "Network: ",
 			disk: "Disk",
 			"disk.count": "{count} mounted filesystem(s)",
@@ -204,19 +210,35 @@ window.__ModuleLoader__.load({
    renders .dwd-serverStatusRail instead) and any footer without the card keep
    their original single-line layout. */
 :has(> [data-slot="sidebar.footer.action"] > .dwd-serverStatus){flex-wrap:wrap}
-.dwd-serverStatus{box-sizing:border-box;width:100%;margin:0 0 8px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.14));border-radius:8px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1,#fff));color:var(--dsw-alias-label-primary,#111827)}
-.dwd-serverStatusHeader{display:flex;align-items:center;gap:6px;min-height:18px;color:var(--dsw-alias-label-secondary,#57534e);font-size:11px;font-weight:600;line-height:16px}
+.dwd-serverStatus{box-sizing:border-box;width:100%;margin:0 0 6px;padding:0;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.14));border-radius:8px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1,#fff));color:var(--dsw-alias-label-primary,#111827)}
+/* The whole card is one details element: the summary is the closed, one-line
+   reading (CPU, memory, up, down); opening it reveals the original layout —
+   the "服务器" title, the metric grid and the disk section — unchanged. */
+.dwd-serverStatusHeader{display:flex;align-items:center;gap:7px;min-height:16px;padding:6px 8px;color:var(--dsw-alias-label-secondary,#57534e);font-size:11px;font-weight:600;line-height:14px;list-style:none;cursor:pointer}
+.dwd-serverStatusHeader::-webkit-details-marker{display:none}
+.dwd-serverStatusHeader::after{content:"›";flex:none;margin-left:auto;color:var(--dsw-alias-label-tertiary,#78716c);font-size:11px;line-height:14px;transition:transform .12s ease}
+.dwd-serverStatus[open]>.dwd-serverStatusHeader::after{transform:rotate(90deg)}
+.dwd-serverStatusTitle{flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dwd-serverStatus[open]>.dwd-serverStatusHeader>.dwd-serverSummaryMetrics,
+.dwd-serverStatus:not([open])>.dwd-serverStatusHeader>.dwd-serverStatusTitle{display:none}
+.dwd-serverSummaryMetrics{display:flex;align-items:baseline;gap:4px;min-width:0;flex:0 1 auto;white-space:nowrap;overflow:hidden}
+/* The summary is a single row inside a ~240px sidebar, so nothing in it may
+   shrink: a flexible basis truncates the numbers themselves ("362 KB/s" ->
+   "3…") instead of ever dropping a metric. */
+.dwd-serverSummaryMetrics .dwd-serverMetricLabel{flex:none;font-size:10px}
+.dwd-serverSummaryMetrics .dwd-serverMetricValue{flex:none;overflow:visible;font-size:11px}
 .dwd-serverDot{width:7px;height:7px;flex:none;border-radius:50%;background:var(--dsw-alias-label-tertiary,#a8a29e)}
 .dwd-serverStatus[data-state="ok"] .dwd-serverDot{background:#16a34a}
 .dwd-serverStatus[data-state="error"] .dwd-serverDot{background:#dc2626}
 .dwd-serverStatus[data-state="loading"] .dwd-serverDot{background:#d97706}
-.dwd-serverGrid{display:flex;flex-direction:column;gap:5px;margin-top:8px;min-width:0}
+.dwd-serverGrid{display:flex;flex-direction:column;gap:3px;margin-top:5px;min-width:0}
 .dwd-serverMetricRow{display:flex;align-items:baseline;gap:7px;min-width:0;white-space:nowrap;overflow:hidden}
-.dwd-serverMetricLabel{flex:none;color:var(--dsw-alias-label-tertiary,#78716c);font-size:10px;line-height:16px}
-.dwd-serverMetricValue{display:inline-block;min-width:0;flex:0 1 auto;color:var(--dsw-alias-label-primary,#111827);font-size:12px;font-weight:600;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dwd-serverMetricLabel{flex:none;color:var(--dsw-alias-label-tertiary,#78716c);font-size:10px;line-height:14px}
+.dwd-serverMetricValue{display:inline-block;min-width:0;flex:0 1 auto;color:var(--dsw-alias-label-primary,#111827);font-size:12px;font-weight:600;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dwd-serverMetricValueNetwork{font-size:11px;font-weight:500}
 .dwd-serverMetricValue[data-tone="warn"]{color:#b45309}
 .dwd-serverMetricValue[data-tone="critical"]{color:#b91c1c}
+.dwd-serverGrid{display:flex;flex-direction:column;gap:3px;padding:0 8px 6px;min-width:0}
 .dwd-serverDiskSection{display:flex;flex-direction:column;gap:3px;margin-top:1px;min-width:0}
 .dwd-serverDiskHeading{display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-width:0;line-height:14px}
 .dwd-serverDiskCount{flex:none;color:var(--dsw-alias-label-tertiary,#78716c);font-size:9px;line-height:14px}
@@ -286,6 +308,12 @@ window.__ModuleLoader__.load({
 			}
 			const amount = scaled >= 10 ? scaled.toFixed(0) : scaled.toFixed(1);
 			return `${amount} ${units[unit]}`;
+		}
+
+		/* Same scale, no space before the unit: the one-line summary in a narrow
+		   sidebar needs every pixel, and "2.2 MB/s" reads the same as "2.2MB/s". */
+		function formatRateCompact(value) {
+			return formatRate(value).replace(" ", "");
 		}
 
 		function formatBytes(value) {
@@ -367,13 +395,25 @@ window.__ModuleLoader__.load({
 							? t("disk.none")
 							: null;
 				return React.createElement(
-					"section",
+					"details",
 					{ className: "dwd-serverStatus", "data-state": state, role: "region", "aria-label": t("server.status") },
 					React.createElement(
-						"div",
+						"summary",
 						{ className: "dwd-serverStatusHeader" },
 						React.createElement("span", { className: "dwd-serverDot", "aria-hidden": "true" }),
-						t("server"),
+						React.createElement("span", { className: "dwd-serverStatusTitle" }, t("server")),
+						React.createElement(
+							"span",
+							{ className: "dwd-serverSummaryMetrics" },
+							React.createElement("span", { className: "dwd-serverMetricLabel" }, t("cpu.short")),
+							React.createElement("b", { className: "dwd-serverMetricValue", "data-tone": metricTone(cpu?.percent) }, formatPercent(cpu?.percent)),
+							React.createElement("span", { className: "dwd-serverMetricLabel" }, t("memory")),
+							React.createElement("b", { className: "dwd-serverMetricValue", "data-tone": metricTone(memory?.percent) }, formatPercent(memory?.percent)),
+							React.createElement("span", { className: "dwd-serverMetricLabel", "aria-label": t("net.up"), title: t("net.up") }, t("net.up.short")),
+							React.createElement("span", { className: "dwd-serverMetricValue dwd-serverMetricValueNetwork" }, formatRateCompact(network?.txBytesPerSecond)),
+							React.createElement("span", { className: "dwd-serverMetricLabel", "aria-label": t("net.down"), title: t("net.down") }, t("net.down.short")),
+							React.createElement("span", { className: "dwd-serverMetricValue dwd-serverMetricValueNetwork" }, formatRateCompact(network?.rxBytesPerSecond)),
+						),
 					),
 					React.createElement(
 						"div",
@@ -397,19 +437,22 @@ window.__ModuleLoader__.load({
 							? null
 							: React.createElement(
 									"div",
-									{ className: "dwd-serverDiskSection" },
+									{ className: "dwd-serverDiskDisclosure" },
 									React.createElement(
 										"div",
 										{ className: "dwd-serverDiskHeading" },
 										React.createElement("span", { className: "dwd-serverMetricLabel" }, t("disk")),
 										React.createElement("span", { className: "dwd-serverDiskCount" }, t("disk.count", { count: filesystems.length })),
 									),
-									diskNotice === null
-										? null
-										: React.createElement("div", { className: "dwd-serverDiskEmpty", role: disks?.partial === true ? "status" : undefined }, diskNotice),
-								filesystems.length === 0
-										? null
-										: React.createElement(
+									React.createElement(
+										"div",
+										{ className: "dwd-serverDiskSection" },
+										diskNotice === null
+											? null
+											: React.createElement("div", { className: "dwd-serverDiskEmpty", role: disks?.partial === true ? "status" : undefined }, diskNotice),
+									filesystems.length === 0
+											? null
+											: React.createElement(
 												"ul",
 												{ className: "dwd-serverDiskList", "aria-label": t("disk") },
 												filesystems.map((filesystem, index) => {
@@ -430,6 +473,7 @@ window.__ModuleLoader__.load({
 													);
 												}),
 											),
+									),
 								),
 					),
 					error === null ? null : React.createElement("div", { className: "dwd-serverError", role: "alert" }, error),
