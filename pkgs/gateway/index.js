@@ -19,6 +19,7 @@
  * @module @yiln-dsh/dsh-gateway
  */
 
+import { spawn } from 'node:child_process'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import z from '@deepseek-ai/schemastery'
@@ -26,6 +27,7 @@ import { createAdmin } from './lib/admin.js'
 import { createAuth } from './lib/auth/session.js'
 import { sendPwaAsset } from './lib/auth/pwa.js'
 import { startEntry } from './lib/entry.js'
+import { createProfileProcesses } from './lib/profile-process.js'
 import { createTunnelAgent } from './lib/federation/agent.js'
 import { createTunnelHub, createTunnelServer, tokenOf, TUNNEL_PATH } from './lib/federation/hub.js'
 import { defaultSkillsRoot, readInventory } from './lib/inventory.js'
@@ -88,11 +90,35 @@ export const Config = z.object({
   systemdUnit: z.union([z.const('auto'), z.const(''), z.const('dsh-daemon')]).default('auto'),
   /** `system` scope needs root; `user` scope works for an unprivileged daemon. */
   systemdScope: z.union([z.const('system'), z.const('user')]).default('system'),
+
+  /**
+   * Port pool for `local` environments this node spawns itself, `[low, high]`
+   * inclusive. A port that already answers belongs to somebody else and is skipped,
+   * never adopted, so the pool only has to be clear of this node's other listeners.
+   */
+  localProfilePortRange: z.array(z.number()).default([57_000, 57_099]),
 })
 
 export function apply(ctx, config) {
   const processStartMs = Date.now() - Math.round(process.uptime() * 1000)
   const homeDir = resolve(config.homeDir === '' ? process.env.DSH_HOME ?? '/root/.dsh' : config.homeDir)
+
+  /**
+   * Spawn one local profile child.
+   *
+   * `stdio` keeps the child's own streams reachable by the table that watches for the
+   * launch line; `detached: false` keeps it in this process group so a daemon shutdown
+   * reaches it.
+   *
+   * @param {{ command: string, args: string[], env: object, cwd: string }} spec
+   * @returns {import('node:child_process').ChildProcess}
+   */
+  const spawnChild = (spec) => spawn(spec.command, spec.args, {
+    cwd: spec.cwd,
+    env: spec.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: false,
+  })
   const registryPath = resolve(
     config.registryPath === '' ? join(homeDir, 'daemon', 'environments.json') : config.registryPath,
   )
@@ -380,9 +406,66 @@ export function apply(ctx, config) {
     },
   }
 
-  // Which profile this process serves decides where its composition lives.
   /** Result of the systemd attempt, reported on the panel. */
   let systemdState = { status: 'not attempted' }
+
+  /**
+   * The local profiles this node runs itself.
+   *
+   * Each `local` environment record names a profile and a port; this table spawns the
+   * child, reads the launch token from its stdout, and exchanges that token for the
+   * cookie the browser could never present — the same exchange `embeddedRoot` performs
+   * for this process's own harness, done once per local environment.
+   */
+  const localProfiles = createProfileProcesses({
+    spawn: (spec) => spawnChild(spec),
+    execPath: process.execPath,
+    script: process.argv[1],
+    dshHome: homeDir,
+    cwd: process.cwd(),
+    // The Loader validates `config` through `Config`, but a direct caller may pass
+    // nothing, so the pool default is applied here too.
+    portRange: config.localProfilePortRange ?? [57_000, 57_099],
+    readFile: (path) => readFile(path, 'utf8'),
+    log: (message) => logger.info(message),
+    warn: (message) => logger.warn(message),
+  })
+
+  /** Cached browser-facing cookie per local environment id. */
+  const localCookies = new Map()
+
+  /**
+   * Resolve one environment id to a loopback upstream, or undefined when it is not a
+   * local environment.
+   *
+   * The cookie is exchanged lazily and cached until the child is replaced: a restart
+   * mints a new launch token, so `refresh()` drops the cache and the next request
+   * re-exchanges.
+   */
+  const localProfileFor = (id) => {
+    const environment = registry.find(id)
+    if (environment === undefined || environment.kind !== 'local') return undefined
+    return {
+      port: () => environment.port,
+      cookie: () => localCookies.get(id),
+      refresh: () => localCookies.delete(id),
+      async ensure() {
+        const ready = await localProfiles.ensure(environment.profile, environment.port)
+        if (localCookies.has(id)) return ready
+        // `fetch` follows the daemon's own loopback path; the child's launch URL carries
+        // the token that mints the session.
+        const answer = await fetch(ready.url, { redirect: 'manual' })
+        const raw = answer.headers.getSetCookie?.() ?? []
+        const found = raw
+          .map((value) => /^(dsh-auth-[A-Za-z0-9_-]+=[^;]+)/u.exec(value)?.[1])
+          .find(Boolean)
+        if (found === undefined) logger.warn(`daemon: local profile ${id} answered no session cookie`)
+        else localCookies.set(id, found)
+        return ready
+      },
+    }
+  }
+
 
   /**
    * Install a unit for this process when that would help.
@@ -577,6 +660,7 @@ export function apply(ctx, config) {
           }
           : undefined,
         tunnel: { path: TUNNEL_PATH, server: tunnelServer, tokenOf, hub },
+        localProfile: localProfileFor,
         notFound,
       })
       logger.info(`daemon: listening on ${config.host}:${entry.port}`)
@@ -592,6 +676,9 @@ export function apply(ctx, config) {
       hub.close()
       await entry?.close()
       entry = undefined
+      // A child outliving the daemon would keep its port and its half of one session
+      // registry alive with nobody routing to it.
+      await localProfiles.stopAll()
     }
   })
 }

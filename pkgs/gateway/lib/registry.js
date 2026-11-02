@@ -1,14 +1,20 @@
 /**
  * The environment registry.
  *
- * In a federation there is no child process to describe: an environment is another
- * machine's dsh, reachable only while its tunnel is up. So a record holds no port, no
- * profile name and no filesystem path — those belong to the edge and are discovered
- * from it, not configured here.
+ * Two kinds of environment are recorded here, and the difference is where its dsh
+ * process lives:
  *
- * What is configured is the token. It is the environment's identity: an edge presenting
- * it *is* that environment. `machineId` only helps a human tell two similarly named hosts
- * apart, and warns when a machine is enrolled twice.
+ * - `remote` — another machine's dsh, reachable only while its tunnel is up. The record
+ *   holds no port, no profile name and no filesystem path: those belong to the edge and
+ *   are discovered from it, not configured here. What identifies it is the token: an
+ *   edge presenting it *is* that environment. `machineId` only helps a human tell two
+ *   similarly named hosts apart, and warns when a machine is enrolled twice.
+ * - `local` — a profile this node runs itself, spawned and supervised by the daemon.
+ *   Its record carries the `profile` to launch and the loopback `port` it listens on,
+ *   and needs no token: it never crosses a tunnel, so nothing has to authenticate it.
+ *
+ * A missing `kind` reads as `remote`, which is what every record written before local
+ * profiles existed means. That keeps an existing `environments.json` valid unchanged.
  *
  * @module @yiln-dsh/dsh-gateway/registry
  */
@@ -32,7 +38,16 @@ export const RESERVED_IDS = new Set([
   'admin', 'api', 'assets', 'main', 'portal', 'tunnel', 'self', 'static', 'auth',
 ])
 
-const FIELDS = ['id', 'label', 'token', 'hostname', 'machineId', 'lastSeen', 'enabled']
+/**
+ * A profile name becomes an environment id and a directory name, so it is held to the
+ * same shape dsh itself accepts: no separators, no relative segments.
+ */
+export const PROFILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u
+
+const FIELDS = ['id', 'kind', 'label', 'token', 'hostname', 'machineId', 'lastSeen', 'enabled', 'profile', 'port']
+
+/** The two kinds an environment record may declare. */
+export const KINDS = ['local', 'remote']
 
 /**
  * Validate one record.
@@ -53,15 +68,44 @@ export function normalizeEnvironment(raw) {
     throw new TypeError(`daemon: environment id must match ${ID_PATTERN}, got ${JSON.stringify(id)}`)
   }
   if (RESERVED_IDS.has(id)) throw new TypeError(`daemon: environment id ${JSON.stringify(id)} is reserved`)
-  const token = raw.token
-  if (typeof token !== 'string' || token.length < 32) {
-    throw new TypeError('daemon: environment token must be at least 32 characters')
+  // Absent `kind` is a record from before local profiles existed: it is a remote edge.
+  const kind = raw.kind === undefined ? 'remote' : raw.kind
+  if (!KINDS.includes(kind)) {
+    throw new TypeError(`daemon: environment kind must be one of ${KINDS.join(', ')}, got ${JSON.stringify(kind)}`)
   }
   const environment = {
     id,
+    kind,
     label: raw.label === undefined ? id : String(raw.label),
-    token,
     enabled: raw.enabled === undefined ? true : raw.enabled === true,
+  }
+  if (kind === 'local') {
+    // A local environment is defined by what to launch and where it listens; a token
+    // would authenticate a hop that does not exist.
+    const profile = raw.profile
+    if (typeof profile !== 'string' || !PROFILE_PATTERN.test(profile)) {
+      throw new TypeError(
+        `daemon: local environment ${JSON.stringify(id)} needs a profile matching ${PROFILE_PATTERN}, got ${JSON.stringify(profile)}`,
+      )
+    }
+    const port = raw.port
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+      throw new TypeError(`daemon: local environment ${JSON.stringify(id)} needs a port 1-65535, got ${JSON.stringify(port)}`)
+    }
+    if (raw.token !== undefined) {
+      throw new TypeError(`daemon: local environment ${JSON.stringify(id)} must not carry a token`)
+    }
+    environment.profile = profile
+    environment.port = port
+  } else {
+    const token = raw.token
+    if (typeof token !== 'string' || token.length < 32) {
+      throw new TypeError('daemon: environment token must be at least 32 characters')
+    }
+    if (raw.profile !== undefined || raw.port !== undefined) {
+      throw new TypeError(`daemon: remote environment ${JSON.stringify(id)} must not carry a profile or port`)
+    }
+    environment.token = token
   }
   if (raw.hostname !== undefined) environment.hostname = String(raw.hostname)
   if (raw.machineId !== undefined) environment.machineId = String(raw.machineId)
@@ -83,11 +127,32 @@ export function parseRegistry(value) {
   const environments = value.environments.map(normalizeEnvironment)
   const seen = new Set()
   const tokens = new Map()
+  const ports = new Map()
+  const profiles = new Map()
   for (const environment of environments) {
     if (seen.has(environment.id)) {
       throw new TypeError(`daemon: duplicate environment id ${JSON.stringify(environment.id)}`)
     }
     seen.add(environment.id)
+    if (environment.kind === 'local') {
+      // Two local environments on one port would proxy to whichever bound first; two
+      // naming one profile would spawn it twice and split one session registry.
+      const portOwner = ports.get(environment.port)
+      if (portOwner !== undefined) {
+        throw new TypeError(
+          `daemon: local environments ${JSON.stringify(portOwner)} and ${JSON.stringify(environment.id)} share port ${environment.port}`,
+        )
+      }
+      ports.set(environment.port, environment.id)
+      const profileOwner = profiles.get(environment.profile)
+      if (profileOwner !== undefined) {
+        throw new TypeError(
+          `daemon: local environments ${JSON.stringify(profileOwner)} and ${JSON.stringify(environment.id)} both run profile ${JSON.stringify(environment.profile)}`,
+        )
+      }
+      profiles.set(environment.profile, environment.id)
+      continue
+    }
     // One token, one environment: sharing would make an edge's identity depend on
     // insertion order.
     const owner = tokens.get(environment.token)

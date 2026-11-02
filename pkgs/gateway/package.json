@@ -1,9 +1,12 @@
 {
   "name": "@yiln-dsh/dsh-gateway",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": false,
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "dsh": ">=0.2.1-0 <0.3.0-0"
+  },
   "description": "Single entry, authentication, profile routing and SSH deployment for a DeepSeek Harness host",
   "files": [
     "client.js",

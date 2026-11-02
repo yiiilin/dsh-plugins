@@ -67,7 +67,7 @@ are unchanged, so an existing profile only needs new package addresses — see
 | [`pkgs/delete-session`](pkgs/delete-session) | `dsh-delete-session` | Confirmed single/batch deletion with subagent cascade and guarded persistence paths. |
 | [`pkgs/git-graph`](pkgs/git-graph) | `dsh-git-graph` | Right-sidebar Git history, working-tree changes and file diffs. |
 | [`pkgs/session-list-cache`](pkgs/session-list-cache) | `session-list-cache` | Coalesces and caches concurrent session enumeration. |
-| [`pkgs/gateway`](pkgs/gateway) | `gateway` | Federation gateway: edges dial in over a reverse tunnel, and its panel lists and switches between them. |
+| [`pkgs/gateway`](pkgs/gateway) | `gateway` | Federation gateway: edges dial in over a reverse tunnel, local profiles are spawned in place, and its panel lists and switches between both. |
 | [`pkgs/supervisor`](pkgs/supervisor) | `supervisor` | Systemd management, server metrics and interrupted-session recovery. |
 | [`pkgs/delegate-mode`](pkgs/delegate-mode) | `delegate-mode` | Per-session `normal` / `delegate-writes` permissions with pruned catalogs and separate system prompts. |
 | [`pkgs/tool-restrict-presets`](pkgs/tool-restrict-presets) | `tool-restrict-presets` | Applies `agent.ctx.tools.restrict({ allow: [] })` to every Agent running a listed Agent Preset. |

@@ -111,13 +111,16 @@ export function scopeLocation(location, prefix) {
  * @param options.tunnel - `{ path, server, tokenOf, hub }`: where edges connect, the
  *   WebSocket server that accepts them, how a token is read, and the hub that proxies
  *   requests into them.
+ * @param options.localProfile - resolves a `local` environment to a loopback upstream:
+ *   `{ port, cookie, ensure, refresh }` per environment id, or undefined when the id is
+ *   not a local one. Absent means this node runs no local profiles.
  * @param options.notFound - writes a response for an unroutable request.
  * @returns the listening port and a close function.
  */
-export function startEntry({ host, port, listEnvironments, local, root, tunnel, notFound }) {
+export function startEntry({ host, port, listEnvironments, local, root, tunnel, localProfile, notFound }) {
   const server = createServer((req, res) => {
     const url = req.url ?? '/'
-    void handleHttp({ req, res, url, listEnvironments, local, root, tunnel, notFound }).catch((error) => {
+    void handleHttp({ req, res, url, listEnvironments, local, root, tunnel, localProfile, notFound }).catch((error) => {
       if (!res.headersSent) {
         res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' })
         res.end(`daemon: request failed: ${error?.message ?? error}\n`)
@@ -147,6 +150,28 @@ export function startEntry({ host, port, listEnvironments, local, root, tunnel, 
     }
 
     const routed = routeEnvironment(url, listEnvironments().map((entry) => entry.id))
+    // A local profile answers on loopback, so its mux socket is proxied the same way its
+    // HTTP is — no tunnel involved. Resolved before the tunnel branch so one id can
+    // never be both.
+    if (routed !== undefined && localProfile !== undefined) {
+      const upstream = localProfile(routed.id)
+      if (upstream !== undefined) {
+        void upstream.ensure().then(() => {
+          proxyUpgrade({
+            req,
+            socket,
+            head,
+            port: upstream.port(),
+            path: routed.path,
+            cookie: upstream.cookie(),
+          })
+        }).catch((error) => {
+          socket.end(`HTTP/1.1 503 Service Unavailable\r\nconnection: close\r\n\r\n`)
+          void error
+        })
+        return
+      }
+    }
     if (routed !== undefined && tunnel !== undefined) {
       if (!tunnel.hub.proxyUpgrade(routed.id, req, socket, head, routed.path)) {
         socket.end('HTTP/1.1 503 Service Unavailable\r\nconnection: close\r\n\r\n')
@@ -191,7 +216,7 @@ export function startEntry({ host, port, listEnvironments, local, root, tunnel, 
   })
 }
 
-async function handleHttp({ req, res, url, listEnvironments, local, root, tunnel, notFound }) {
+async function handleHttp({ req, res, url, listEnvironments, local, root, tunnel, localProfile, notFound }) {
   // Daemon-owned paths win: the portal, the login endpoints and `/admin` must
   // never be reachable through a profile whose id happens to look similar.
   let handled
@@ -229,6 +254,29 @@ async function handleHttp({ req, res, url, listEnvironments, local, root, tunnel
   }
 
   const routed = routeEnvironment(url, listEnvironments().map((entry) => entry.id))
+  if (routed !== undefined && localProfile !== undefined) {
+    const upstream = localProfile(routed.id)
+    if (upstream !== undefined) {
+      try {
+        await upstream.ensure()
+      } catch (error) {
+        // A profile that cannot start is a state to report, not a blank 404.
+        res.writeHead(503, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+        res.end(offlinePage(routed.id, String(error?.message ?? error)))
+        return
+      }
+      proxyRequest({
+        req,
+        res,
+        port: upstream.port(),
+        path: routed.path,
+        prefix: `/${routed.id}`,
+        cookie: upstream.cookie(),
+        refresh: upstream.refresh,
+      })
+      return
+    }
+  }
   if (routed !== undefined) {
     if (tunnel !== undefined && tunnel.hub.proxy(routed.id, req, res, routed.path)) return
     // Offline is a state, not a deletion: say which environment is unreachable
@@ -259,11 +307,23 @@ async function handleHttp({ req, res, url, listEnvironments, local, root, tunnel
 }
 
 /** A page for an environment that has no tunnel right now. */
-function offlinePage(id) {
+function offlinePage(id, failure) {
   const safe = String(id).replace(/[<>&"]/gu, (ch) => `&#${ch.codePointAt(0)};`)
-  return `<!doctype html><meta charset="utf-8"><title>${safe} offline</title>`
-    + '<style>body{font:14px system-ui;margin:12vh auto;max-width:34rem;padding:0 1.5rem;color:#444}'
+  const style = '<style>body{font:14px system-ui;margin:12vh auto;max-width:34rem;padding:0 1.5rem;color:#444}'
     + 'code{background:#f4f4f4;padding:.15em .35em;border-radius:3px}</style>'
+  // A local profile that failed to start is a different situation from an edge whose
+  // tunnel is down, and the operator's next move is different too, so the page says
+  // which one this is instead of reusing the tunnel wording.
+  if (failure !== undefined) {
+    const reason = String(failure).replace(/[<>&"]/gu, (ch) => `&#${ch.codePointAt(0)};`)
+    return `<!doctype html><meta charset="utf-8"><title>${safe} 启动失败</title>`
+      + style
+      + `<h1 style="font-size:1.15rem">本机 profile <code>${safe}</code> 启动失败</h1>`
+      + `<p>${reason}</p>`
+      + '<p>环境仍然存在；修好它之后刷新本页即可。</p>'
+  }
+  return `<!doctype html><meta charset="utf-8"><title>${safe} offline</title>`
+    + style
     + `<h1 style="font-size:1.15rem">环境 <code>${safe}</code> 当前离线</h1>`
     + '<p>这台机器上的 dsh 没有连到主节点。它可能关机、断网，或它的 daemon 没有运行。</p>'
     + '<p>环境仍然存在，隧道恢复后这里会自动可用。</p>'

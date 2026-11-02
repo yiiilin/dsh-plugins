@@ -118,7 +118,9 @@ test('a record round-trips and keeps only known fields', () => {
 
 test('an unknown field is rejected, not dropped', () => {
   // A silently ignored field is a configuration that looks applied and is not.
-  assert.throws(() => normalizeEnvironment({ ...sample(), port: 56800 }), /unknown environment field/u)
+  // `port` used to be the example here; it is a real field for local environments now,
+  // so the check uses a name that is still unknown.
+  assert.throws(() => normalizeEnvironment({ ...sample(), wibble: 56800 }), /unknown environment field/u)
 })
 
 test('ids must be safe to put in a URL path', () => {
