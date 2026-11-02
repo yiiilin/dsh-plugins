@@ -50,18 +50,23 @@ function fakeCtx({ presets = new Map(), agents = [], restrict, composedPreset } 
 }
 
 /** A live-Agent stand-in whose own layer accepts exactly one restriction. */
-function fakeAgent(id, ctxId, { restrictable = true } = {}) {
-  const state = { restrictions: 0, lifted: 0, allow: undefined };
+function fakeAgent(id, ctxId, { restrictable = true, served = ["read", "grep", "remember", "hindsight_reflect"] } = {}) {
+  const servedTools = served;
+  const state = { restrictions: 0, lifted: 0, allow: undefined, deny: undefined };
   return {
     session: { id },
     ctx: { id: ctxId, tools: undefined },
     state,
     install() {
       this.ctx.tools = {
+        // The registry answers `schemas(agent)` with what the Agent actually
+        // inherits; a deny list is filtered through it before `restrict()`.
+        schemas: () => servedTools.map((name) => ({ name })),
         restrict: (filter) => {
           if (!restrictable) throw new Error("tools.restrict() requires a scoped context (agent.ctx)");
           state.restrictions += 1;
           state.allow = filter.allow;
+          state.deny = filter.deny;
           return () => {
             state.lifted += 1;
           };
@@ -236,4 +241,116 @@ test("a non-string or empty preset entry is ignored", () => {
   apply(fake.ctx, { presets: ["", null, 7, "mentor", "mentor"] });
 
   assert.equal(agent.state.restrictions, 1, "only the one real id is enforced, once");
+});
+
+// ── per-preset denials ──────────────────────────────────────────────────────
+//
+// The review preset keeps a normal toolset and drops one family. These cases
+// pin the difference from `presets`, which empties the whole surface.
+
+test("a deny-only preset keeps its tools and loses exactly the named ones", () => {
+  const agent = fakeAgent("d1", "scope-d1");
+  agent.install();
+  const presets = new Map([["scope-d1", "arbitrary"]]);
+  const fake = fakeCtx({ presets });
+
+  apply(fake.ctx, { deny: { arbitrary: ["remember", "hindsight_reflect"] } });
+  fake.emit("agent/created", { agent });
+
+  assert.equal(agent.state.restrictions, 1);
+  assert.equal(agent.state.allow, undefined, "the surface is not emptied");
+  assert.deepEqual(agent.state.deny, ["remember", "hindsight_reflect"]);
+});
+
+test("a name the profile does not serve is not passed to restrict()", () => {
+  const agent = fakeAgent("d2", "scope-d2", { served: ["read", "remember"] });
+  agent.install();
+  const presets = new Map([["scope-d2", "arbitrary"]]);
+  const fake = fakeCtx({ presets });
+
+  // `work_journal` is named but this profile mounts nothing of the sort;
+  // restrict() would throw on an unknown name.
+  apply(fake.ctx, { deny: { arbitrary: ["remember", "work_journal"] } });
+  fake.emit("agent/created", { agent });
+
+  assert.deepEqual(agent.state.deny, ["remember"]);
+});
+
+test("a deny list that matches nothing installs no restriction", () => {
+  const agent = fakeAgent("d3", "scope-d3", { served: ["read", "grep"] });
+  agent.install();
+  const presets = new Map([["scope-d3", "arbitrary"]]);
+  const fake = fakeCtx({ presets });
+
+  apply(fake.ctx, { deny: { arbitrary: ["remember"] } });
+  fake.emit("agent/created", { agent });
+
+  assert.equal(agent.state.restrictions, 0, "nothing to deny means no layer at all");
+});
+
+test("an unlisted preset is untouched by another preset's deny list", () => {
+  const agent = fakeAgent("d4", "scope-d4");
+  agent.install();
+  const presets = new Map([["scope-d4", "yiln"]]);
+  const fake = fakeCtx({ presets });
+
+  apply(fake.ctx, { deny: { arbitrary: ["remember"] } });
+  fake.emit("agent/created", { agent });
+
+  assert.equal(agent.state.restrictions, 0, "main sessions keep their memory");
+});
+
+test("leaving a deny-only preset lifts the restriction", () => {
+  const agent = fakeAgent("d5", "scope-d5");
+  agent.install();
+  const presets = new Map([["scope-d5", "arbitrary"]]);
+  const fake = fakeCtx({ presets, agents: [agent] });
+
+  apply(fake.ctx, { deny: { arbitrary: ["remember"] } });
+  fake.emit("agent/created", { agent });
+  assert.equal(agent.state.restrictions, 1);
+
+  presets.set("scope-d5", "yiln");
+  fake.emit("tools/change");
+
+  assert.equal(agent.state.lifted, 1);
+});
+
+test("the empty-surface policy wins when a preset appears in both lists", () => {
+  const agent = fakeAgent("d6", "scope-d6");
+  agent.install();
+  const presets = new Map([["scope-d6", "mentor"]]);
+  const fake = fakeCtx({ presets });
+
+  apply(fake.ctx, { presets: ["mentor"], deny: { mentor: ["remember"] } });
+  fake.emit("agent/created", { agent });
+
+  assert.deepEqual(agent.state.allow, [], "no tools is stronger than some denied");
+  assert.equal(agent.state.deny, undefined);
+});
+
+test("verbose reports the denied names", () => {
+  const agent = fakeAgent("d7", "scope-d7");
+  agent.install();
+  const presets = new Map([["scope-d7", "arbitrary"]]);
+  const fake = fakeCtx({ presets });
+
+  // `recall` is not served here, so the log names only what was actually denied.
+  apply(fake.ctx, { deny: { arbitrary: ["remember", "recall"] }, verbose: true });
+  fake.emit("agent/created", { agent });
+
+  assert.equal(fake.logs.length, 1);
+  assert.match(String(fake.logs[0][1]), /denies remember$/);
+});
+
+test("deny entries that are not string arrays are ignored", () => {
+  const agent = fakeAgent("d8", "scope-d8");
+  agent.install();
+  const presets = new Map([["scope-d8", "arbitrary"]]);
+  const fake = fakeCtx({ presets });
+
+  apply(fake.ctx, { deny: { arbitrary: "remember", other: [null, 7], "": ["read"] } });
+  fake.emit("agent/created", { agent });
+
+  assert.equal(agent.state.restrictions, 0, "a malformed entry is not a policy");
 });

@@ -38,25 +38,43 @@ export const inject = ['tools', 'agents', 'agentPresets']
 export const Config = z.object({
   /** Agent Preset ids whose Agents inherit no model-facing tool at all. */
   presets: z.array(z.string()).default([]),
+  /**
+   * Per-preset tool denials. A preset listed here keeps every inherited tool
+   * except the named ones, which is the difference between "this preset has no
+   * tools" (`presets`) and "this preset has no MEMORY tools".
+   *
+   * Names are matched against the tools the Agent actually inherits, because
+   * `tools.restrict()` rejects a name the profile does not serve: a preset may
+   * list a tool this deployment never mounted.
+   */
+  deny: z.dict(z.array(z.string())).default({}),
   /** Write one informational line per Agent whose preset matched. */
   verbose: z.boolean().default(false).volatile(),
 })
 
 /**
- * Apply the empty allow-list to one Agent when its preset is listed, and lift a
- * previous restriction when it no longer is.
+ * Apply the policy for one Agent's preset, and lift a previous restriction when
+ * that preset no longer matches.
  *
  * The preset is re-resolved on every pass rather than cached, so a blank
  * Session's preset change is honoured: the restriction always reflects the
  * composition the Agent is running now.
  *
+ * Two policies share this one path because they share one lifecycle — an Agent
+ * that leaves the preset must get everything back either way:
+ *
+ * - `emptyPresets` denies the whole inherited surface (`allow: []`).
+ * - `denyByPreset` denies only the named tools, so a preset can keep a normal
+ *   toolset while dropping one family (the review preset drops memory).
+ *
  * @param ctx - the plugin context.
  * @param agent - the live Agent to inspect.
- * @param presets - matched preset ids.
+ * @param emptyPresets - preset ids that inherit no tool at all.
+ * @param denyByPreset - preset id -> tool names to deny.
  * @param track - session id -> restriction disposer.
  * @param log - one-line informational logger.
  */
-export function syncAgent(ctx, agent, presets, track, log) {
+export function syncAgent(ctx, agent, emptyPresets, denyByPreset, track, log) {
   const id = String(agent.session.id)
   let presetId
   try {
@@ -65,7 +83,9 @@ export function syncAgent(ctx, agent, presets, track, log) {
     // Unbound or already disposed; nothing to decide.
     return
   }
-  if (presetId === undefined || !presets.includes(presetId)) {
+  const emptied = presetId !== undefined && emptyPresets.includes(presetId)
+  const deny = presetId === undefined ? undefined : denyByPreset[presetId]
+  if (presetId === undefined || (!emptied && (deny === undefined || deny.length === 0))) {
     // Departing the preset must release the tools again.
     track.get(id)?.()
     track.delete(id)
@@ -75,8 +95,25 @@ export function syncAgent(ctx, agent, presets, track, log) {
   const tools = agent.ctx?.tools
   if (typeof tools?.restrict !== 'function') return
   try {
-    track.set(id, tools.restrict({ allow: [] }))
-    log(`tool-restrict-presets: preset "${presetId}" agent ${id} now inherits no tools`)
+    // Only names this Agent actually inherits may be denied: `restrict()`
+    // refuses an unknown name, and a preset may name a tool this deployment
+    // never mounted.
+    let filter
+    if (emptied) filter = { allow: [] }
+    else {
+      const served = new Set(
+        (typeof tools.schemas === 'function' ? tools.schemas(agent) : []).map((schema) => schema?.name),
+      )
+      const names = [...new Set(deny.filter((entry) => served.has(entry)))]
+      if (names.length === 0) return
+      filter = { deny: names }
+    }
+    track.set(id, tools.restrict(filter))
+    log(
+      emptied
+        ? `tool-restrict-presets: preset "${presetId}" agent ${id} now inherits no tools`
+        : `tool-restrict-presets: preset "${presetId}" agent ${id} denies ${filter.deny.join(', ')}`,
+    )
   } catch (error) {
     // An unscoped Agent cannot be restricted: report, never fail the Agent.
     ctx.logger?.warn?.(
@@ -87,15 +124,24 @@ export function syncAgent(ctx, agent, presets, track, log) {
 
 export async function apply(ctx, config) {
   // The Loader validates `config` through `Config`, but a direct caller may pass
-  // nothing, so the default is applied here too.
-  const presets = [...new Set((config?.presets ?? []).filter((entry) => typeof entry === 'string' && entry.length > 0))]
-  if (presets.length === 0) return
+  // nothing, so the defaults are applied here too.
+  const emptyPresets = [
+    ...new Set((config?.presets ?? []).filter((entry) => typeof entry === 'string' && entry.length > 0)),
+  ]
+  const denyByPreset = {}
+  for (const [presetId, names] of Object.entries(config?.deny ?? {})) {
+    if (typeof presetId !== 'string' || presetId.length === 0) continue
+    if (!Array.isArray(names)) continue
+    const kept = [...new Set(names.filter((entry) => typeof entry === 'string' && entry.length > 0))]
+    if (kept.length > 0) denyByPreset[presetId] = kept
+  }
+  if (emptyPresets.length === 0 && Object.keys(denyByPreset).length === 0) return
   const track = new Map()
   const log = config?.verbose === true ? (message) => ctx.logger?.info?.(message) : () => {}
 
   const guard = (agent) => {
     try {
-      syncAgent(ctx, agent, presets, track, log)
+      syncAgent(ctx, agent, emptyPresets, denyByPreset, track, log)
     } catch (error) {
       // A policy failure must never take down Agent creation.
       ctx.logger?.warn?.(`tool-restrict-presets: could not evaluate ${String(agent?.session?.id)}: ${error}`)
