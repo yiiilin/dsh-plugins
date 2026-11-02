@@ -1,0 +1,13 @@
+# One Loader layer for this package. Installed standalone from GitHub;
+# `dsh plugin --profile <p> add github:<owner>/<repo>#path:/pkgs/tool-visibility`.
+- insert:
+    - id: tool-visibility
+      name: '@yiln-dsh/dsh-tool-visibility'
+      inject:
+        - tools
+        - agents
+        - agentPresets
+        - systemPrompt
+      config:
+        tools: {}
+        verbose: false
