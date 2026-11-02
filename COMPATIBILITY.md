@@ -24,6 +24,28 @@ Verified against DSH `0.2.1-rc.3`: the workspace suite passes 633 tests and
 `auth-webserver` and `fleet` were retired in `0.3.0`: the Host ships `dsh-authorization`,
 and `gateway` replaces the SSH fleet model with a reverse tunnel.
 
+### Declared version window
+
+Every package declares `engines.dsh` as `>=0.2.1-0 <0.3.0-0`. DSH reads an own
+`engines.dsh` alone and ignores `peerDependencies` entirely
+(`@deepseek-ai/dsh-app-boot` `unmetRequirements`), and it evaluates the range with
+`includePrerelease: true`, so the prerelease markers are load-bearing rather than
+cosmetic:
+
+- The lower bound is `0.2.1-0`, not `0.2.1`. npm has never published a stable
+  `0.2.1`; the line exists only as `0.2.1-alpha.*` and `0.2.1-rc.*`. Plain
+  `>=0.2.1` sorts `0.2.1-rc.3` below `0.2.1` and would deny every package on the
+  runtime this suite is verified against.
+- The upper bound is `<0.3.0-0`, not `<0.3.0`. `0.3.0-alpha.1` and `0.3.0-rc.1`
+  sort below `0.3.0`, so `<0.3.0` admits the entire 0.3.0 prerelease line, which
+  this suite has never been run against.
+
+Evaluated with the Host's own `evaluatePluginCompatibility`, all nine packages
+mount on `0.2.1-alpha.4` through `0.2.9` and are denied on `0.2.0-rc.2` and on
+every `0.3.0` prerelease and final. The window states which runtimes the suite is
+willing to load into; it is not a per-release certification — the verified
+baseline remains DSH `0.2.1-rc.3`.
+
 ## Unified Package (historical)
 
 > The aggregate package described in this section no longer exists. It was split into

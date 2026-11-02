@@ -55,6 +55,20 @@ test('no package depends on the retired aggregate suite', async () => {
   }
 })
 
+test('every package declares the same dsh version window', async () => {
+  // DSH reads an own `engines.dsh` alone and ignores peerDependencies, evaluating
+  // it with includePrerelease. Both `-0` markers are load-bearing: npm has never
+  // published a stable 0.2.1 (only alpha/rc), so `>=0.2.1` would deny the runtime
+  // this suite is verified against, and `0.3.0-alpha.1` sorts below `0.3.0`, so a
+  // plain `<0.3.0` would admit the untested 0.3.0 prerelease line.
+  const expected = '>=0.2.1-0 <0.3.0-0'
+  for (const name of packages) {
+    const pkg = JSON.parse(await read(`pkgs/${name}/package.json`))
+    assert.equal(pkg.engines?.dsh, expected, `${name}: engines.dsh must be ${expected}`)
+    assert.equal(pkg.peerDependencies, undefined, `${name}: engines.dsh decides alone; a peer window would be ignored`)
+  }
+})
+
 test('each client half is a self-contained loader registration', async () => {
   let clientPackages = 0
   for (const name of packages) {

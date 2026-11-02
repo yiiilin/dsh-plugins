@@ -4,6 +4,9 @@
   "private": false,
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "dsh": ">=0.2.1-0 <0.3.0-0"
+  },
   "files": [
     "client.js",
     "index.js",

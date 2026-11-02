@@ -8,7 +8,8 @@ the plugins it actually runs.
 The workspace root is private and holds no plugin code: no `dsh.bundle`, no
 `cordis.patch.yml`, no aggregate Client bundle.
 
-Current version: `0.6.0` (the gateway package; each package carries its own version). Verified target: DSH `0.2.1-rc.2`. See
+Current version: `0.6.0` (the gateway package; each package carries its own version). Verified target: DSH `0.2.1-rc.2`. Every package declares the same
+`engines.dsh` window, `>=0.2.1-0 <0.3.0-0`. See
 [compatibility notes](COMPATIBILITY.md) for the exact scope.
 
 ## Breaking change in `0.3.0`: two packages retired, three renamed
