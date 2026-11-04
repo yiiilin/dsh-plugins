@@ -88,3 +88,14 @@ Single-context: root `GLOSSARY.md` plus `docs/adr/`, shared by every `pkgs/*` pa
 `dev-flow` routes incoming work to `new-feature`, `feature-upgrade`, or `bug-fix`;
 those three wrap Matt Pocock's engineering skills. They need his skill set
 installed, and this table is that per-repo setup.
+
+### CodeGraph onboarding
+
+`.agents/skills/init-code-graph/SKILL.md` carries the full install-and-index
+procedure; it is `disable-model-invocation: true`, so only the user runs it —
+`/init-code-graph`. Point them at it rather than restating the steps here.
+
+If a project has no index yet, do not build one yourself: upstream requires that
+indexing stays the user's decision. Note that `codegraph status` exits `0` even
+with no index, so read `status --json`'s `initialized` field instead of the exit code.
+

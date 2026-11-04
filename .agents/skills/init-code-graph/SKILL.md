@@ -23,6 +23,18 @@ disable-model-invocation: true
 
 ---
 
+## 0. 让这台技能跟着仓库走
+
+以下步骤只改变**本机**：CLI 装在用户目录，索引是本地产物。所以别人 clone 之后什么都不会继承，
+除非技能本身在仓库里。
+
+**把 `.agents/skills/init-code-graph/`（连同 `references/`）提交进项目仓库。** DSH 会扫描项目根的
+`.agents/skills/`，优先级高于用户级 `~/.agents/skills/`（rank 200 对 500），所以 clone 下来的人
+不必各自安装就有这条技能。第 5 步的模板会让他们去执行 `/init-code-graph`——技能不在仓库里，
+那句指引就是空话。
+
+团队协作的分工是：**`codegraph.json` 与技能进版本库，`.codegraph/` 与 CLI 各建各的。**
+
 ## 1. 体检
 
 ```bash
@@ -193,25 +205,43 @@ codegraph status . --json
 
 **(a) 指令通道——先做这个，任何 harness 都有效。**
 
-把这段加进项目的 agent 指令文件（本 harness 是 `AGENTS.md`，Claude Code 是 `CLAUDE.md`）：
+把这段加进项目的 agent 指令文件（本 harness 是 `AGENTS.md`，Claude Code 是 `CLAUDE.md`）。
+**整段照抄，不要删掉「本机还没有索引时」那一节**：`AGENTS.md` 会被提交、被别人的 AI 读到，
+而他们克隆下来并没有你的索引——那一节是给他们的。也不要为省篇幅把安装步骤展开到指令文件里，
+完整步骤留在本技能中，指令文件只负责指路。
 
 ```markdown
 <!-- INIT-CODE-GRAPH:START -->
 ## 代码知识图谱（CodeGraph）
 
-本项目有 `.codegraph/` 索引。回答代码问题前先查图，再考虑 grep / 读文件：
+回答代码问题前先查图，再考虑 grep / 读文件：
 
 - `codegraph explore "<符号名或代码里的词>"` —— 一次拿到相关符号的逐字源码、调用路径、影响面
 - `codegraph node <符号|文件>` —— 单符号或文件的结构与依赖
 - `codegraph impact <符号>` / `codegraph affected <文件>` —— 改之前的影响面 / 该跑哪些测试
 - 查询按字面匹配，词要取自符号名 / 文件名 / 标识符；中文词命中不了，用 `GLOSSARY.md` 括号里的英文
 - 图的输出带 `file:line`，视为已经读过；只在图没覆盖时才 Read
+
+### 本机还没有索引时
+
+配置（`codegraph.json`）随仓库共享，索引（`.codegraph/`）各建各的、不入库——刚 clone
+时那个目录里只有它自带的 `.gitignore`，**空壳目录不代表索引存在**。
+
+先判断有没有索引：读 `codegraph status . --json` 的 `initialized` 字段。
+**不要看退出码**——`codegraph status` 未初始化时仍退出 `0`。
+
+没有索引（或 `command not found`）时：**不要自己装 CLI、不要自己跑 `codegraph init`**，
+装上会在用户目录落一百多 MB 数据和全局命令，这属于用户的决定。把情况告诉用户，
+请其执行 `/init-code-graph`——它会把体检、安装、建索引、调优整条流程走完。
 <!-- INIT-CODE-GRAPH:END -->
 ```
 
 `INIT-CODE-GRAPH:START/END` 这一对围栏别删——日后撤销靠它定位，见 [references/pitfalls.md](references/pitfalls.md)。
 
 **判据**：指令文件里能搜到这段。指令文件的改动**从下次会话启动才生效**，本次会话内 AI 不会自动改变行为。
+
+**这段是给「另一个人的机器」看的。** 刚 clone 的同事没有索引，模板若只写「本项目有索引」
+会让他的 AI 直接去查一个不存在的图。所以「没有索引时怎么办」必须和日常查询一起下发。
 
 **(b) MCP 通道——需要 AI 直接调工具时才做。**
 

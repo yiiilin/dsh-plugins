@@ -4,6 +4,17 @@
 
 命令的 flag 一律 `codegraph <command> --help`，本文件不另存副本。
 
+## 别拿退出码判断有没有索引
+
+`codegraph status` 在**未初始化**时退出码仍是 `0`（实测 1.6.2）。只看 `$?` 会把
+「没装索引」当成成功。判据取 `status --json` 的 `initialized` 字段，或读那行
+`⚠ Not initialized`。
+
+`codegraph explore` 在同样情况下退出码是 `1`，两者不一致，所以更不要拿退出码当判据。
+
+这条对**接手别人仓库的新同事**最要紧：`.codegraph/` 入库的只有它自带的
+`.gitignore`（内容是 `*` 加 `!.gitignore`），克隆下来就是个空壳目录——目录存在不代表索引存在。
+
 ## 网络盘 / 容器文件系统
 
 `codegraph status --json` 的 `journalMode` 不是 `wal`，说明 WAL 没启用，读会被写阻塞。把项目（连同 `.codegraph/`）挪到本地盘。
