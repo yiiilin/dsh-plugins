@@ -7,7 +7,7 @@ plugin injects and the Cordis services/Slots used by its Host and Client halves.
 ## Standalone Packages (current)
 
 `0.3.0` ships eight packages that install independently; there is no aggregate package.
-Verified against DSH `0.2.1-rc.3`: the workspace suite passes 633 tests and
+Verified against DSH `0.2.2-rc.1`: the workspace suite passes 697 tests and
 `npm run check` validates all eight.
 
 | Package | Verified injections |
@@ -43,8 +43,48 @@ cosmetic:
 Evaluated with the Host's own `evaluatePluginCompatibility`, all nine packages
 mount on `0.2.1-alpha.4` through `0.2.9` and are denied on `0.2.0-rc.2` and on
 every `0.3.0` prerelease and final. The window states which runtimes the suite is
-willing to load into; it is not a per-release certification — the verified
-baseline remains DSH `0.2.1-rc.3`.
+willing to load into; it is not a per-release certification.
+
+**The verified baseline is now DSH `0.2.2-rc.1`** (2026-11-05). All nine packages
+mount on it with no source change. The previous baselines were `0.2.1-rc.3` and
+`0.2.2-alpha.3`; the latter's upgrade record is
+[docs/changes/upgrade-0.2.2-alpha.3.md](docs/changes/upgrade-0.2.2-alpha.3.md).
+
+**`0.2.2-alpha.3` → `0.2.2-rc.1` needed no plugin change at all.** A static
+comparison of the two runtime trees found the packages this suite actually uses
+unchanged:
+
+- Host service type declarations — byte-identical across `dsh-tools`,
+  `dsh-settings`, `dsh-fs`, `dsh-host-webserver`, `dsh-session-persistence`,
+  `dsh-session-query`, `dsh-agent-preset`, `dsh-api-session-controller`,
+  `dsh-subprocess`, `dsh-jobs`, `dsh-agent`, `dsh-session`, `dsh-llm`.
+  `dsh-tools/lib/index.js` is byte-identical too.
+- Client contract types — byte-identical across `dsh-client-ui-sidebar-right`,
+  `-sidebar`, `-conversation`, `-settings`, `-settings-plugins`, `-renderer`,
+  `dsh-client-connection`, `dsh-client-locale`, `dsh-api-remotes`.
+- All 50 module names referenced by the profile resolve under rc.1; no subpath
+  export was removed.
+- `!!js dshHomePath(...)` in `gateway`'s Loader row still resolves despite the
+  Cordis Core 4.1.0 / Loader 1.1.0 bump.
+
+rc.1's release notes list several plugin-facing migrations, but they are a
+cumulative summary **since `0.2.1-rc.5`**, not an `alpha.3` → `rc.1` delta. The
+`tools.resolve` / `executable` item does not apply here: this suite's `.resolve()`
+calls are `Promise.resolve()` / `fs.resolve()`, and `executable` is a config field
+name, not the migrating API. An isolated `rc.1` profile booted with all nine
+plugins, zero `disabling profile plugin` rows, 200s on the Host routes and all
+six Client modules registered.
+
+The only upgrade action was on the profile: the twelve official packages pinned
+in its `package.json` `dependencies` moved from `0.2.2-alpha.3` to `0.2.2-rc.1`,
+because their hard-peered version enums would otherwise be denied by the
+compatibility gate.
+
+`0.2.2-alpha.3` itself needed no plugin change, but the profile did need one: it removed
+the `./list-agents` subpath export from `@deepseek-ai/dsh-tool-subagent-control`
+(the `list_agents` tool moved into that package's main `apply()`), so the separate
+`tool-subagent-list-agents` Loader row had to go. That is a profile composition
+concern, not a package one.
 
 ## Unified Package (historical)
 
