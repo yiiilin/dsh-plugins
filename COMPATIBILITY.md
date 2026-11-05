@@ -24,6 +24,57 @@ Verified against DSH `0.2.2-rc.1`: the workspace suite passes 697 tests and
 `auth-webserver` and `fleet` were retired in `0.3.0`: the Host ships `dsh-authorization`,
 and `gateway` replaces the SSH fleet model with a reverse tunnel.
 
+### code-server (added after the 0.3.0 pass)
+
+[`@yiln-dsh/dsh-code-server`](pkgs/code-server) (Loader row `dsh-code-server`) is
+not part of the 697-test pass above. It declares the same
+`>=0.2.1-0 <0.3.0-0` window and was verified against DSH `0.2.2-rc.1` with its
+own 31 tests plus `npm run check`.
+
+**Verified on a live profile**, not only in tests: installed against
+code-server `4.145.0`, the tab auto-started an instance, VS Code's workbench
+rendered (Explorer, Welcome), and the console showed no WebSocket 1006. Two
+upstream facts were measured there rather than assumed:
+
+- The socket path is `<prefix>/stable-<commit>` — `patches/base-path.diff`
+  appends only the versioned server root, not
+  `static/out/vs/code/browser/workbench`.
+- `code-server --version` prints a first-run `info Wrote default config file…`
+  line before the version, so the version must be matched by shape.
+
+| Half | Injections / Slot dependencies |
+| --- | --- |
+| Host | `webServer`, `subprocess` |
+| Client | `slots`, `locale`, `sidebarRightTabs`; seat `sidebar.right.pane.tab` (`scope: session`, gives `sessionId` plus the global `useWorkspaces` / `useSessions` hooks) |
+
+Ownership is **one instance per DSH Workspace**, not per session. The Host reads
+`workspaceRegistry` **opportunistically** through `ctx.get()` rather than
+declaring it in `inject`: that service is not guaranteed across the whole
+declared window, and a missing one must leave the plugin mountable (the Client's
+`useWorkspaces(...).path` / `useSessions(...).cwd` hints are the fallback).
+`Workspace.path` is the canonical realpath and is authoritative over any Client
+hint. Because instances are workspace-owned, `session/disposed` is deliberately
+not listened to.
+
+All instances share one `--extensions-dir` (`<stateDir>/extensions`); only
+`--user-data-dir` is per-workspace. code-server's default places extensions
+under `--user-data-dir`, so this is an explicit override. The iframe adds
+`?folder=<workspace.path>`, code-server's highest-priority folder URL API, so a
+shared instance still opens the right workspace for every tab.
+
+`webServer.register` supports `kind: 'prefix'`; `webServer.registerUpgrade` is an
+exact-pathname lookup with no prefix form, which is why each instance registers
+two explicit upgrade paths.
+
+The subpath proxy depends on upstream code-server behaviour, not on DSH:
+relative `{{BASE}}` URLs from `relativeRoot(req.originalUrl)`, an all-path
+websocket router, and `patches/base-path.diff` rewriting VS Code's socket URL to
+`window.location.pathname + "/" + path`. Those were read from code-server
+`main`; a code-server release that changes them needs a re-verification of the
+route contract in [the module note](docs/modules/code-server.md). `npm test`
+drives the proxy against a real loopback upstream, but does not start a real
+code-server binary or render a VS Code workbench.
+
 ### Declared version window
 
 Every package declares `engines.dsh` as `>=0.2.1-0 <0.3.0-0`. DSH reads an own

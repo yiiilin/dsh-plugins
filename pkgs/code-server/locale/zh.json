@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "代码编辑器",
+    "description": "在右侧栏打开宿主机上安装的 code-server（VS Code），每个工作区一个编辑器，扩展全局共享。"
+  }
+}

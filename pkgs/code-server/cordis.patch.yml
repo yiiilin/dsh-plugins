@@ -1,0 +1,41 @@
+# One Loader layer for this package. Installed standalone from GitHub;
+# `dsh plugin --profile <p> add github:<owner>/<repo>#path:/pkgs/code-server`.
+#
+# 右侧栏「代码编辑器」标签页：Host 为**每个 DSH Workspace** 起一个只听
+# 127.0.0.1 的 code-server（同一工作区的多个 session 共用），打开这个标签页时
+# 自动启动，并用 `?folder=<workspace.path>` 让 VS Code 直接打开该工作区。
+# HTTP 用一条前缀路由反代，WebSocket 用两条精确 upgrade 路由转发。登录态由
+# DSH 自己那一层负责，所以子进程一律 `--auth none`，端口绝不对外。
+#
+# 本包不携带 code-server 二进制：启动时用 `resolveExecutable` 探测，缺失时面板
+# 给出安装命令、复制、一键安装和重新检测入口。
+# 所有实例共享一个 `--extensions-dir`，所以 VS Code 扩展只需装一次。
+- insert:
+    - id: dsh-code-server
+      name: '@yiln-dsh/dsh-code-server'
+      inject:
+        - webServer
+        - subprocess
+      config:
+        enabled: true
+        # 宿主机上预装的 code-server 命令名（或绝对路径）。
+        executable: code-server
+        # 面板「一键安装」执行的命令，只来自这里，绝不接受浏览器传参。
+        # 数组形式，不经 shell 解释。
+        # --loglevel=http 让 npm 在非 TTY 环境下也持续打印取包进度；
+        # 否则一次 3 分钟的安装全程没有输出，面板只能干等。
+        installCommand: [npm, install, -g, --loglevel=http, code-server]
+        # 每个实例从这里分配一个 loopback 端口，先占位再启动，避免并发抢占。
+        portRange: [14000, 14099]
+        # 追加给 code-server 的额外参数。
+        extraArgs: []
+        # 每个工作区的 user-data / 配置目录，以及共享的 extensions 根目录。
+        stateDir: !!js dshHomePath('code-server')
+        # 所有实例共用的 VS Code 扩展目录；留空表示 <stateDir>/extensions。
+        # 想复用宿主机已有的扩展目录（例如 ~/.local/share/code-server/extensions）
+        # 就在这里写绝对路径。注意：多个实例并发安装/卸载扩展会写同一目录。
+        extensionsDir: ''
+        # 等待子进程监听端口的时间。
+        startupTimeoutMs: 30000
+        # 一键安装的超时，超时会终止整个进程组。
+        installTimeoutMs: 300000

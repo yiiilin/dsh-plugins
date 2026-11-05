@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Code editor",
+    "description": "Opens a host-installed code-server (VS Code) in the right sidebar, one editor per workspace with shared extensions."
+  }
+}

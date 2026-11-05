@@ -8,7 +8,7 @@ the plugins it actually runs.
 The workspace root is private and holds no plugin code: no `dsh.bundle`, no
 `cordis.patch.yml`, no aggregate Client bundle.
 
-Current version: `0.6.0` (the gateway package; each package carries its own version). Verified target: DSH `0.2.1-rc.2`. Every package declares the same
+Current version: `0.4.0` (workspace root; each package carries its own version). Verified target: DSH `0.2.1-rc.2`. Every package declares the same
 `engines.dsh` window, `>=0.2.1-0 <0.3.0-0`. See
 [compatibility notes](COMPATIBILITY.md) for the exact scope.
 
@@ -74,6 +74,15 @@ are unchanged, so an existing profile only needs new package addresses — see
 | [`pkgs/tool-restrict-presets`](pkgs/tool-restrict-presets) | `tool-restrict-presets` | Applies `agent.ctx.tools.restrict({ allow: [] })` to every Agent running a listed Agent Preset. |
 | [`pkgs/tool-visibility`](pkgs/tool-visibility) | `tool-visibility` | Lets a tool declare the Agent Presets that may see it, trimming the model catalog and denying execution. |
 | [`pkgs/browser-vnc`](pkgs/browser-vnc) | `dsh-browser-vnc` | Right-sidebar tab listing the visible browser instances a session can open, and viewing any of them. |
+| [`pkgs/code-server`](pkgs/code-server) | `dsh-code-server` | Right-sidebar tab embedding a host-installed code-server (VS Code), one instance per **Workspace** with the workspace folder opened automatically, shared VS Code extensions, and a guided install entry when the binary is missing. |
+
+`code-server` is the only package with an **external host dependency**: it does
+not bundle the binary. It detects `code-server` at mount and, when absent, the
+sidebar tab offers the configured install command and a re-detect button. Each
+instance listens only on `127.0.0.1` behind the already-authenticated Harness
+reverse proxy with `--auth none`; do not expose that port. One shared
+`--extensions-dir` means VS Code extensions are installed once for all
+workspaces. See [the module notes](docs/modules/code-server.md).
 
 ## Install
 
