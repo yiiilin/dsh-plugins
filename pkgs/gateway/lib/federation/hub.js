@@ -350,6 +350,11 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       record.streams.clear()
       if (connections.get(record.envId) === record) {
         connections.delete(record.envId)
+        // Whatever this node reported is unknowable now that its link is gone. Keeping it
+        // left a dead peer reported as reachable for ever, because a route to it survived
+        // in the table with nothing to invalidate it.
+        const dropped = reported.forgetLearnedFrom(record.envId)
+        if (dropped > 0) logger.info(`federation: forgot ${dropped} node(s) reported by ${record.envId}`)
         // Everyone still connected must learn this node is gone, or they will keep
         // routing streams into a machine that can no longer answer.
         broadcastTopology()

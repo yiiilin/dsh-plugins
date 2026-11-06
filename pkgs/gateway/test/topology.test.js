@@ -235,3 +235,16 @@ test('a sender that restarts and counts from one is still heard', () => {
   assert.deepEqual(v.nodes().map((row) => row.envId).sort(), ['a', 'b', 'me'])
   assert.equal(v.apply({ from: 'peer', seq: 1, nodes: [], edges: [] }), false, 'a duplicate is still a duplicate')
 })
+
+test('a lost neighbour takes its reports with it, and only those', () => {
+  // A node reaches the view by being reported, and nothing used to remove it — so a peer
+  // that died stayed "reachable" for ever because a route to it survived with nothing to
+  // invalidate it. What one neighbour reported is unknowable once its link is gone, but
+  // what another reported is not.
+  const v = createTopologyView({ selfId: 'me' })
+  v.apply({ from: 'a', seq: 1, nodes: [{ envId: 'x', label: 'x', online: true }], edges: [] }, { source: 'a' })
+  v.apply({ from: 'b', seq: 1, nodes: [{ envId: 'y', label: 'y', online: true }], edges: [] }, { source: 'b' })
+  assert.equal(v.forgetLearnedFrom('a'), 1)
+  assert.deepEqual(v.nodes().map((row) => row.envId).sort(), ['me', 'y'])
+  assert.equal(v.forgetLearnedFrom('a'), 0, 'forgetting twice is not an error')
+})

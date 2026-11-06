@@ -150,7 +150,7 @@ export function createTopologyView({ selfId = '' } = {}) {
       // keeping the incumbent made a node that only the second peer knew about stay
       // invisible for ever.
       if (held !== undefined && held.hops < hops) continue
-      known.set(envId, { ...row, hops })
+      known.set(envId, { ...row, hops, learnedFrom: source ?? '' })
       changed = true
     }
     for (const row of incoming.edges ?? []) {
@@ -225,6 +225,43 @@ export function createTopologyView({ selfId = '' } = {}) {
       return [...edgeRoutes.values()]
     },
 
+    /**
+     * Drop everything learned about one environment.
+     *
+     * A node reaches this view by being reported; nothing ever removes it. So a peer that
+     * dies stops being reported and stays "reachable" for ever, because a route to it is
+     * still in the table. Forgetting is what the caller does when the link that carried
+     * those reports is gone.
+     *
+     * @param envId - the environment to drop.
+     * @returns whether anything was removed.
+     */
+    forget(envId) {
+      const hadNode = known.delete(envId)
+      const hadEdge = edgeRoutes.delete(envId)
+      return hadNode || hadEdge
+    },
+
+    /**
+     * Drop everything learned through one neighbour.
+     *
+     * Called when that neighbour's link goes away: whatever it reported was true while it
+     * was connected and is unknowable after, so keeping it shows a dead node as reachable.
+     *
+     * @param source - the neighbour whose reports are dropped.
+     * @returns how many rows were removed.
+     */
+    forgetLearnedFrom(source) {
+      let dropped = 0
+      for (const [envId, row] of [...known.entries()]) {
+        if (row.learnedFrom !== source) continue
+        known.delete(envId)
+        edgeRoutes.delete(envId)
+        dropped += 1
+      }
+      return dropped
+    },
+
     /** The row for one environment, or undefined. */
     get(envId) {
       return known.get(envId)
@@ -250,7 +287,9 @@ export function createTopologyView({ selfId = '' } = {}) {
     outbound({ exclude } = {}) {
       const nodes = [...known.values()]
         .filter((row) => row.envId !== exclude)
-        .map(({ hops, ...row }) => row)
+        // `hops` and `learnedFrom` are this node's bookkeeping, not facts about the
+        // network — a peer receiving them would treat its own guess as a report.
+        .map(({ hops, learnedFrom, ...row }) => row)
       if (nodes.length === 0) return undefined
       // `via` is rewritten to the neighbour the *receiver* should hand the stream to, so
       // a node one hop further out can build a route from a table it did not observe.
