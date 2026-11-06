@@ -302,7 +302,7 @@ export function apply(ctx, config) {
           kind: environment.kind,
           hostname: environment.hostname ?? '',
           lastSeen: environment.lastSeen ?? 0,
-          online: hub.isOnline(environment.id),
+          online: hub.isReachable(environment.id),
         })),
       ],
     // What an edge asks for: this node's environment table, with live state.
@@ -311,7 +311,7 @@ export function apply(ctx, config) {
       ...registry.list().map((environment) => ({
         envId: environment.id,
         label: environment.label,
-        online: hub.isOnline(environment.id),
+        online: hub.isReachable(environment.id),
       })),
     ],
   })
@@ -436,8 +436,13 @@ export function apply(ctx, config) {
     // otherwise. Requiring a matching header here as well meant a node with no `token`
     // configured — every node using `upstreams`, which is all of them now — answered a
     // peer's admin call with the login page.
-    const proof = req.headers['x-dsh-federation']
-    const federated = proof !== undefined && (config.token === '' || proof === config.token)
+    // The header says "this arrived over a tunnel", and that is all it needs to say.
+    // The request could only reach this point through a connection whose handshake
+    // `entry.js` authenticated against the environment registry, so the transport has
+    // already established who sent it. Comparing a value here as well made every node
+    // that *has* a token reject the header a peer actually sends, and answering a peer
+    // with the login page looks exactly like a routing failure.
+    const federated = req.headers['x-dsh-federation'] !== undefined
     if (federated) {
       const path = url.split('?')[0]
       // `/admin/file` is the byte surface and everything else under `/admin` is JSON;
@@ -1056,7 +1061,7 @@ export function apply(ctx, config) {
       entry = await startEntry({
         host: config.host,
         port: config.port,
-        listEnvironments: () => registry.list().map((one) => ({ id: one.id, online: hub.isOnline(one.id) })),
+        listEnvironments: () => registry.list().map((one) => ({ id: one.id, online: hub.isReachable(one.id) })),
         local,
         root: config.rootEmbedded
           ? {

@@ -50,7 +50,10 @@ export function createAdmin({
   const statusCache = new Map()
 
   const status = (environment) => {
-    const online = hub.isOnline(environment.id)
+    // Reachable through a child counts. `isOnline` answers only for a direct tunnel, so a
+    // cascade made every node below the first hop appear dead in the panel while calls to
+    // it succeeded — the panel and the tools answered the same question differently.
+    const online = hub.isReachable !== undefined ? hub.isReachable(environment.id) : hub.isOnline(environment.id)
     if (online) {
       statusCache.set(environment.id, { at: Date.now(), online })
       return { online, lastSeen: Date.now() }

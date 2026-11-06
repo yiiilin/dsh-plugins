@@ -86,7 +86,6 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    * probe at every frame.
    */
   function holdStream(key, arrivalLink, departureRecord) {
-    logger.info(`federation: hold ${key.slice(0, 8)} arrival=${arrivalLink.envId} departure=${departureRecord.envId}`)
     const arrival = {
       envId: arrivalLink.envId,
       socket: { send: (bytes) => arrivalLink.send(bytes) },
@@ -198,7 +197,17 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     for (const row of reported.nodes()) {
       if (seen.has(row.envId)) continue
       seen.add(row.envId)
-      nodes.push(nodeRow(row, { online: row.online, selfId: row.envId }))
+      // Already in wire shape: reported by a peer that filled it in. Re-deriving it here
+      // recomputed `online` against *this* node's id, so a live node came out offline
+      // whenever it was not this node — which is every node the cascade is meant to show.
+      nodes.push({
+        envId: row.envId,
+        label: row.label ?? row.envId,
+        kind: row.kind ?? 'remote',
+        hostname: row.hostname ?? '',
+        online: row.online !== false,
+        lastSeen: typeof row.lastSeen === 'number' ? row.lastSeen : 0,
+      })
       edges.push(edgeRow(row.envId, { hops: row.hops ?? 1 }))
     }
     // No seq here: it belongs to the message about to be sent, not to the act of reading
@@ -489,7 +498,6 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     const flow = flows.get(key)
     if (flow !== undefined) {
       const out = flow.fromRecord === record ? flow.toRecord : flow.fromRecord
-      logger.info(`federation: flow ${key.slice(0, 8)} on ${record.envId} type ${frame.type} -> ${out?.envId ?? '?'} (from=${flow.fromRecord?.envId} to=${flow.toRecord?.envId})`)
       if (out === undefined) return
       forwardFrame(out, frame)
       if (frame.type === FRAME.end) flows.delete(key)
@@ -532,7 +540,6 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    * @returns `{ forward: boolean, handle? }`.
    */
   function routeArrived(toEnvId, owner) {
-    logger.info(`federation: arrived stream for "${toEnvId}" from ${owner?.url ?? 'unknown'}`)
     if (typeof toEnvId !== 'string' || toEnvId === '') return { forward: false }
     if (toEnvId === SELF_ENV_ID || toEnvId === selfName()) return { forward: false }
     const resolved = resolveTarget({ envId: selfName() }, { toEnvId })
@@ -545,7 +552,6 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
 
     // Every frame of the stream is carried on, in order, with the link it came from
     // remembered so the answer goes back the same way.
-    logger.info(`federation: forwarding "${toEnvId}" via ${resolved.next}`)
     // The stream is recorded as a flow between the link it arrived on and the link it
     // leaves by. Every frame is then forwarded to the far end, and direction follows from
     // arrival — there is no second mechanism to disagree with this one.
@@ -782,8 +788,17 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    * what made the panel show a live node as dead.
    */
   function isReachable(envId) {
+
     if (connections.has(envId)) return true
-    return reported.nodes().some((row) => row.envId === envId && row.online !== false)
+    // A route is the honest test: if this node can put a stream on the way to `envId`, it
+    // is reachable, whatever a peer's report said about its `online` flag. Deciding from
+    // the flag alone made the panel show a node as offline while calls to it succeeded —
+    // the two answered different questions from the same table.
+    const route = reported.routeTo(envId)
+    if (route === undefined) {
+      logger.info(`federation: no route to "${envId}"; nodes=${reported.nodes().map((r) => r.envId).join(',')} edges=${reported.edges().map((r) => r.to + '<-' + r.via).join(',')}`)
+    }
+    return route !== undefined
   }
 
   /** Every node reachable here, merged from direct tunnels and child reports. */

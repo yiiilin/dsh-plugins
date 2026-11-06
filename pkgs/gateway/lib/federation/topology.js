@@ -142,10 +142,12 @@ export function createTopologyView({ selfId = '' } = {}) {
       if (typeof envId !== 'string' || envId === '') continue
       const hops = envId === me ? 0 : fromHops + 1
       const held = known.get(envId)
-      // Shorter is truer: a node one hop away should not be described as three because a
-      // longer path reported it later. Equal hops keep the incumbent, so two equally good
-      // paths do not flap.
-      if (held !== undefined && held.hops <= hops) continue
+      // Shorter is truer: a node one hop away must not become three because a longer path
+      // reported it later. At equal distance the newest report wins, because two peers one
+      // hop away are equally authoritative and the later one has more recent information —
+      // keeping the incumbent made a node that only the second peer knew about stay
+      // invisible for ever.
+      if (held !== undefined && held.hops < hops) continue
       known.set(envId, { ...row, hops })
       changed = true
     }
@@ -242,8 +244,12 @@ export function createTopologyView({ selfId = '' } = {}) {
       // a node one hop further out can build a route from a table it did not observe.
       // Blanking it here left every receiver unable to answer "which peer do I use for
       // that destination", which is why a cascade could be described but not routed.
+      // Only the receiving node itself is withheld. Filtering by `via` as well dropped
+      // every route this node had learned *through* that peer, which is most of them — the
+      // report shrank to the two rows that happened to survive, so the node at the top of
+      // a cascade never saw its tail.
       const edges = [...edgeRoutes.values()]
-        .filter((row) => row.to !== exclude && row.via !== exclude)
+        .filter((row) => row.to !== exclude)
         .map((row) => ({ to: row.to, via: '', hops: row.hops }))
       return { seq: outboundSeq += 1, from: me, nodes, edges }
     },
