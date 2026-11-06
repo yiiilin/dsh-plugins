@@ -254,9 +254,26 @@ export function apply(ctx, config) {
    * Only the main node holds the other edges' tunnels, so only it can do this; an edge
    * gets `undefined` and answers "this node does not route".
    */
-  const forwardMessage = config.role !== 'main'
+  const forwardMessage = config.accept !== true
     ? undefined
     : (toEnvId, message) => hub.sendAgentMessage(toEnvId, message)
+
+  /**
+   * This node's identity as other nodes see it.
+   *
+   * Derived from the listener rather than stored: it only has to be stable for the life of
+   * the process and distinct from every other node's, which `host:port` gives for free.
+   */
+  const selfEnvId = () => process.env.DSH_ENV_ID || `${config.host}:${config.port}`
+
+  /**
+   * Whether an id names this node.
+   *
+   * Both spellings are accepted: `self` is what a tool or a panel says, and the wire id is
+   * what a peer sees in the table. Comparing only one made a node fail to recognise
+   * itself in its own topology.
+   */
+  const isThisNode = (envId) => envId === '' || envId === 'self' || envId === selfEnvId()
 
   const hub = createTunnelHub({
     logger,
@@ -269,10 +286,16 @@ export function apply(ctx, config) {
      * The main node is the authority: it is the only node holding every tunnel, so it is
      * the only one whose answer is complete. This node appears as `self`.
      */
-    listNodes: config.role !== 'main'
+    // A node that accepts tunnels is the one whose table is authoritative for its own
+    // edges. `accept` decides this now, not `role`: a node can be both a parent and a
+    // child, and the old role answered only one of those questions.
+    listNodes: config.accept !== true
       ? undefined
       : () => [
-        { envId: 'self', label: config.name === '' ? 'this node' : config.name, kind: 'self', online: true },
+        // A stable id other nodes can use to tell this sender from another. Without it
+        // every node calls itself `self` on the wire, two upstreams become
+        // indistinguishable, and their sequence counters cannot be ordered per source.
+        { envId: selfEnvId(), label: config.name === '' ? 'this node' : config.name, kind: 'self', online: true },
         ...registry.list().map((environment) => ({
           envId: environment.id,
           label: environment.label,
@@ -284,7 +307,7 @@ export function apply(ctx, config) {
       ],
     // What an edge asks for: this node's environment table, with live state.
     listEnvironments: () => [
-      { envId: 'self', label: 'this node (main)', online: true },
+      { envId: selfEnvId(), label: config.name === '' ? 'this node' : config.name, online: true },
       ...registry.list().map((environment) => ({
         envId: environment.id,
         label: environment.label,
@@ -727,30 +750,30 @@ export function apply(ctx, config) {
     res.end(`daemon: nothing serves ${url}\n`)
   }
 
-  /** Edge role: keep a tunnel to the main node. */
-  const agent = config.role === 'edge'
-    ? createTunnelAgent({
-      mainUrl: config.mainUrl,
-      token: config.token,
+  /**
+   * The upstreams this node dials.
+   *
+   * Driven by `upstreams` rather than by `role`: a node may accept tunnels *and* dial
+   * them, so "which role am I" does not answer "do I have upstreams". The retired
+   * `role: edge` plus `mainUrl` pair is folded in so an old profile still connects.
+   */
+  // A config produced before `upstreams` existed has the key absent rather than empty,
+  // because the schema default only applies to a config that went through validation.
+  const declaredUpstreams = Array.isArray(config.upstreams) ? config.upstreams : []
+  const upstreamList = declaredUpstreams.length > 0
+    ? declaredUpstreams
+    : (config.role === 'edge' && config.mainUrl !== '' ? [{ url: config.mainUrl, token: config.token }] : [])
+
+  const agent = upstreamList.length === 0
+    ? undefined
+    : createTunnelAgent({
+      upstreams: upstreamList,
       selfName: config.name,
       harnessPort: () => embeddedRoot.portOrZero(),
       // `/admin` belongs to this process; the tunnel forwards it here, not to the harness.
       daemonPort: () => config.port,
-      // The edge's own harness session, minted the same way the main node mints one for
-      // its root profile.
-      harnessCookie: async () => {
-        try {
-          await embeddedRoot.ensure()
-        } catch (error) {
-          logger.warn(`daemon: could not mint the harness session: ${error.message}`)
-          return undefined
-        }
-        logger.info(`daemon: harness cookie state: ${embeddedRoot.cookie === undefined ? 'absent' : 'present'}`)
-        return embeddedRoot.cookie
-      },
       logger,
     })
-    : undefined
 
   /**
    * A loopback port per reachable environment, forwarding through the tunnel.
@@ -780,7 +803,7 @@ export function apply(ctx, config) {
    */
   const reachableIds = () => {
     if (config.role === 'main') return registry.list().filter((one) => one.enabled !== false).map((one) => one.id)
-    return agent?.topology?.nodes()?.filter((row) => row.envId !== 'self').map((row) => row.envId) ?? []
+    return agent?.topology?.nodes()?.filter((row) => !isThisNode(row.envId)).map((row) => row.envId) ?? []
   }
 
   /**
@@ -1002,12 +1025,13 @@ export function apply(ctx, config) {
       logger.info(`daemon: ${environments.length} environment(s) registered (role ${config.role})`)
       if (cancelled) return
 
-      if (config.role === 'edge') {
-        if (config.mainUrl === '' || config.token === '') {
-          logger.warn('daemon: role is "edge" but mainUrl or token is empty; no tunnel will be opened')
-        } else {
-          agent.start()
+      // Driven by whether there are upstreams to dial, not by `role`: a node can accept
+      // tunnels and dial them at once, so the role answers a different question.
+      if (agent !== undefined) {
+        if (upstreamList.some((one) => one.url === '' || one.token === '')) {
+          logger.warn('daemon: an upstream has an empty url or token; its tunnel will not open')
         }
+        agent.start()
       }
 
       entry = await startEntry({

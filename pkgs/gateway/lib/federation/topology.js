@@ -115,6 +115,16 @@ export function createTopologyView({ selfId = '' } = {}) {
   let current
   let me = selfId
 
+  /**
+   * The highest `seq` seen from each source.
+   *
+   * Per source, not global: two upstreams each count from one, so comparing a snapshot
+   * from one against the other's counter discards whichever happens to be behind. A node
+   * with two upstreams saw exactly that — the second upstream's table looked stale on
+   * every broadcast and was dropped, so the node kept a view from the first alone.
+   */
+  const highWater = new Map()
+
   return {
     /**
      * Learn which environment this node is.
@@ -128,7 +138,16 @@ export function createTopologyView({ selfId = '' } = {}) {
     },
     /** Adopt a snapshot if it is newer than what is held. @returns whether it was adopted. */
     apply(incoming) {
-      if (!isNewer(current, incoming)) return false
+      if (incoming === undefined || incoming === null) return false
+      if (!Array.isArray(incoming.nodes) || !Array.isArray(incoming.edges)) return false
+      const source = typeof incoming.from === 'string' ? incoming.from : ''
+      const seq = Number(incoming.seq)
+      const seen = highWater.get(source)
+      // `seq` orders the broadcasts of one sender. Across senders there is no order to
+      // recover — each counts independently — so a table from a different source is
+      // adopted rather than compared against a counter it never shared.
+      if (seen !== undefined && seq <= seen) return false
+      highWater.set(source, seq)
       current = incoming
       return true
     },

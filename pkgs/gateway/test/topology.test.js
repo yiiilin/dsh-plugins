@@ -207,3 +207,16 @@ test('a node that declares no name keeps the registry one', async () => {
   assert.equal(frames[frames.length - 1].nodes.find((n) => n.envId === 'a').label, 'fallback')
   hub.close()
 })
+
+test('two upstreams each count their own sequence, and neither is dropped as stale', () => {
+  // Each sender numbers its broadcasts from one. Comparing one upstream's `seq` against
+  // another's discards whichever is behind — a node with two upstreams kept the first
+  // one's table and ignored the second on every broadcast, which is how this was found.
+  const v = createTopologyView({ selfId: 'me' })
+  const fromA = { from: 'a', seq: 5, nodes: [nodeRow({ id: 'a', label: 'A' })], edges: [] }
+  const fromB = { from: 'b', seq: 1, nodes: [nodeRow({ id: 'b', label: 'B' })], edges: [] }
+  assert.equal(v.apply(fromA), true)
+  assert.equal(v.apply(fromB), true, 'a different source is not stale just because its counter is lower')
+  assert.equal(v.apply({ ...fromB, seq: 2 }), true, 'but the same source still has to advance')
+  assert.equal(v.apply({ ...fromB, seq: 2 }), false, 'and a duplicate is still dropped')
+})

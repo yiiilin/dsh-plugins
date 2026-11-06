@@ -82,6 +82,18 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    *
    * @returns the snapshot, or undefined when this hub was given no source.
    */
+  /**
+   * This node's own id, taken from the table it broadcasts.
+   *
+   * A hub has no config of its own; the node table is the one place that knows what this
+   * machine is called. Every sender naming itself `self` is what made two upstreams
+   * indistinguishable on the wire, so their counters could not be told apart.
+   */
+  function selfName() {
+    const rows = listNodes === undefined ? [] : listNodes()
+    return rows.find((row) => row.kind === 'self')?.envId ?? SELF_ENV_ID
+  }
+
   function buildSnapshot() {
     if (listNodes === undefined) return undefined
     const nodes = listNodes().map((row) => {
@@ -138,7 +150,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
           try {
             // Each edge is told which environment it *is*: a leaf knows only its token,
             // and without its own id it cannot tell "the destination is me" from "a peer".
-            record.socket.send(encodeJsonFrame(TOPOLOGY_FRAME, Buffer.alloc(16), { ...table, seq, selfEnvId: record.envId }))
+            record.socket.send(encodeJsonFrame(TOPOLOGY_FRAME, Buffer.alloc(16), { ...table, seq, from: selfName(), selfEnvId: record.envId }))
             sent += 1
           } catch (error) {
             logger.warn(`federation: could not send the topology to ${record.envId}: ${error.message}`)
