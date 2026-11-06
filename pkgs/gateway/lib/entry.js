@@ -178,9 +178,15 @@ export function startEntry({ host, port, listEnvironments, local, root, tunnel, 
       }
     }
     if (routed !== undefined && tunnel !== undefined) {
-      if (!tunnel.hub.proxyUpgrade(routed.id, req, socket, head, routed.path)) {
+      // An upgraded connection is a two-way byte stream with no request/response framing,
+      // which the tunnel carries — but the browser half needs the same treatment the HTTP
+      // path got, and that is not wired yet. Saying so is better than a stack trace in the
+      // log: the failure is a missing feature, not a broken environment.
+      if (typeof tunnel.hub.openStream !== 'function') {
         socket.end('HTTP/1.1 503 Service Unavailable\r\nconnection: close\r\n\r\n')
+        return
       }
+      socket.end('HTTP/1.1 503 Service Unavailable\r\nconnection: close\r\n\r\n')
       return
     }
     // The root profile's client opens its mux socket against `document.baseURI`,
@@ -282,8 +288,145 @@ async function handleHttp({ req, res, url, listEnvironments, local, root, tunnel
       return
     }
   }
+  /**
+   * Carry one browser request to a remote environment through the tunnel.
+   *
+   * The tunnel moves bytes, so the browser's request is re-serialized onto a stream and the
+   * environment's answer is written back as it arrives. This is the same mechanism the
+   * peer accessor uses; it lives here because this is the browser-facing path, which must
+   * preserve streaming — a page, an upload or an event stream all take it.
+   *
+   * @param hub - the tunnel hub.
+   * @param envId - destination environment.
+   * @param req - the browser's request.
+   * @param res - the browser's response.
+   * @param upstreamPath - path as the environment should see it.
+   * @returns whether the request could be sent.
+   */
+  /**
+   * Split an upstream HTTP response into its head and body, and pass both to `res`.
+   *
+   * The tunnel returns bytes, so a proxied answer arrives exactly as the remote daemon
+   * wrote it: status line, headers, then body. `res` is already the browser's response
+   * object, so the head cannot simply be forwarded — it has to be read, turned into
+   * `writeHead`, and only then may body bytes follow.
+   *
+   * @param res - the browser's response.
+   * @returns `{ push(bytes) }`.
+   */
+  function createResponseSplitter(res) {
+    let buffer = Buffer.alloc(0)
+    let headSent = false
+    // The remote daemon answers over HTTP/1.1, which defaults to chunked framing even when
+    // the request says `Connection: close`. The framing has to be removed here, because
+    // `res` adds its own: leaving it produced a body starting with a hex size and a CRLF.
+    let chunked = false
+    let pending = Buffer.alloc(0)
+    return {
+      push(piece) {
+        if (res.writableEnded) return
+        if (headSent) {
+          writeBody(piece)
+          return
+        }
+        buffer = Buffer.concat([buffer, piece])
+        const boundary = buffer.indexOf('\r\n\r\n')
+        if (boundary === -1) return
+        const head = buffer.subarray(0, boundary).toString('latin1')
+        const rest = buffer.subarray(boundary + 4)
+        const [statusLine, ...headerLines] = head.split('\r\n')
+        const match = /^HTTP\/\d+\.\d+ (\d{3})(?: (.*))?$/u.exec(statusLine ?? '')
+        const status = match === null ? 502 : Number(match[1])
+        const headers = {}
+        for (const line of headerLines) {
+          const at = line.indexOf(':')
+          if (at <= 0) continue
+          const name = line.slice(0, at).trim().toLowerCase()
+          const value = line.slice(at + 1).trim()
+          // Length and framing are the browser's business now, and a stale
+          // `content-length` would truncate a streamed body.
+          if (name === 'transfer-encoding' || name === 'content-length' || name === 'connection') continue
+          headers[name] = value
+        }
+        chunked = /\bchunked\b/iu.test(head)
+        res.writeHead(status, headers)
+        headSent = true
+        if (rest.length > 0) writeBody(rest)
+      },
+    }
+
+    /** Write body bytes, un-framing them first when the upstream chunked the answer. */
+    function writeBody(piece) {
+      if (!chunked) {
+        res.write(piece)
+        return
+      }
+      pending = Buffer.concat([pending, piece])
+      for (;;) {
+        const lineEnd = pending.indexOf('\r\n')
+        if (lineEnd === -1) return
+        const size = Number.parseInt(pending.subarray(0, lineEnd).toString('latin1').trim(), 16)
+        if (!Number.isFinite(size)) {
+          // Not a chunk header after all; forward the rest untouched rather than lose it.
+          res.write(pending)
+          pending = Buffer.alloc(0)
+          chunked = false
+          return
+        }
+        if (size === 0) {
+          pending = Buffer.alloc(0)
+          return
+        }
+        if (pending.length < lineEnd + 2 + size + 2) return
+        res.write(pending.subarray(lineEnd + 2, lineEnd + 2 + size))
+        pending = pending.subarray(lineEnd + 2 + size + 2)
+      }
+    }
+  }
+
+  function proxyToEnvironment(hub, envId, req, res, upstreamPath) {
+    if (hub.isReachable(envId) !== true) return false
+    // The far side answers with a complete HTTP response, status line and headers
+    // included — the tunnel carries bytes, not a parsed response. Writing those bytes
+    // straight to `res` makes the browser read them as the *body* of a response whose
+    // head it already has, so the head has to be parsed off the front here.
+    const relay = createResponseSplitter(res)
+    const opened = hub.openStream(envId, {
+      sink(piece) {
+        relay.push(piece)
+      },
+      onEnd() {
+        if (!res.writableEnded) res.end()
+      },
+      onError() {
+        if (!res.writableEnded) res.destroy()
+      },
+      port: 0,
+    })
+    if (opened.ok !== true) return false
+
+    // Re-serialize the request: method, path, headers, then body pieces as they arrive.
+    const lines = [`${req.method ?? 'GET'} ${upstreamPath} HTTP/1.1`]
+    for (const [name, value] of Object.entries(req.headers)) {
+      if (value === undefined) continue
+      // `transfer-encoding` is dropped so the answer comes back unframed: the tunnel is
+      // the framing, and a chunked body would arrive with its size markers intact.
+      if (name.toLowerCase() === 'transfer-encoding') continue
+      lines.push(`${name}: ${Array.isArray(value) ? value.join(', ') : value}`)
+    }
+    lines.push('Connection: close')
+    opened.send(Buffer.from(`${lines.join('\r\n')}\r\n\r\n`, 'utf8'))
+    req.on('data', (piece) => opened.send(piece))
+    req.on('end', () => opened.end())
+    // A browser that goes away must not leave the far side working for nobody.
+    res.on('close', () => {
+      if (!res.writableEnded) opened.end()
+    })
+    return true
+  }
+
   if (routed !== undefined) {
-    if (tunnel !== undefined && tunnel.hub.proxy(routed.id, req, res, routed.path)) return
+    if (tunnel !== undefined && proxyToEnvironment(tunnel.hub, routed.id, req, res, routed.path)) return
     // Offline is a state, not a deletion: say which environment is unreachable
     // instead of a bare 404, which reads as 'this environment does not exist'.
     res.writeHead(503, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
