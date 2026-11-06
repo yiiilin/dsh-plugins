@@ -15,6 +15,7 @@
 import { request as httpRequest } from 'node:http'
 import WebSocket from 'ws'
 import { FRAME, FrameReader, encodeFrame, encodeJsonFrame } from './frames.js'
+import { keepAlive } from './keepalive.js'
 
 /** Reconnect delays, then the ceiling. Network blips are normal; giving up is not. */
 const BACKOFF_MS = [1000, 2000, 5000, 10_000, 20_000, 30_000, 60_000]
@@ -66,6 +67,9 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
 
     socket.on('open', () => {
       attempts = 0
+      // Started before the harness check so the socket is watched from the moment it is
+      // usable: a link that dies during startup must still be noticed.
+      keepAlive(socket, { label: 'the main node', logger })
       const port = harnessPort()
       if (port === 0) {
         // The harness listener is not mounted yet. Close and retry: forwarding to port 0

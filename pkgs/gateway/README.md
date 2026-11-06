@@ -205,6 +205,33 @@ In the collapsed 56px sidebar the environment switcher is withdrawn entirely: a
 column out. Switching environment stays available from the panel's own environment
 list.
 
+## A tunnel that dies without saying so
+
+A WebSocket between two machines can stop working without either end being told. A
+NAT or firewall entry expires, a Wi-Fi hop goes away, a link drops: no FIN and no
+RST reaches either process, so `close` never fires. The edge keeps a socket it
+believes is open and never reconnects — its whole reconnect chain hangs off
+`close` — while the main node keeps listing the environment as online. On
+2026-11-04 that left a healthy edge unreachable for 49 hours with its TCP socket
+still `ESTABLISHED` and `lastrcv` two days old. Restarting the edge fixed it, and
+that was the only thing that could have.
+
+Both sides now watch their socket with `lib/federation/keepalive.js`: a `ws` ping
+every 30 seconds, and `terminate()` once 90 seconds pass with nothing received.
+Any inbound traffic counts as proof of life, not only a pong, so a busy tunnel is
+never pinged into a false timeout. `terminate` is deliberate rather than `close` —
+a half-open socket ignores a graceful handshake, and waiting for one is exactly
+what already failed; `terminate` fires `close`, which is what the edge's reconnect
+and the hub's cleanup are both waiting for.
+
+The ping is a protocol-level frame, not one of the tunnel's own frame types, so the
+wire format did not change and a mixed-version pair still interoperates: an older
+peer answers a ping inside `ws` without knowing anything about it.
+
+Three missed pings is the timeout on purpose. One dropped packet is not a dead
+machine, and a shorter timeout turns every transient stall on a real network into a
+reconnect storm.
+
 ## Why a profile cannot share a process
 
 `fs`, `subprocess` and `sandbox` are process-wide services. One `ctx.fs` means one

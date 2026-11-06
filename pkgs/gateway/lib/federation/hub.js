@@ -16,6 +16,7 @@
 
 import { WebSocketServer } from 'ws'
 import { FRAME, FrameReader, encodeFrame, encodeJsonFrame, newRequestId } from './frames.js'
+import { keepAlive } from './keepalive.js'
 
 /** Path the edges connect to. */
 export const TUNNEL_PATH = '/_tunnel'
@@ -46,6 +47,11 @@ export function createTunnelHub({ verifyToken, logger }) {
       pending: new Map(),
       openedAt: Date.now(),
     }
+
+    // The main node watches too: an edge that vanishes without closing its socket would
+    // otherwise stay listed as online forever, and `/env-<id>/` would answer 503 from a
+    // record that claims the tunnel is up.
+    keepAlive(socket, { label: record.envId, logger })
 
     socket.on('message', (data) => {
       let frames
