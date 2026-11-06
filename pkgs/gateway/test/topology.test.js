@@ -224,3 +224,14 @@ test('two upstreams each count their own sequence, and neither is dropped as sta
   assert.equal(v.apply({ ...fromB, seq: 2 }), true, 'but the same source still has to advance')
   assert.equal(v.apply({ ...fromB, seq: 2 }), false, 'and a duplicate is still dropped')
 })
+
+test('a sender that restarts and counts from one is still heard', () => {
+  // A peer's counter resets when its process does. Refusing the lower `seq` as stale left
+  // the receiver holding the last pre-restart table until the new process overtook the
+  // old mark — on a quiet federation that could be never, and the peer stayed invisible.
+  const v = createTopologyView({ selfId: 'me' })
+  v.apply({ from: 'peer', seq: 9, nodes: [nodeRow({ id: 'a', label: 'old' })], edges: [] })
+  assert.equal(v.apply({ from: 'peer', seq: 1, nodes: [nodeRow({ id: 'b', label: 'new' })], edges: [] }), true)
+  assert.deepEqual(v.nodes().map((row) => row.envId).sort(), ['a', 'b', 'me'])
+  assert.equal(v.apply({ from: 'peer', seq: 1, nodes: [], edges: [] }), false, 'a duplicate is still a duplicate')
+})

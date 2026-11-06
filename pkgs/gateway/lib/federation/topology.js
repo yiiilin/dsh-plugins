@@ -197,7 +197,17 @@ export function createTopologyView({ selfId = '' } = {}) {
       const from = typeof incoming.from === 'string' && incoming.from !== '' ? incoming.from : (source ?? '')
       const seq = Number(incoming.seq)
       const seen = highWater.get(from)
-      if (seen !== undefined && seq <= seen) return false
+      // A sender's counter restarts at one when it restarts, so a lower `seq` from a known
+      // source is not necessarily stale — it is usually a fresh process. Treating it as
+      // stale discarded every table until the new process happened to overtake the old
+      // high-water mark, which for a quiet federation could be never: the peer stayed
+      // invisible with its last pre-restart view. Adopt it and reset the mark.
+      if (seen !== undefined && seq === seen) return false
+      if (seen !== undefined && seq < seen) {
+        highWater.set(from, seq)
+        absorb(incoming, from)
+        return true
+      }
       highWater.set(from, seq)
       // A newer table from a known source is news even when it adds no row: the source is
       // still reporting, and a caller uses the return value to decide whether to log.
