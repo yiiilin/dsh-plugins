@@ -649,9 +649,10 @@ window.__ModuleLoader__.load({
         const openEnvironment = useCallback(async (envId) => {
           const fallback = `/${envId}/`
           try {
-            // Addressed to the environment itself: the tunnel carries it there, and that
-            // node answers with its own token.
-            const answer = await fetch(`/${envId}/admin/harness-url`)
+            // Asked of this node, which fetches the peer's token through the tunnel. A
+            // browser cannot ask the peer itself: its `/admin` answers only a tunnelled
+            // request, so a direct call came back as the login page.
+            const answer = await fetch(`/admin/harness-url?envId=${encodeURIComponent(envId)}`)
             if (!answer.ok) { window.open(fallback, '_blank'); return }
             const body = await answer.json()
             const search = body?.url?.search ?? ''
@@ -660,7 +661,11 @@ window.__ModuleLoader__.load({
             // to happen before the tab opens: a tab that loads the tokenized URL carries
             // no cookie yet and the far harness answers 401. Fetching it here leaves the
             // cookie in place, and the tab then opens signed in.
-            await fetch(`${fallback}${search}`, { credentials: 'same-origin', redirect: 'manual' })
+            // Follow the redirect: the exchange answers 303 with a `Set-Cookie` scoped to
+            // this environment, and `redirect: 'manual'` surfaces the 303 as an opaque
+            // response whose cookie a browser discards. `same-origin` is the default for a
+            // relative URL, and the cookie must land on this origin.
+            await fetch(`${fallback}${search}`, { credentials: 'same-origin' })
             window.open(fallback, '_blank')
           } catch {
             window.open(fallback, '_blank')
@@ -808,7 +813,7 @@ window.__ModuleLoader__.load({
                   h('span', { style: styles.tag }, `/${entry.id}/`))),
             h('div', { style: styles.cardActions },
             entry.online
-              ? h('button', { key: 'open', style: styles.button, onClick: () => window.open(`/${entry.id}/`, '_blank') }, t('open'))
+              ? h('button', { key: 'open', style: styles.button, onClick: () => void openEnvironment(entry.id) }, t('open'))
               : null,
             // The name is the only thing an operator can change: the id is the node's
             // identity and its URL is built from it.

@@ -289,13 +289,28 @@ export function createAdmin({
       // this route over an authenticated tunnel. `dsh web` authenticates by exchanging a
       // launch token for a cookie, and that token cannot be derived by a peer — so the
       // node that holds it supplies the exchange for one.
+      // `envId` names whose token is wanted. Empty means this node; anything else is
+      // fetched from that node through the tunnel. Without this the browser could only
+      // ever open this node's own UI — and a browser cannot ask a peer directly, because
+      // `/admin` on a peer answers only a tunnelled request.
+      const wanted = new URL(`http://x${url}`).searchParams.get('envId') ?? ''
+      if (wanted !== '' && wanted !== SELF_NODE_ID) {
+        const access = getPeer?.()
+        if (access === undefined) {
+          json(res, 503, { ok: false, error: 'this node cannot reach others' })
+          return true
+        }
+        const answer = await access.json(wanted, { method: 'GET', path: '/admin/harness-url' })
+        json(res, 200, answer.ok === true ? answer.body : { ok: false, error: answer.error })
+        return true
+      }
       if (harnessUrl === undefined) {
         json(res, 503, { ok: false, error: 'this node has no harness listener' })
         return true
       }
       try {
-        const url = await harnessUrl()
-        json(res, 200, url === undefined ? { ok: false, error: 'no session URL available' } : { ok: true, url })
+        const value = await harnessUrl()
+        json(res, 200, value === undefined ? { ok: false, error: 'no session URL available' } : { ok: true, url: value })
       } catch (error) {
         json(res, 500, { ok: false, error: error?.message ?? String(error) })
       }
