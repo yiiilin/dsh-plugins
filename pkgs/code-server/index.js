@@ -27,13 +27,13 @@
  */
 
 import { request as httpRequest } from 'node:http'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 
 import { detect } from './detect.js'
-import { createInstanceRegistry, isInstanceId, requestError } from './instances.js'
+import { createInstanceRegistry, isInstanceId, requestError, seedSharedSettings } from './instances.js'
 import { isSameOriginRequest, proxyHttp, proxyUpgrade, upstreamPath } from './proxy.js'
 
 export const name = 'code-server'
@@ -64,6 +64,11 @@ export const Config = z.object({
   /** Override the shared `--extensions-dir`. Empty means `<stateDir>/extensions`,
    * so every workspace reads the same installed extension set. */
   extensionsDir: z.string().default(''),
+  /** Override the shared `settings.json`. Empty means `<stateDir>/settings.json`. */
+  settingsFile: z.string().default(''),
+  /** One-time seed: the `<stateDir>/workspaces/<id>` directory whose existing
+   * settings.json becomes the shared file. Empty disables seeding. */
+  settingsSeedWorkspace: z.string().default(''),
   startupTimeoutMs: z.number().default(30000),
   installTimeoutMs: z.number().default(300000),
 })
@@ -144,6 +149,14 @@ export function apply(ctx, config = {}) {
   const extensionsDir = typeof config.extensionsDir === 'string' && config.extensionsDir !== ''
     ? config.extensionsDir
     : join(stateDir, 'extensions')
+  // One `settings.json` for every instance, for the same reason: user settings
+  // otherwise live under the per-workspace `--user-data-dir`, so a theme chosen
+  // in one workspace did not apply to the others. This path may be seeded from
+  // `settingsSeedWorkspace` once (see below) and is then linked from every
+  // workspace's `user-data/User/settings.json`.
+  const settingsFile = typeof config.settingsFile === 'string' && config.settingsFile !== ''
+    ? config.settingsFile
+    : join(stateDir, 'settings.json')
 
   const log = (level, message) => {
     try {
@@ -310,16 +323,93 @@ export function apply(ctx, config = {}) {
     })()
   }
 
+  /**
+   * Which workspaces should have an editor after a restart.
+   *
+   * The table itself cannot survive: instances are processes, and a restart
+   * kills them. What is worth keeping is the *intent* — "these workspaces had
+   * an editor open" — so the Host can rebuild them on the next start instead
+   * of making the user reopen the tab. Written on every create/close, and kept
+   * beside the per-workspace state so it lives and dies with DSH_HOME.
+   */
+  const liveFile = join(stateDir, 'live-workspaces.json')
+
+  /**
+   * The last write still in flight.
+   *
+   * Creates and closes fire this in bursts (a restore loop opens several
+   * instances), and two overlapping `writeFile` calls to one path interleave
+   * their bytes — the file then holds two documents and no longer parses, which
+   * silently loses the whole restore list. Chaining keeps one writer at a time.
+   */
+  let liveWrite = Promise.resolve()
+
+  /** Record the workspaces that currently own an instance. */
+  const recordLive = (rows) => {
+    try {
+      const workspaces = rows.map((row) => ({
+        workspaceId: row.workspaceId,
+        workspacePath: row.workspacePath,
+        workspaceTitle: row.workspaceTitle,
+      }))
+      const payload = `${JSON.stringify({ workspaces }, null, 2)}\n`
+      liveWrite = liveWrite
+        .then(() => mkdir(stateDir, { recursive: true }))
+        .then(() => writeFile(liveFile, payload, 'utf8'))
+        .catch((error) => {
+          log('warn', `code-server: could not persist the live workspace list: ${error instanceof Error ? error.message : String(error)}`)
+        })
+    } catch (error) {
+      log('warn', `code-server: could not persist the live workspace list: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /** Read the recorded workspaces, tolerating a missing or corrupt file. */
+  const readLive = async () => {
+    try {
+      const text = await readFile(liveFile, 'utf8')
+      const parsed = JSON.parse(text)
+      const workspaces = Array.isArray(parsed?.workspaces) ? parsed.workspaces : []
+      return workspaces.filter((entry) => entry !== null && typeof entry === 'object'
+        && typeof entry.workspaceId === 'string' && entry.workspaceId !== ''
+        && typeof entry.workspacePath === 'string' && entry.workspacePath !== '')
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * Seed the shared settings file from an existing workspace, once.
+   *
+   * Sharing only takes effect for workspaces that boot after this change; the
+   * workspace the user already configured keeps its own file (the linker
+   * refuses to replace a real one). Copying that file into the shared location
+   * the first time makes the existing configuration the baseline instead of
+   * silently starting from empty defaults.
+   */
+  void (async () => {
+    const seed = typeof config.settingsSeedWorkspace === 'string' ? config.settingsSeedWorkspace : ''
+    if (seed === '') return
+    const source = join(stateDir, 'workspaces', seed, 'user-data', 'User', 'settings.json')
+    const seeded = await seedSharedSettings({ settingsFile: source, sharedFile: settingsFile, log })
+    if (seeded) log('info', `code-server: seeded shared settings from ${source}`)
+  })()
+
   const registry = createInstanceRegistry({
     spawn,
     resolveExecutable,
     executable,
     stateDir,
     extensionsDir,
+    settingsFile,
     portRange,
     extraArgs,
     startupTimeoutMs,
+    // Test seam: a stub child never exits, so `close()` must not sit on the
+    // production grace period. Not a user-facing option.
+    ...(Number.isFinite(config.stopGraceMs) ? { stopGraceMs: config.stopGraceMs } : {}),
     log,
+    onChanged: recordLive,
   })
 
   /**
@@ -769,6 +859,44 @@ export function apply(ctx, config = {}) {
     })
     instanceRoutes.set(id, () => release(disposers))
   }
+
+  /**
+   * Bring back the editors that were running before the last restart.
+   *
+   * A restart kills every instance (they live in this process's cgroup), so
+   * without this the user has to reopen the tab to get an editor again. The
+   * recorded set is *intent*, not liveness: a workspace someone deliberately
+   * closed was removed from the file, so only the ones still wanted come back.
+   *
+   * Placed after `mountInstance` because it calls it; a `typeof` guard earlier
+   * in `apply` would hit the const's temporal dead zone before this point.
+   */
+  void detectionPromise.then(async (detection) => {
+    if (detection.installed !== true) return
+    const recorded = await readLive()
+    if (recorded.length === 0) return
+    let restored = 0
+    for (const entry of recorded) {
+      try {
+        // `create` is idempotent per workspace, so a duplicate record or a
+        // workspace recreated by an early request is not a second process.
+        const created = registry.create({
+          workspaceId: entry.workspaceId,
+          cwd: entry.workspacePath,
+          workspaceTitle: typeof entry.workspaceTitle === 'string' ? entry.workspaceTitle : '',
+        })
+        mountInstance(created.id)
+        restored += 1
+      } catch (error) {
+        log('warn', `code-server: could not restore ${entry.workspacePath}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+    if (restored > 0) {
+      log('info', `code-server: restored ${restored} editor(s) from the previous run`)
+    }
+  }, () => {
+    // Detection failed; nothing to restore against.
+  })
 
   // A closed instance must stop answering on its old paths at once, not only
   // when the whole plugin unloads.

@@ -22,9 +22,9 @@
  */
 
 import { createHash } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readlink, symlink, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { connect } from 'node:net'
 
 /** Instance ids are minted here and are also URL path segments. */
@@ -114,10 +114,11 @@ export function codeServerArgs({ executable, port, dir, folder, extensionsDir, s
 
 /** A sleep that never keeps the process alive on its own. */
 function sleep(ms) {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms)
-    timer.unref?.()
-  })
+  // Deliberately NOT unref'd. These timers are awaited: Node does not run a
+  // callback for an unref'd timer when it is the only pending handle, so the
+  // promise never settles and the caller hangs (a zero-delay grace period made
+  // `close()` hang forever, and a 250 ms port poll stalled every boot).
+  return new Promise((resolve) => { setTimeout(resolve, ms) })
 }
 
 /** @returns whether something is listening on a loopback port right now. */
@@ -156,6 +157,94 @@ export function requestError(status, message) {
 }
 
 /**
+ * Point one workspace's `settings.json` at the shared file.
+ *
+ * Extensions are already shared (`--extensions-dir`), but VS Code keeps user
+ * settings under `--user-data-dir`, which is per workspace — so a theme chosen
+ * in one workspace did not follow the user to another. A symlink makes the
+ * shared file the single source of truth without changing what code-server
+ * reads.
+ *
+ * A workspace that already has a REAL settings file is left untouched: it may
+ * hold configuration the user made before sharing existed, and silently
+ * replacing it would discard that. The caller seeds the shared file from such
+ * a workspace once (see `seedSharedSettings`).
+ *
+ * @param {object} options
+ * @param {string} options.workspaceUserDir `<user-data>/User` of one workspace.
+ * @param {string} options.sharedFile the shared settings file.
+ * @param {Function} [options.log] diagnostic logger.
+ * @returns {Promise<'linked'|'kept'|'failed'>} what happened.
+ */
+export async function linkSharedSettings({ workspaceUserDir, sharedFile, log = () => {} }) {
+  const target = join(workspaceUserDir, 'settings.json')
+  try {
+    await mkdir(workspaceUserDir, { recursive: true })
+    await mkdir(dirname(sharedFile), { recursive: true })
+
+    const linkTarget = await lstatOrNull(target)
+    if (linkTarget !== null && linkTarget.isSymbolicLink()) {
+      const pointsTo = await readlinkOrNull(target)
+      if (pointsTo === sharedFile) return 'linked'
+      // A link to an older shared location is re-pointed.
+      await unlink(target)
+    } else if (linkTarget !== null && linkTarget.isFile()) {
+      return 'kept'
+    }
+
+    await symlink(sharedFile, target)
+    return 'linked'
+  } catch (error) {
+    log('warn', `code-server: could not share settings.json: ${error instanceof Error ? error.message : String(error)}`)
+    return 'failed'
+  }
+}
+
+/**
+ * Seed the shared settings file from a workspace that already has real one.
+ *
+ * Only used once, when the shared file does not exist yet: it lets a user's
+ * existing configuration become the shared baseline instead of being replaced
+ * by empty defaults.
+ *
+ * @param {object} options
+ * @param {string} options.settingsFile a workspace's real settings file.
+ * @param {string} options.sharedFile the shared destination.
+ * @param {Function} [options.log] diagnostic logger.
+ * @returns {Promise<boolean>} whether the shared file was created.
+ */
+export async function seedSharedSettings({ settingsFile, sharedFile, log = () => {} }) {
+  try {
+    if ((await lstatOrNull(sharedFile)) !== null) return false
+    const text = await readFile(settingsFile, 'utf8')
+    await mkdir(dirname(sharedFile), { recursive: true })
+    await writeFile(sharedFile, text, 'utf8')
+    return true
+  } catch (error) {
+    log('warn', `code-server: could not seed shared settings: ${error instanceof Error ? error.message : String(error)}`)
+    return false
+  }
+}
+
+/** `lstat` that answers null for a missing path instead of throwing. */
+async function lstatOrNull(path) {
+  try {
+    return await lstat(path)
+  } catch {
+    return null
+  }
+}
+
+/** `readlink` that answers null when the path is not a readable link. */
+async function readlinkOrNull(path) {
+  try {
+    return await readlink(path)
+  } catch {
+    return null
+  }
+}
+
+/**
  * Create the instance table.
  *
  * @param {object} options
@@ -165,6 +254,9 @@ export function requestError(status, message) {
  * @param {string} options.stateDir root directory for per-workspace state.
  * @param {string} [options.extensionsDir] shared extensions directory; defaults
  *   to `<stateDir>/extensions` so every instance reads the same installed set.
+ * @param {string} [options.settingsFile] shared `settings.json`; defaults to
+ *   `<stateDir>/settings.json`. Every workspace's own file is linked to it so
+ *   theme and other preferences apply across workspaces.
  * @param {number[]} [options.portRange] inclusive loopback port pool.
  * @param {string[]} [options.extraArgs] extra code-server arguments.
  * @param {number} [options.startupTimeoutMs] port-wait deadline.
@@ -179,12 +271,17 @@ export function createInstanceRegistry({
   executable,
   stateDir,
   extensionsDir = join(stateDir, 'extensions'),
+  /** Shared VS Code user settings, linked from every workspace's user-data. */
+  settingsFile = join(stateDir, 'settings.json'),
   portRange = [14000, 14099],
   extraArgs = [],
   startupTimeoutMs = 30000,
   stopGraceMs = 2000,
   log = () => {},
   now = () => Date.now(),
+  /** Called after every create/close with the live rows, so the Host can record
+   * which workspaces should come back after a restart. */
+  onChanged = () => {},
 }) {
   const ports = []
   for (let port = Number(portRange[0]); port <= Number(portRange[1]); port += 1) ports.push(port)
@@ -260,6 +357,15 @@ export function createInstanceRegistry({
       await mkdir(extensionsDir, { recursive: true })
       if (entry.closing) return
       await mkdir(join(entry.dir, 'shared'), { recursive: true })
+      if (entry.closing) return
+      // Settings live under user-data, so they were per workspace even though
+      // extensions are shared. Link this workspace's file to the shared one so
+      // a chosen theme (and any other preference) applies everywhere.
+      await linkSharedSettings({
+        workspaceUserDir: join(entry.dir, 'user-data', 'User'),
+        sharedFile: settingsFile,
+        log,
+      })
       if (entry.closing) return
       await writeFile(join(entry.dir, 'config.yaml'), configYaml(entry.port), 'utf8')
       if (entry.closing) return
@@ -340,6 +446,24 @@ export function createInstanceRegistry({
   }
 
   /**
+   * Set while the whole table is being torn down for unload.
+   *
+   * A restart kills this process, which unloads the plugin first: `disposeAll`
+   * closes every instance, and if that published the empty table the restore
+   * list would be wiped by the very restart it exists to survive. During a
+   * teardown the published set is therefore left as it was.
+   */
+  let keepingRecord = false
+
+  /** Publish the live set. Guarded: persistence must never break a request. */
+  const notify = () => {
+    if (keepingRecord) return
+    try { onChanged(list()) } catch (error) {
+      log('warn', `code-server: could not record the instance table: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /**
    * Open one instance, or return the one this workspace already owns.
    *
    * Sessions are deliberately **not** ownership keys: several sessions in one
@@ -385,6 +509,7 @@ export function createInstanceRegistry({
     byId.set(id, entry)
     byWorkspace.set(workspaceId, id)
     entry.ready = boot(entry)
+    notify()
     return row(entry)
   }
 
@@ -407,6 +532,7 @@ export function createInstanceRegistry({
     for (const listener of closeListeners) {
       try { listener(id) } catch { /* one bad listener must not block the rest */ }
     }
+    notify()
     try {
       await Promise.race([
         Promise.resolve(entry.handle?.done).catch(() => {}),
@@ -425,7 +551,18 @@ export function createInstanceRegistry({
 
   /** Close the whole table on unload. */
   const disposeAll = async () => {
-    await Promise.allSettled([...byId.keys()].map((id) => close(id)))
+    // An unload is not the user closing an editor: the workspaces must stay in
+    // the restore list. Snapshot the table first, then suppress the per-close
+    // publications, then publish that snapshot once — otherwise the restart
+    // that this list exists to survive would erase it.
+    const surviving = list()
+    keepingRecord = true
+    try {
+      await Promise.allSettled([...byId.keys()].map((id) => close(id)))
+    } finally {
+      keepingRecord = false
+    }
+    try { onChanged(surviving) } catch { /* persistence is best-effort */ }
   }
 
   /** @returns a disposer for a close listener. */

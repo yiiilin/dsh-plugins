@@ -9,7 +9,9 @@
 import assert from 'node:assert/strict'
 import { createServer as createHttpServer } from 'node:http'
 import { createServer as createNetServer } from 'node:net'
-import { readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { PassThrough, Readable } from 'node:stream'
 import test from 'node:test'
 import vm from 'node:vm'
@@ -470,7 +472,10 @@ function makeHarness({ installed = true, installSucceeds = false } = {}) {
       installCommand: ['npm', 'install', '-g', 'code-server'],
       portRange: [portBase, portBase + 9],
       extraArgs: [],
-      stateDir: '/tmp/dsh-code-server-test-state',
+      // A fresh directory per harness: the restore pass reads
+      // `<stateDir>/live-workspaces.json` at mount, so a shared path made one
+      // test reopen another test's workspaces after it had finished.
+      stateDir: mkdtempSync(join(tmpdir(), `cs-harness-${++harnessSequence}-`)),
       extensionsDir: '/tmp/dsh-code-server-test-shared-extensions',
       startupTimeoutMs: 3000,
       installTimeoutMs: 3000,
@@ -662,6 +667,143 @@ test('mutations refuse a foreign Origin and /install requires confirmation', asy
   }), unconfirmed)
   assert.equal(unconfirmed.status, 400)
   assert.equal(h.launched.length, 0, 'nothing is spawned without confirm: true')
+})
+
+test('the live workspace table is recorded and restored across a restart', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'cs-restore-'))
+  const config = {
+    enabled: true,
+    executable: 'code-server',
+    installCommand: ['npm', 'install', '-g', 'x'],
+    extraArgs: [],
+    stateDir: dir,
+    extensionsDir: join(dir, 'extensions'),
+    startupTimeoutMs: 5,
+    installTimeoutMs: 1000,
+  }
+
+  // First run: open an editor, which must be written to the live file.
+  // A distinct port range per harness: the fake spawn binds a real listener, so
+  // two harnesses sharing one range would collide on the second boot.
+  const first = makeHarness()
+  t.after(first.cleanup)
+  apply(first.ctx, { ...config, portRange: [15600, 15609] })
+  const created = res()
+  await first.routeFor('/_dsh/code-server/sessions').handler(req({
+    method: 'POST',
+    url: '/_dsh/code-server/sessions',
+    body: JSON.stringify({ workspaceId: 'w-1', workspacePath: '/workspace/project' }),
+  }), created)
+  assert.equal(created.status, 200)
+
+  const liveFile = join(dir, 'live-workspaces.json')
+  const deadline = Date.now() + 2000
+  while (!existsSync(liveFile) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  assert.ok(existsSync(liveFile), 'opening an editor must record the workspace')
+  const recorded = JSON.parse(readFileSync(liveFile, 'utf8'))
+  assert.equal(recorded.workspaces.length, 1)
+  assert.equal(recorded.workspaces[0].workspaceId, 'w-1')
+
+  // A restart is a new process reading that file: the workspace comes back
+  // without anyone touching the tab.
+  const second = makeHarness()
+  t.after(second.cleanup)
+  apply(second.ctx, { ...config, portRange: [15610, 15619] })
+  const restoredDeadline = Date.now() + 3000
+  let rows = []
+  while (Date.now() < restoredDeadline) {
+    const state = res()
+    await second.routeFor('/_dsh/code-server/state').handler(req({ url: '/_dsh/code-server/state' }), state)
+    rows = state.json().instances
+    if (rows.length > 0) break
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  assert.equal(rows.length, 1, 'the recorded workspace is rebuilt on start')
+  assert.equal(rows[0].workspaceId, 'w-1')
+})
+
+test('unloading the plugin keeps the workspaces in the restore list', async (t) => {
+  // A restart unloads the plugin before killing the process. If that teardown
+  // published the empty table, the restore list would be wiped by the very
+  // restart it exists to survive. Verified through the registry directly so the
+  // test does not depend on the whole plugin's async teardown completing.
+  const dir = mkdtempSync(join(tmpdir(), 'cs-unload-'))
+  const written = []
+  const registry = createInstanceRegistry({
+    spawn: () => ({
+      done: new Promise(() => {}),
+      collected: { stdout: { readFrom: () => ({ text: '' }) }, stderr: { readFrom: () => ({ text: '' }) } },
+      terminate() {},
+    }),
+    resolveExecutable: async () => '/usr/bin/code-server',
+    executable: 'code-server',
+    stateDir: dir,
+    portRange: [15760, 15769],
+    startupTimeoutMs: 0,
+    stopGraceMs: 0,
+    onChanged: (rows) => written.push(rows.map((row) => row.workspaceId)),
+  })
+  t.after(() => { /* the registry is disposed below */ })
+
+  registry.create({ workspaceId: 'w-1', cwd: '/workspace/project' })
+  await registry.get('cs-1').ready
+  assert.deepEqual(written.at(-1), ['w-1'], 'opening records the workspace')
+
+  await registry.disposeAll()
+  // The last publication after an unload still names the workspace, so a
+  // restart re-opens it instead of forgetting it.
+  assert.deepEqual(written.at(-1), ['w-1'], 'an unload must not forget the workspace')
+})
+
+test('closing an editor removes it from the restored set', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'cs-forget-'))
+  const h = makeHarness()
+  t.after(h.cleanup)
+  apply(h.ctx, {
+    enabled: true,
+    executable: 'code-server',
+    installCommand: ['npm', 'install', '-g', 'x'],
+    portRange: [15620, 15629],
+    extraArgs: [],
+    stateDir: dir,
+    extensionsDir: join(dir, 'extensions'),
+    startupTimeoutMs: 5,
+    installTimeoutMs: 1000,
+    // `close()` waits out `stopGraceMs` for the child to reap; the fake child
+    // never exits, so a long grace would outlast the assertion window.
+    stopGraceMs: 0,
+  })
+  const created = res()
+  await h.routeFor('/_dsh/code-server/sessions').handler(req({
+    method: 'POST',
+    url: '/_dsh/code-server/sessions',
+    body: JSON.stringify({ workspaceId: 'w-1', workspacePath: '/workspace/project' }),
+  }), created)
+  assert.equal(created.status, 200, 'the harness must resolve this workspace')
+  const id = created.json().id
+  await h.routeFor('/_dsh/code-server/sessions').handler(req({
+    method: 'DELETE',
+    url: `/_dsh/code-server/sessions/${id}`,
+  }), res())
+
+  // The close path writes through the same async chain as create, so wait for
+  // the file to exist before judging its contents.
+  const liveFile = join(dir, 'live-workspaces.json')
+  const deadline = Date.now() + 3000
+  let workspaces = null
+  while (Date.now() < deadline) {
+    try {
+      const parsed = JSON.parse(readFileSync(liveFile, 'utf8'))
+      if (Array.isArray(parsed.workspaces)) {
+        workspaces = parsed.workspaces
+        if (workspaces.length === 0) break
+      }
+    } catch { /* not written yet */ }
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  assert.deepEqual(workspaces, [], 'a deliberately closed editor must not come back')
 })
 
 test('/install answers 202 at once and streams live output through /install/log', async (t) => {

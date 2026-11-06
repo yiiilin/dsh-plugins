@@ -35,6 +35,9 @@
         # 想复用宿主机已有的扩展目录（例如 ~/.local/share/code-server/extensions）
         # 就在这里写绝对路径。注意：多个实例并发安装/卸载扩展会写同一目录。
         extensionsDir: ''
+        # 用哪个工作区已有的 settings.json 作为共享基线（只播种一次）。
+        # 3a209ffd... 是 pcmspf1a-service-softwareshelves，已配置好主题。
+        settingsSeedWorkspace: 3a209ffd-1d7d-475f-9da8--f734efc2686b0b2d
         # 等待子进程监听端口的时间。
         startupTimeoutMs: 30000
         # 一键安装的超时，超时会终止整个进程组。
