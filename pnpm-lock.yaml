@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@deepseek-ai/dsh-atomic-write':
+        specifier: ^0.2.0-rc.2
+        version: 0.2.0-rc.2
     devDependencies:
       js-yaml:
         specifier: 4.3.2
@@ -15,11 +19,11 @@ importers:
         specifier: ^2.8.1
         version: 2.9.1
 
-  pkgs/delegate-mode: {}
+  pkgs/browser-vnc: {}
+
+  pkgs/code-server: {}
 
   pkgs/delete-session: {}
-
-  pkgs/desktop-vnc: {}
 
   pkgs/gateway:
     dependencies:
@@ -40,9 +44,12 @@ importers:
 
   pkgs/supervisor: {}
 
-  pkgs/tool-restrict-presets: {}
-
 packages:
+
+  '@deepseek-ai/dsh-atomic-write@0.2.0-rc.2':
+    resolution: {integrity: sha512-CezxdPmADDnOyG/ed9R18In/NifnLgu8hfJEjTBKxd7kbu0XXenyqnk25jeWD6bJYwu8AWAwcpVFuf438EJPJA==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ~4.0.4
 
   '@types/trusted-types@2.0.7':
     resolution: {integrity: sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==}
@@ -107,6 +114,8 @@ packages:
     hasBin: true
 
 snapshots:
+
+  '@deepseek-ai/dsh-atomic-write@0.2.0-rc.2': {}
 
   '@types/trusted-types@2.0.7':
     optional: true
