@@ -20,7 +20,15 @@
 /** Request/response lifecycle tags. */
 import { randomBytes } from 'node:crypto'
 
-/** Request/response lifecycle tags. */
+/**
+ * Frame tags.
+ *
+ * 1–8 are the request/response family: the main node asks and an edge answers. 9 is the
+ * one frame an edge is allowed to originate, and it exists because an edge has no other
+ * way to reach the main node — its `/admin` rejects a bare edge (the main node sets no
+ * `token`, so the federation gate is false there), and opening that gate would mean a
+ * second credential or an unauthenticated admin surface.
+ */
 export const FRAME = {
   /** JSON head of an HTTP request: method, path, headers. */
   requestHead: 1,
@@ -38,6 +46,14 @@ export const FRAME = {
   cancel: 7,
   /** Keeps a quiet connection from being reaped by intermediaries. */
   heartbeat: 8,
+  /**
+   * Edge → main node: deliver one message into a session, here or on another edge.
+   *
+   * The payload is JSON `{ toEnvId, sessionId, text }`. The sender's identity is *not*
+   * in it — the hub fills that in from the connection it arrived on, so a frame can
+   * never claim to come from another environment.
+   */
+  agentMessage: 9,
 }
 
 const HEADER_BYTES = 4

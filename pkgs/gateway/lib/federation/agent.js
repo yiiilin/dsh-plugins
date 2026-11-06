@@ -14,7 +14,7 @@
 
 import { request as httpRequest } from 'node:http'
 import WebSocket from 'ws'
-import { FRAME, FrameReader, encodeFrame, encodeJsonFrame } from './frames.js'
+import { FRAME, FrameReader, encodeFrame, encodeJsonFrame, newRequestId } from './frames.js'
 import { keepAlive } from './keepalive.js'
 
 /** Reconnect delays, then the ceiling. Network blips are normal; giving up is not. */
@@ -122,8 +122,16 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
     if (frame.type !== FRAME.requestHead) {
       const entry = inFlight.get(key)
       if (entry === undefined) return
-      if (frame.type === FRAME.requestBody) entry.onRequestBody(frame.payload)
-      else if (frame.type === FRAME.requestEnd) entry.onRequestEnd()
+      // A frame an edge originated comes back as a *response*, not as the
+      // request-shaped frames the edge answers. Both spellings mean the same thing to
+      // the half that is waiting, so both are accepted here: `agentMessage` is the one
+      // request an edge may originate, and its answer is an ordinary response.
+      if (frame.type === FRAME.requestBody || frame.type === FRAME.responseBody) {
+        entry.onRequestBody(frame.payload)
+      } else if (frame.type === FRAME.requestEnd || frame.type === FRAME.responseEnd) {
+        inFlight.delete(key)
+        entry.onRequestEnd()
+      }
       return
     }
     const head = JSON.parse(frame.payload.toString('utf8'))
@@ -350,7 +358,68 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
     inFlight.clear()
   }
 
-  return { start, stop, connected: () => socket?.readyState === WebSocket.OPEN }
+  /**
+   * Ask the main node to deliver one agent message, from this edge.
+   *
+   * An edge has no other way to reach the main node: its `/admin` refuses a bare edge
+   * (the main node sets no `token`, so that gate is false there), so the frame is the
+   * whole channel. The reply arrives on the request id as an ordinary response.
+   *
+   * `fromEnvId` is *not* sent — the hub derives it from this connection, which is what
+   * stops one environment from claiming to be another.
+   *
+   * @param message - `{ toEnvId, fromSessionId, sessionId, text }`.
+   * @param options.timeoutMs - how long to wait for the answer.
+   * @returns `{ ok: true, accepted: true }` or `{ ok: false, error }`.
+   */
+  function sendAgentMessage(message, { timeoutMs = 30_000 } = {}) {
+    return new Promise((resolve) => {
+      if (socket === undefined || socket.readyState !== WebSocket.OPEN) {
+        resolve({ ok: false, error: 'this edge is not connected to the main node' })
+        return
+      }
+      const settled = { done: false, body: '' }
+      const finish = (value) => {
+        if (settled.done) return
+        settled.done = true
+        resolve(value)
+      }
+      const timer = setTimeout(
+        () => finish({ ok: false, error: 'the main node did not answer in time' }),
+        timeoutMs,
+      )
+      const id = newRequestId()
+      const key = id.toString('hex')
+      inFlight.set(key, {
+        onRequestBody(payload) { settled.body += payload.toString('utf8') },
+        onRequestEnd() {
+          clearTimeout(timer)
+          try {
+            finish(JSON.parse(settled.body))
+          } catch {
+            finish({ ok: false, error: 'the main node answered something that is not JSON' })
+          }
+        },
+        close() {
+          clearTimeout(timer)
+          finish({ ok: false, error: 'the tunnel closed before the main node answered' })
+        },
+      })
+      sendOrClose(encodeJsonFrame(FRAME.agentMessage, id, {
+        toEnvId: message.toEnvId ?? '',
+        fromSessionId: message.fromSessionId ?? '',
+        sessionId: message.sessionId,
+        text: message.text,
+      }))
+    })
+  }
+
+  return {
+    start,
+    stop,
+    sendAgentMessage,
+    connected: () => socket?.readyState === WebSocket.OPEN,
+  }
 }
 
 /** Drop headers that describe one hop, not the message. */

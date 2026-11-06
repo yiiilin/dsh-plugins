@@ -22,14 +22,28 @@ import { keepAlive } from './keepalive.js'
 export const TUNNEL_PATH = '/_tunnel'
 
 /**
+ * The environment id meaning "this node".
+ *
+ * Shared with the admin API's own overview, which reports this node under the same id,
+ * so a caller that learned the id from one service can use it in the other.
+ */
+export const SELF_ENV_ID = 'self'
+
+/**
  * Accept and manage edge connections.
  *
  * @param options.verifyToken - `(token) => environment | undefined`; resolves the
  *   environment an edge claims to be, or nothing when the token is unknown.
  * @param options.logger - logger.
- * @returns the hub: `accept`, `proxy`, `proxyUpgrade`, `isOnline`, `ids`, `close`.
+ * @param options.deliver - `(message) => Promise<{ok, error?}>`; puts one message into a
+ *   session **on this machine**. Supplied by the gateway so the tunnel stays a
+ *   transport and never learns how a session is reached.
+ * @param options.forward - `(toEnvId, message) => Promise<{ok, error?}>`; sends a message
+ *   to another edge through this node. Absent on an edge, which forwards nothing.
+ * @returns the hub: `accept`, `proxy`, `proxyUpgrade`, `request`, `sendAgentMessage`,
+ *   `isOnline`, `ids`, `close`.
  */
-export function createTunnelHub({ verifyToken, logger }) {
+export function createTunnelHub({ verifyToken, logger, deliver, forward }) {
   /** envId -> connection record. */
   const connections = new Map()
 
@@ -95,6 +109,12 @@ export function createTunnelHub({ verifyToken, logger }) {
 
   function dispatch(record, frame) {
     if (frame.type === FRAME.heartbeat) return
+    // An edge may only originate one thing, and it is not a pending request: handle it
+    // before the `pending` lookup, which would otherwise count it as an orphan.
+    if (frame.type === FRAME.agentMessage) {
+      void receiveAgentMessage(record, frame)
+      return
+    }
     const key = frame.id.toString('hex')
     const entry = record.pending.get(key)
     if (entry === undefined) {
@@ -302,6 +322,110 @@ export function createTunnelHub({ verifyToken, logger }) {
     return true
   }
 
+  /**
+   * Answer one edge's `agentMessage` frame.
+   *
+   * The sender is `record.envId` — taken from the connection, never from the payload —
+   * so `fromEnvId` below cannot be forged by whoever wrote the frame. The reply is an
+   * ordinary `responseHead`/`responseBody`/`responseEnd` trio on the same request id:
+   * the edge's sender is waiting on that id like any other request.
+   *
+   * @param record - the connection the frame arrived on.
+   * @param frame - the decoded frame.
+   */
+  async function receiveAgentMessage(record, frame) {
+    let answer
+    try {
+      const payload = JSON.parse(frame.payload.toString('utf8'))
+      const message = {
+        fromEnvId: record.envId,
+        fromSessionId: typeof payload.fromSessionId === 'string' ? payload.fromSessionId : '',
+        sessionId: payload.sessionId,
+        text: payload.text,
+      }
+      const toEnvId = typeof payload.toEnvId === 'string' ? payload.toEnvId.trim() : ''
+      if (toEnvId === record.envId) {
+        // Forwarding a message back to its own sender is never what was meant, and it
+        // would let a buggy edge keep a conversation with itself alive forever.
+        answer = { ok: false, error: `an environment cannot message itself (${toEnvId})` }
+      } else if (toEnvId === '' || toEnvId === SELF_ENV_ID) {
+        answer = await deliver?.(message) ?? { ok: false, error: 'this node cannot deliver messages' }
+      } else if (forward === undefined) {
+        // An edge has no peers of its own; only the main node routes between them.
+        answer = { ok: false, error: 'this node does not route messages to other environments' }
+      } else if (!connections.has(toEnvId)) {
+        answer = { ok: false, error: `environment "${toEnvId}" is offline` }
+      } else {
+        answer = await forward(toEnvId, message)
+      }
+    } catch (error) {
+      answer = { ok: false, error: `malformed agent message: ${error?.message ?? error}` }
+    }
+
+    try {
+      record.socket.send(encodeJsonFrame(FRAME.responseHead, frame.id, {
+        status: answer.ok === true ? 200 : 502,
+        statusText: answer.ok === true ? 'OK' : 'Bad Gateway',
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+      }))
+      record.socket.send(encodeFrame(FRAME.responseBody, frame.id, Buffer.from(JSON.stringify(answer), 'utf8')))
+      record.socket.send(encodeFrame(FRAME.responseEnd, frame.id))
+    } catch (error) {
+      logger.warn(`federation: could not answer ${record.envId}'s agent message: ${error.message}`)
+    }
+  }
+
+  /**
+   * Ask one edge to deliver a message, from this node.
+   *
+   * Resolves with the edge's answer, or a failure when the tunnel is gone. It never
+   * hangs: a socket that dies mid-flight fails the pending entry through `onClose`.
+   *
+   * @param envId - the environment to reach.
+   * @param message - `{ fromEnvId, fromSessionId, sessionId, text }`.
+   * @param options.timeoutMs - how long to wait for the answer.
+   * @returns `{ ok: true, accepted: true }` or `{ ok: false, error }`.
+   */
+  function sendAgentMessage(envId, message, { timeoutMs = 30_000 } = {}) {
+    return new Promise((resolve) => {
+      const settled = { done: false, body: '' }
+      const finish = (value) => {
+        if (settled.done) return
+        settled.done = true
+        resolve(value)
+      }
+      const timer = setTimeout(
+        () => finish({ ok: false, error: `environment "${envId}" did not answer in time` }),
+        timeoutMs,
+      )
+      const sent = request(envId, {
+        method: 'POST',
+        path: '/admin/agent-message',
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({
+          fromEnvId: message.fromEnvId,
+          fromSessionId: message.fromSessionId,
+          sessionId: message.sessionId,
+          text: message.text,
+        }),
+      }, {
+        onBody(chunk) { settled.body += chunk.toString('utf8') },
+        onEnd() {
+          clearTimeout(timer)
+          try {
+            finish(JSON.parse(settled.body))
+          } catch {
+            finish({ ok: false, error: `environment "${envId}" answered something that is not JSON` })
+          }
+        },
+      })
+      if (!sent) {
+        clearTimeout(timer)
+        finish({ ok: false, error: `environment "${envId}" is offline` })
+      }
+    })
+  }
+
   /** Whether an environment currently has a live connection. */
   function isOnline(envId) {
     return connections.has(envId)
@@ -323,7 +447,7 @@ export function createTunnelHub({ verifyToken, logger }) {
     return token === '' ? undefined : verifyToken(token)
   }
 
-  return { accept: register, verify, proxy, proxyUpgrade, request, isOnline, ids, close }
+  return { accept: register, verify, proxy, proxyUpgrade, request, sendAgentMessage, isOnline, ids, close }
 }
 
 /**

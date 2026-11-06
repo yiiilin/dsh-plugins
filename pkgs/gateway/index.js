@@ -30,6 +30,8 @@ import { startEntry } from './lib/entry.js'
 import { createProfileProcesses } from './lib/profile-process.js'
 import { createTunnelAgent } from './lib/federation/agent.js'
 import { createTunnelHub, createTunnelServer, tokenOf, TUNNEL_PATH } from './lib/federation/hub.js'
+import { deliverToSession } from './lib/agent-message.js'
+import { agentMessageTools } from './tools.js'
 import { defaultSkillsRoot, readInventory } from './lib/inventory.js'
 import { installUnit, renderUnit, underSystemd, unitNameFor } from './lib/systemd.js'
 import {
@@ -168,9 +170,50 @@ export function apply(ctx, config) {
     },
   }
 
+  /**
+   * Put one message into a session on this machine.
+   *
+   * The service is looked up per call, not captured: `sessionController` belongs to the
+   * harness this process is attached to, and a lookup at mount time would pin whichever
+   * instance existed then.
+   */
+  /**
+   * Resolved once at mount, the way every plugin obtains a Remote service.
+   *
+   * `sessionController` is a Remote service rather than a context service, so `ctx.get`
+   * answers `undefined` for it even while it is mounted — the first draft of this file
+   * made exactly that mistake and reported "no session controller" on a node that had
+   * one. dsh-bot reaches it the same way.
+   */
+  const sessionController = { current: undefined }
+  if (typeof ctx.inject === 'function') {
+    ctx.inject(['sessionController'], (injected) => {
+      sessionController.current = injected.sessionController
+      return () => { sessionController.current = undefined }
+    })
+  }
+
+  const deliverMessage = async (message) => {
+    const sessions = sessionController.current
+    if (sessions === undefined) return { ok: false, error: 'this node has no session controller' }
+    return await deliverToSession({ sessions, logger }, message)
+  }
+
+  /**
+   * Route one message to another environment, from the main node.
+   *
+   * Only the main node holds the other edges' tunnels, so only it can do this; an edge
+   * gets `undefined` and answers "this node does not route".
+   */
+  const forwardMessage = config.role !== 'main'
+    ? undefined
+    : (toEnvId, message) => hub.sendAgentMessage(toEnvId, message)
+
   const hub = createTunnelHub({
     logger,
     verifyToken: (token) => registry.byToken(token),
+    deliver: deliverMessage,
+    forward: forwardMessage,
   })
   const tunnelServer = createTunnelServer()
 
@@ -578,6 +621,7 @@ export function apply(ctx, config) {
   const admin = createAdmin({
     registry,
     hub,
+    deliverMessage,
     config: { ...config, cacheDir },
     profileSelf: selfInfo,
     inventory,
@@ -623,6 +667,72 @@ export function apply(ctx, config) {
       logger,
     })
     : undefined
+
+  /**
+   * The sending half of an agent message.
+   *
+   * A main node can reach any of its edges; an edge can reach only itself and, through
+   * the tunnel, the main node. Both go out through `hub.sendAgentMessage`, which is the
+   * same path a frame takes when it arrives from the other direction.
+   */
+  const sendAgentMessage = async (request) => {
+    const toEnvId = String(request.envId ?? '').trim()
+    if (toEnvId === '' || toEnvId === 'self') {
+      // Local delivery never crosses the tunnel; going out and back would need the main
+      // node to be reachable, and on an edge it might not be. The sender is this node,
+      // which is exactly what `self` means to a caller here — not a guess at its name.
+      return await deliverMessage({
+        fromEnvId: 'self',
+        fromSessionId: request.fromSessionId,
+        sessionId: request.sessionId,
+        text: request.text,
+      })
+    }
+    if (!hub.isOnline(toEnvId)) {
+      return { ok: false, error: `environment "${toEnvId}" is offline; call agent_list_envs` }
+    }
+    if (config.role === 'main') {
+      return await hub.sendAgentMessage(toEnvId, {
+        fromEnvId: 'self',
+        fromSessionId: request.fromSessionId,
+        sessionId: request.sessionId,
+        text: request.text,
+      })
+    }
+    // An edge addresses the main node as "self" from its own point of view, so a named
+    // envId here is another edge's — reachable only through the main node's routing.
+    return await agent.sendAgentMessage({
+      toEnvId,
+      fromSessionId: request.fromSessionId,
+      sessionId: request.sessionId,
+      text: request.text,
+    })
+  }
+
+  /** The environment list the agent sees: this node plus every tunnel it can use. */
+  const listReachable = () => {
+    const rows = [{
+      envId: 'self',
+      label: config.role === 'main' ? 'this node (main)' : 'this node (edge)',
+      online: true,
+    }]
+    for (const environment of registry.list()) {
+      rows.push({
+        envId: environment.id,
+        label: environment.label,
+        online: hub.isOnline(environment.id),
+      })
+    }
+    return rows
+  }
+
+  if (typeof ctx.inject === 'function') {
+    ctx.inject(['tools'], (toolCtx) => {
+      for (const definition of agentMessageTools({ listEnvironments: listReachable, send: sendAgentMessage })) {
+        toolCtx.tools.register(definition)
+      }
+    })
+  }
 
   ctx.effect(() => {
     let cancelled = false

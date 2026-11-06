@@ -10,6 +10,7 @@
   "description": "Single entry, authentication, profile routing and SSH deployment for a DeepSeek Harness host",
   "files": [
     "client.js",
+    "tools.js",
     "index.js",
     "lib",
     "cordis.patch.yml",

@@ -17,6 +17,7 @@
  */
 
 import { PAIRING_CREDENTIAL_MIN_LENGTH } from './auth/pairing-credential.js'
+import { validateMessageRequest } from './agent-message.js'
 import { deriveId, freshToken, normalizeEnvironment } from './registry.js'
 
 /** How long a tunnel status stays cached, so a panel refresh is not a probe storm. */
@@ -40,7 +41,7 @@ const SELF_NODE_ID = 'self'
 
 export function createAdmin({
   registry, hub, config, profileSelf, inventory, readModel, readModelRows, writeModel, sessions,
-  changeCredential, logger, relayTimeoutMs = RELAY_TIMEOUT_MS,
+  changeCredential, logger, relayTimeoutMs = RELAY_TIMEOUT_MS, deliverMessage,
 }) {
   /** id -> `{ at, value }` for the last known connection state. */
   const statusCache = new Map()
@@ -185,6 +186,45 @@ export function createAdmin({
 
     if (pathname === '/admin/inventory' && method === 'GET') {
       json(res, 200, { ok: true, inventory: await inventory() })
+      return true
+    }
+
+    if (pathname === '/admin/agent-message') {
+      // Reachable only from another environment: `local()` answers an `/admin` request
+      // that carries this node's federation token before the browser session gate, and
+      // the hub fills `fromEnvId` from the connection rather than the body. A browser
+      // that somehow sent this would still have to be signed in, and would then be
+      // rejected below for having no `fromEnvId` — that caller is a peer node, not a
+      // person.
+      if (method !== 'POST') {
+        json(res, 405, { ok: false, error: `${method} is not supported on ${pathname}` }, { allow: 'POST' })
+        return true
+      }
+      const body = await readJson(req)
+      const fromEnvId = typeof body.fromEnvId === 'string' ? body.fromEnvId.trim() : ''
+      if (fromEnvId === '') {
+        json(res, 400, { ok: false, error: 'agent-message requires the sending node to identify itself' })
+        return true
+      }
+      const checked = validateMessageRequest({
+        sessionId: body.sessionId,
+        text: body.text,
+      })
+      if (checked.ok !== true) {
+        json(res, 400, { ok: false, error: checked.error })
+        return true
+      }
+      if (deliverMessage === undefined) {
+        json(res, 501, { ok: false, error: 'this node cannot deliver agent messages' })
+        return true
+      }
+      const result = await deliverMessage({
+        fromEnvId,
+        fromSessionId: typeof body.fromSessionId === 'string' ? body.fromSessionId : '',
+        sessionId: checked.value.sessionId,
+        text: checked.value.text,
+      })
+      json(res, result.ok === true ? 200 : 502, result)
       return true
     }
 
