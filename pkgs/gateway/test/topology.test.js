@@ -164,3 +164,46 @@ test('a row already in wire shape keeps its envId', () => {
   assert.equal(nodeRow(wireShape).envId, 'n95c')
   assert.equal(nodeRow(edgeA).envId, 'n95c', 'registry shape still works')
 })
+
+test("a node's own name wins over what the registry was told", async () => {
+  // The machine is the authority on what it is called. A registry label typed in by
+  // whoever enrolled it is that side's guess, and two upstreams would disagree about the
+  // same machine. The claim arrives with the handshake and travels in the broadcast.
+  const { createTunnelHub } = await import('../lib/federation/hub.js')
+  const table = [
+    { envId: 'self', kind: 'self', label: 'main', online: true },
+    { envId: 'a', kind: 'remote', label: 'typed-in-by-upstream', online: true },
+  ]
+  const frames = []
+  const socket = {
+    on() {},
+    send(buffer) {
+      const length = buffer.readUInt32BE(0)
+      frames.push(JSON.parse(buffer.subarray(21, 21 + length).toString('utf8')))
+    },
+    close() {},
+  }
+  const hub = createTunnelHub({
+    logger: { info() {}, warn() {} },
+    verifyToken: () => undefined,
+    listNodes: () => table,
+  })
+  hub.accept({ id: 'a' }, socket, { name: 'my-own-name' })
+  const row = frames[frames.length - 1].nodes.find((node) => node.envId === 'a')
+  assert.equal(row.label, 'my-own-name')
+  hub.close()
+})
+
+test('a node that declares no name keeps the registry one', async () => {
+  const { createTunnelHub } = await import('../lib/federation/hub.js')
+  const table = [{ envId: 'a', kind: 'remote', label: 'fallback', online: true }]
+  const frames = []
+  const hub = createTunnelHub({
+    logger: { info() {}, warn() {} },
+    verifyToken: () => undefined,
+    listNodes: () => table,
+  })
+  hub.accept({ id: 'a' }, { on() {}, send(b) { const l = b.readUInt32BE(0); frames.push(JSON.parse(b.subarray(21, 21 + l).toString())) }, close() {} })
+  assert.equal(frames[frames.length - 1].nodes.find((n) => n.envId === 'a').label, 'fallback')
+  hub.close()
+})

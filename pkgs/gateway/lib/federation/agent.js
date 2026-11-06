@@ -36,7 +36,7 @@ const BACKOFF_MS = [1000, 2000, 5000, 10_000, 20_000, 30_000, 60_000]
  * @param options.logger - logger.
  * @returns `{ start, stop, connected }`.
  */
-export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, harnessCookie, logger }) {
+export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, harnessCookie, logger, selfName = '' }) {
   let socket
   let reader
   let stopped = false
@@ -53,11 +53,19 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
    */
   const topology = createTopologyView({ selfId: process.env.DSH_ENV_ID ?? 'self' })
 
+  /** The name this node claims for itself; empty means the hostname, then the envId. */
+  const claimedName = selfName === '' ? (process.env.HOSTNAME ?? '') : selfName
+
   function target() {
     const base = mainUrl.replace(/\/+$/u, '')
     const scheme = base.startsWith('https:') ? 'wss:' : 'ws:'
     const rest = base.replace(/^https?:/u, '')
-    return `${scheme}//${rest}/_tunnel?token=${encodeURIComponent(token)}`
+    // The name travels with the handshake: a node names itself, and no upstream should be
+    // inventing one for it. Every peer learns it from the topology broadcast afterwards.
+    const named = claimedName === '' ? '' : `&name=${encodeURIComponent(claimedName)}`
+    const host = process.env.HOSTNAME ?? ''
+    const hostPart = host === '' ? '' : `&hostname=${encodeURIComponent(host)}`
+    return `${scheme}//${rest}/_tunnel?token=${encodeURIComponent(token)}${named}${hostPart}`
   }
 
   function schedule() {

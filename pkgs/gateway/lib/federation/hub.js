@@ -72,7 +72,14 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    */
   function buildSnapshot() {
     if (listNodes === undefined) return undefined
-    const nodes = listNodes().map((row) => nodeRow(row, { online: row.online, selfId: row.envId }))
+    const nodes = listNodes().map((row) => {
+      // A node's own name beats whatever the registry was given when it was enrolled:
+      // the machine is the authority on what it is called, and two upstreams that typed
+      // different labels would otherwise disagree about the same machine.
+      const claimed = connections.get(row.envId)?.claimedName
+      const label = typeof claimed === 'string' && claimed !== '' ? claimed : row.label
+      return nodeRow({ ...row, label }, { online: row.online, selfId: row.envId })
+    })
     // Star today: every environment is one hop away, so `via` is empty. The field is
     // carried anyway so a tree does not need a different message shape.
     const edges = nodes
@@ -135,11 +142,14 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     return sent
   }
 
-  function register(environment, socket) {
+  function register(environment, socket, claim = {}) {
     const record = {
       envId: environment.id,
       socket,
       reader: new FrameReader(),
+      /** The name this node declared for itself, if it sent one. */
+    claimedName: typeof claim.name === 'string' ? claim.name : '',
+    claimedHostname: typeof claim.hostname === 'string' ? claim.hostname : '',
       /** requestId(hex) -> handlers for an in-flight request. */
       pending: new Map(),
       openedAt: Date.now(),

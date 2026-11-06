@@ -74,8 +74,19 @@ export const Config = z.object({
   upstreams: z.array(z.object({
     url: z.string().description('Base URL of the upstream node'),
     token: z.string().description('This node\'s token on that link'),
-    label: z.string().default('').description('Shown in the panel; defaults to the URL'),
   })).default([]),
+
+  /**
+   * The name this node shows under, everywhere.
+   *
+   * Declared by the node itself rather than typed in by whoever enrolled it: a name set
+   * on the upstream's side is that side's guess, and two upstreams would give the same
+   * machine two different names. It travels in the topology broadcast, so every peer
+   * learns the name the machine chose for itself.
+   *
+   * Empty falls back to the hostname, and finally to the environment id.
+   */
+  name: z.string().default(''),
 
   /**
    * Retired single-upstream model, still read so an existing profile boots.
@@ -259,7 +270,7 @@ export function apply(ctx, config) {
     listNodes: config.role !== 'main'
       ? undefined
       : () => [
-        { envId: 'self', label: 'this node (main)', kind: 'self', online: true },
+        { envId: 'self', label: config.name === '' ? 'this node' : config.name, kind: 'self', online: true },
         ...registry.list().map((environment) => ({
           envId: environment.id,
           label: environment.label,
@@ -719,6 +730,7 @@ export function apply(ctx, config) {
     ? createTunnelAgent({
       mainUrl: config.mainUrl,
       token: config.token,
+      selfName: config.name,
       harnessPort: () => embeddedRoot.portOrZero(),
       // `/admin` belongs to this process; the tunnel forwards it here, not to the harness.
       daemonPort: () => config.port,

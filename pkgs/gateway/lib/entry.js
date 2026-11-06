@@ -143,8 +143,13 @@ export function startEntry({ host, port, listEnvironments, local, root, tunnel, 
         socket.end('HTTP/1.1 401 Unauthorized\r\nconnection: close\r\n\r\n')
         return
       }
+      // The connecting node names itself; the upstream does not invent a name for it.
+      const claim = new URL(`http://x${url}`).searchParams
       tunnel.server.handleUpgrade(req, socket, head, (ws) => {
-        tunnel.hub.accept(environment, ws)
+        tunnel.hub.accept(environment, ws, {
+          name: claim.get('name') ?? '',
+          hostname: claim.get('hostname') ?? '',
+        })
       })
       return
     }
