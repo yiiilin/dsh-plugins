@@ -83,7 +83,7 @@ export function configYaml(port) {
  * @param {string[]} [options.extraArgs] extra operator-configured arguments.
  * @returns {string[]} argv, never shell-interpreted.
  */
-export function codeServerArgs({ executable, port, dir, folder, extensionsDir, extraArgs = [] }) {
+export function codeServerArgs({ executable, port, dir, folder, extensionsDir, sharedDataDir, extraArgs = [] }) {
   return [
     executable,
     '--config', join(dir, 'config.yaml'),
@@ -91,10 +91,22 @@ export function codeServerArgs({ executable, port, dir, folder, extensionsDir, e
     '--auth', 'none',
     '--user-data-dir', join(dir, 'user-data'),
     '--extensions-dir', extensionsDir,
+    // code-server has no flag of its own for VS Code's *shared* storage
+    // (`sharedStorage/state.vscdb`), which otherwise lands in a single
+    // machine-wide `~/.vscode-oss-shared` shared by every instance. Passing it
+    // through `--vscode-option` (code-server's documented passthrough) keeps
+    // each workspace's shared state inside DSH_HOME and isolates the instances.
+    ...(typeof sharedDataDir === 'string' && sharedDataDir !== ''
+      ? ['--vscode-option', `shared-data-dir=${sharedDataDir}`]
+      : []),
     '--disable-telemetry',
     '--disable-update-check',
     '--disable-getting-started-override',
-    '--ignore-last-opened',
+    // `--ignore-last-opened` is deliberately NOT passed: code-server records
+    // the opened folder in `coder.json`, and letting it read that back is what
+    // restores the workspace after a restart. The `?folder=` URL still wins
+    // when present (its precedence is workspace > folder > cli > last-opened),
+    // so the panel keeps opening the current workspace.
     ...extraArgs,
     folder,
   ]
@@ -247,6 +259,8 @@ export function createInstanceRegistry({
       if (entry.closing) return
       await mkdir(extensionsDir, { recursive: true })
       if (entry.closing) return
+      await mkdir(join(entry.dir, 'shared'), { recursive: true })
+      if (entry.closing) return
       await writeFile(join(entry.dir, 'config.yaml'), configYaml(entry.port), 'utf8')
       if (entry.closing) return
       if (typeof resolveExecutable !== 'function') throw new Error('subprocess service unavailable')
@@ -261,6 +275,9 @@ export function createInstanceRegistry({
           dir: entry.dir,
           folder: entry.cwd,
           extensionsDir,
+          // Per-workspace shared storage, beside this workspace's user-data,
+          // so no two workspaces share one `sharedStorage/state.vscdb`.
+          sharedDataDir: join(entry.dir, 'shared'),
           extraArgs,
         }),
         cwd: entry.dir,

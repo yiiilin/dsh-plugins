@@ -74,18 +74,28 @@ test('codeServerArgs opens the workspace and points at a shared extensions dir',
     dir: '/state/workspaces/abc',
     folder: '/workspace/project',
     extensionsDir: '/state/extensions',
+    sharedDataDir: '/state/workspaces/abc/shared',
     extraArgs: ['--locale', 'zh-cn'],
   })
   assert.equal(argv[0], '/usr/bin/code-server')
   assert.equal(argv[argv.length - 1], '/workspace/project')
   assert.deepEqual(argv.slice(-3, -1), ['--locale', 'zh-cn'])
   assert.equal(argv[argv.indexOf('--extensions-dir') + 1], '/state/extensions')
+  // VS Code's shared storage has no code-server flag; it is passed through so
+  // each workspace keeps its own `sharedStorage/state.vscdb` inside DSH_HOME
+  // instead of the machine-wide `~/.vscode-oss-shared`.
+  const passthrough = argv[argv.indexOf('--vscode-option') + 1]
+  assert.equal(passthrough, 'shared-data-dir=/state/workspaces/abc/shared')
   // code-server's default would put extensions under --user-data-dir; the
   // shared path must be outside this workspace's directory.
   assert.equal(argv[argv.indexOf('--user-data-dir') + 1], '/state/workspaces/abc/user-data')
   assert.ok(argv.includes('--auth'))
   assert.ok(argv.includes('none'))
-  assert.ok(argv.includes('--ignore-last-opened'))
+  // Deliberately absent: code-server records the opened folder in `coder.json`
+  // and reading it back is what restores the workspace after a restart. The
+  // `?folder=` URL still wins because the last-opened branch only runs when no
+  // folder/workspace query is present.
+  assert.ok(!argv.includes('--ignore-last-opened'))
   assert.ok(argv.some((part) => part === '127.0.0.1:14003'))
 })
 
