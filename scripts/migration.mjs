@@ -19,10 +19,11 @@ export const ADDRESSES = Object.freeze([
   { id: 'session-list-cache', key: 'session-list-cache', legacy: '@yiln-dsh/dsh-plugin-session-list-cache' },
   { id: 'web-daemon', key: 'web-daemon', legacy: '@yiln-dsh/dsh-plugin-web-daemon' },
   // `id` still matches the row a legacy profile wrote; `key` decides what it becomes.
-  // `legacyKey` carries the pre-rename standalone name for the same reason.
-  { id: 'session-mode', key: 'delegate-mode', legacyKey: 'session-mode', legacy: '@yiln-dsh/dsh-plugins/session-mode' },
-  { id: 'tool-restrict-presets', key: 'tool-restrict-presets', legacy: '@yiln-dsh/dsh-plugins/tool-restrict-presets' },
   { id: 'dsh-desktop-vnc', key: 'desktop-vnc', legacy: '@yiln-dsh/dsh-plugin-desktop-vnc' },
+  // `delegate-mode` and `tool-restrict-presets` were removed from this table on
+  // 2026-11-06 along with the packages. A profile migrated now must not be rewritten
+  // onto a package that no longer exists; such a row is left exactly as written, and
+  // `dsh plugin remove` is the operator's next move, not an install.
   { id: 'fleet', key: 'fleet', legacy: '@yiln-dsh/dsh-plugins/fleet' },
 ])
 

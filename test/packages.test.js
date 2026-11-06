@@ -26,9 +26,10 @@ test('the workspace root is not installable', async () => {
 })
 
 test('every plugin is its own package with its own bundle layer', async () => {
-  // Eight packages remain after auth-webserver and fleet were retired: the first is
-    // served by the Host's own authorization, the second by daemon's federation.
-    assert.ok(packages.length >= 8, `expected the split plugins, found ${packages.join(', ')}`)
+  // Seven remain after auth-webserver, fleet, delegate-mode, tool-restrict-presets
+  // and tool-visibility were retired. The bound guards against the directory being
+  // read as empty; it is not a census, so retiring another package is not a failure.
+  assert.ok(packages.length >= 7, `expected the split plugins, found ${packages.join(', ')}`)
   for (const name of packages) {
     const pkg = JSON.parse(await read(`pkgs/${name}/package.json`))
     assert.equal(pkg.name, `@yiln-dsh/dsh-${name}`, `${name}: unexpected package name`)
@@ -82,8 +83,8 @@ test('each client half is a self-contained loader registration', async () => {
     assert.ok(source.includes(`id: '${pkg.name}'`) || source.includes(`id: "${pkg.name}"`), `${name}: client id must be its package name`)
     assert.match(source, /__ModuleLoader__\.load\(/u, `${name}: client must call the module loader`)
   }
-  // Six carry a browser half; daemon and tool-restrict-presets are host-only.
-  assert.ok(clientPackages >= 6, `expected at least 6 client halves, found ${clientPackages}`)
+  // `gateway` and `supervisor` are host-only; every other package carries a client half.
+  assert.ok(clientPackages >= 5, `expected at least 5 client halves, found ${clientPackages}`)
 })
 
 test('the workspace glob matches every package directory', async () => {

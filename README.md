@@ -21,7 +21,7 @@ will not mount, so update it before restarting.
 | --- | --- | --- |
 | `pkgs/daemon` (`@yiln-dsh/dsh-daemon`) | `pkgs/gateway` (`@yiln-dsh/dsh-gateway`) | "daemon" described every plugin here; this one is the entry to other machines |
 | `pkgs/web-daemon` (`@yiln-dsh/dsh-web-daemon`) | `pkgs/supervisor` | it manages systemd and recovers sessions, not the web surface |
-| `pkgs/session-mode` (`@yiln-dsh/dsh-session-mode`) | `pkgs/delegate-mode` | matches the mode it controls |
+| `pkgs/session-mode` (`@yiln-dsh/dsh-session-mode`) | `pkgs/delegate-mode` (retired 2026-11-06) | matches the mode it controls |
 | `pkgs/auth-webserver` | — | the Host ships `dsh-authorization`, which serves the login page itself |
 | `pkgs/fleet` | — | `gateway` does the same job with a reverse tunnel instead of SSH |
 
@@ -70,9 +70,6 @@ are unchanged, so an existing profile only needs new package addresses — see
 | [`pkgs/session-list-cache`](pkgs/session-list-cache) | `session-list-cache` | Coalesces and caches concurrent session enumeration. |
 | [`pkgs/gateway`](pkgs/gateway) | `gateway` | Federation gateway: edges dial in over a reverse tunnel, local profiles are spawned in place, and its panel lists and switches between both. |
 | [`pkgs/supervisor`](pkgs/supervisor) | `supervisor` | Systemd management, server metrics and interrupted-session recovery. |
-| [`pkgs/delegate-mode`](pkgs/delegate-mode) | `delegate-mode` | Per-session `normal` / `delegate-writes` permissions with pruned catalogs and separate system prompts. |
-| [`pkgs/tool-restrict-presets`](pkgs/tool-restrict-presets) | `tool-restrict-presets` | Applies `agent.ctx.tools.restrict({ allow: [] })` to every Agent running a listed Agent Preset. |
-| [`pkgs/tool-visibility`](pkgs/tool-visibility) | `tool-visibility` | Lets a tool declare the Agent Presets that may see it, trimming the model catalog and denying execution. |
 | [`pkgs/browser-vnc`](pkgs/browser-vnc) | `dsh-browser-vnc` | Right-sidebar tab listing the visible browser instances a session can open, and viewing any of them. |
 | [`pkgs/code-server`](pkgs/code-server) | `dsh-code-server` | Right-sidebar tab embedding a host-installed code-server (VS Code), one instance per **Workspace** with the workspace folder opened automatically, shared VS Code extensions, and a guided install entry when the binary is missing. |
 
@@ -89,7 +86,7 @@ workspaces. See [the module notes](docs/modules/code-server.md).
 Install one plugin straight from this repository:
 
 ```bash
-dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/delegate-mode"
+dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/git-graph"
 ```
 
 Install several by repeating the path form:
@@ -97,13 +94,13 @@ Install several by repeating the path form:
 ```bash
 dsh plugin --profile web add \
   "github:<owner>/dsh-plugin#path:/pkgs/git-graph" \
-  "github:<owner>/dsh-plugin#path:/pkgs/delegate-mode"
+  "github:<owner>/dsh-plugin#path:/pkgs/git-graph"
 ```
 
 Or install a local checkout by path:
 
 ```bash
-dsh plugin --profile web add "file:/path/to/dsh-plugin/pkgs/delegate-mode"
+dsh plugin --profile web add "file:/path/to/dsh-plugin/pkgs/git-graph"
 ```
 
 Refresh a local `file:` installation after source changes, then restart the
@@ -113,7 +110,7 @@ A package missing `dsh.bundle.patch` installs as an inert dependency and mounts
 nothing. Confirm the composed tree carries the row before restarting:
 
 ```bash
-dsh --profile web --dump-config | grep -c delegate-mode
+dsh --profile web --dump-config | grep -c git-graph
 ```
 
 ## Migration from the aggregate package
@@ -142,17 +139,6 @@ dsh plugin --profile web add "file:/path/to/dsh-plugin/pkgs/gateway" ...
 
 Do not run both the aggregate package and the split packages at once: their row
 IDs overlap.
-
-## Session Modes
-
-Use the switch to the right of the permission control in the composer toolbar,
-or `/agent-mode on` and `/agent-mode off`. Turning delegated writes on makes the
-main agent read-only while workers perform edits and command execution. The
-switch label and both state words are localized through the Client locale
-dictionary. The two modes have independent `normalPrompt` and
-`delegateWritesPrompt` Config fields. Selections survive restart; worker
-permissions and prompts use the mode captured at creation.
-See [Delegate Mode](<docs/modules/delegate-mode.md>) for configuration and boundaries.
 
 ## Development
 

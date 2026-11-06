@@ -7,19 +7,19 @@ plugin injects and the Cordis services/Slots used by its Host and Client halves.
 ## Standalone Packages (current)
 
 `0.3.0` ships eight packages that install independently; there is no aggregate package.
-Verified against DSH `0.2.2-rc.1`: the workspace suite passes 697 tests and
-`npm run check` validates all eight.
+Verified against DSH `0.2.2-rc.1`. `delegate-mode`, `tool-restrict-presets` and
+`tool-visibility` were retired on 2026-11-06; the workspace now carries seven
+packages. The historical sections below are kept as a record of what those
+packages did, not as a statement that they still mount.
 
 | Package | Verified injections |
 | --- | --- |
 | `gateway` | `webServer`, `settings`, `fs`, `sandboxPolicy`, `agents` |
 | `supervisor` | `webServer`, `settings` |
-| `delegate-mode` | `connection`, `locale`, `slots`, `sessions` |
 | `delete-session` | `slots`, `sessions` |
 | `git-graph` | `slots`, `locale`, `sidebarRight`, `sidebarRightTabs`, `remote`, `remote.session` |
 | `browser-vnc` (Loader row `dsh-desktop-vnc`) | `slots`, `locale`, `sidebarRightTabs`, `connection` |
 | `session-list-cache` | `sessions` |
-| `tool-restrict-presets` | `agents` |
 
 `auth-webserver` and `fleet` were retired in `0.3.0`: the Host ships `dsh-authorization`,
 and `gateway` replaces the SSH fleet model with a reverse tunnel.

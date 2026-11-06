@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-test('new feature overrides without legacy module names remain unchanged', async () => {
+test('a row naming no legacy module stays untouched', async () => {
   const { migrateProfilePatch } = await migration()
-  const source = '- id: session-mode\n  config:\n    defaultMode: delegate-writes\n'
+  // A retired package's old row is no longer a migration target: rewriting it would
+  // point the profile at a package that no longer exists, so it is left as written.
+  const source = '- id: delegate-mode\n  config:\n    defaultMode: delegate-writes\n'
   assert.deepEqual(migrateProfilePatch(source), { content: source, changes: [] })
 })
 
