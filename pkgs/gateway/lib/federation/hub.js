@@ -43,7 +43,7 @@ export const SELF_ENV_ID = 'self'
  * @returns the hub: `accept`, `proxy`, `proxyUpgrade`, `request`, `sendAgentMessage`,
  *   `isOnline`, `ids`, `close`.
  */
-export function createTunnelHub({ verifyToken, logger, deliver, forward }) {
+export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnvironments }) {
   /** envId -> connection record. */
   const connections = new Map()
 
@@ -337,6 +337,13 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward }) {
     let answer
     try {
       const payload = JSON.parse(frame.payload.toString('utf8'))
+      if (payload?.kind === 'list-environments') {
+        // The main node is the only one that knows the environment table, which is why
+        // an edge asks rather than reading its own empty registry.
+        answer = { ok: true, environments: listEnvironments?.() ?? [] }
+        sendAgentAnswer(record, frame, answer)
+        return
+      }
       const message = {
         fromEnvId: record.envId,
         fromSessionId: typeof payload.fromSessionId === 'string' ? payload.fromSessionId : '',
@@ -362,6 +369,17 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward }) {
       answer = { ok: false, error: `malformed agent message: ${error?.message ?? error}` }
     }
 
+    sendAgentAnswer(record, frame, answer)
+  }
+
+  /**
+   * Answer one edge-originated call.
+   *
+   * @param record - the connection to answer on.
+   * @param frame - the frame being answered.
+   * @param answer - the JSON body.
+   */
+  function sendAgentAnswer(record, frame, answer) {
     try {
       record.socket.send(encodeJsonFrame(FRAME.responseHead, frame.id, {
         status: answer.ok === true ? 200 : 502,
@@ -447,7 +465,23 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward }) {
     return token === '' ? undefined : verifyToken(token)
   }
 
-  return { accept: register, verify, proxy, proxyUpgrade, request, sendAgentMessage, isOnline, ids, close }
+  /** The environment table an edge asks for; empty when this hub was given no source. */
+  function listKnownEnvironments() {
+    return listEnvironments?.() ?? []
+  }
+
+  return {
+    accept: register,
+    verify,
+    proxy,
+    proxyUpgrade,
+    request,
+    sendAgentMessage,
+    listEnvironments: listKnownEnvironments,
+    isOnline,
+    ids,
+    close,
+  }
 }
 
 /**

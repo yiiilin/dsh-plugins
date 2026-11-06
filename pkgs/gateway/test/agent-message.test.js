@@ -301,3 +301,27 @@ test('a message that names its own sender environment is refused', async () => {
     await link.stop()
   }
 })
+
+// --- what an edge may and may not decide for itself ---------------------------
+
+test('an edge asks the main node for the environment list', async () => {
+  // An edge's own registry is empty by design; without asking, `agent_list_envs` would
+  // answer "just yourself" and the model could never learn a peer's id.
+  const asked = []
+  const hub = createTunnelHub({
+    logger: quiet,
+    verifyToken: () => undefined,
+    deliver: async () => ({ ok: true, accepted: true }),
+    listEnvironments: () => {
+      asked.push(true)
+      return [
+        { envId: 'self', label: 'this node (main)', online: true },
+        { envId: 'edgea', label: 'edge A', online: true },
+        { envId: 'edgeb', label: 'edge B', online: false },
+      ]
+    },
+  })
+  assert.deepEqual(hub.listEnvironments().map((r) => r.envId), ['self', 'edgea', 'edgeb'])
+  assert.equal(asked.length, 1)
+  hub.close()
+})

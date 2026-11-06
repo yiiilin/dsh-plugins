@@ -1,15 +1,14 @@
 # gateway
 
 One entry, many profiles. Standalone package
-[`@yiln-dsh/dsh-gateway`](../../docs/changes/federation-design.md). Loader row: `gateway`.
+[`@yiln-dsh/dsh-gateway`](.). Loader row: `gateway`.
 
 ```bash
 dsh plugin --profile web add "github:<owner>/dsh-plugin#path:/pkgs/gateway"
 ```
 
 See the [root README](../../README.md) for the workspace layout, migration and testing,
-and [the design note](../../docs/changes/daemon-design.md) for the routing and
-helper-deployment decisions.
+and this file for the routing and helper-deployment decisions.
 
 ## Upgrading from 0.3
 

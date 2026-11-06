@@ -214,6 +214,15 @@ export function apply(ctx, config) {
     verifyToken: (token) => registry.byToken(token),
     deliver: deliverMessage,
     forward: forwardMessage,
+    // What an edge asks for: this node's environment table, with live state.
+    listEnvironments: () => [
+      { envId: 'self', label: 'this node (main)', online: true },
+      ...registry.list().map((environment) => ({
+        envId: environment.id,
+        label: environment.label,
+        online: hub.isOnline(environment.id),
+      })),
+    ],
   })
   const tunnelServer = createTunnelServer()
 
@@ -688,21 +697,25 @@ export function apply(ctx, config) {
         text: request.text,
       })
     }
-    if (!hub.isOnline(toEnvId)) {
-      return { ok: false, error: `environment "${toEnvId}" is offline; call agent_list_envs` }
-    }
-    if (config.role === 'main') {
-      return await hub.sendAgentMessage(toEnvId, {
-        fromEnvId: 'self',
+    if (config.role !== 'main') {
+      // An edge holds exactly one tunnel — to the main node — so it cannot know whether
+      // a *peer* edge is online; `hub.isOnline('edgeb')` is false on every edge by
+      // construction. The main node answers that question, and its answer comes back as
+      // the tool result. Checking locally first made every edge-to-edge message fail
+      // with "offline" no matter what.
+      return await agent.sendAgentMessage({
+        toEnvId,
         fromSessionId: request.fromSessionId,
         sessionId: request.sessionId,
         text: request.text,
       })
     }
-    // An edge addresses the main node as "self" from its own point of view, so a named
-    // envId here is another edge's — reachable only through the main node's routing.
-    return await agent.sendAgentMessage({
-      toEnvId,
+    if (!hub.isOnline(toEnvId)) {
+      return { ok: false, error: `environment "${toEnvId}" is offline; call agent_list_envs` }
+    }
+    // The main node holds every edge's tunnel, so it can send directly.
+    return await hub.sendAgentMessage(toEnvId, {
+      fromEnvId: 'self',
       fromSessionId: request.fromSessionId,
       sessionId: request.sessionId,
       text: request.text,
@@ -710,18 +723,29 @@ export function apply(ctx, config) {
   }
 
   /** The environment list the agent sees: this node plus every tunnel it can use. */
-  const listReachable = () => {
+  const listReachable = async () => {
     const rows = [{
       envId: 'self',
       label: config.role === 'main' ? 'this node (main)' : 'this node (edge)',
       online: true,
     }]
-    for (const environment of registry.list()) {
-      rows.push({
-        envId: environment.id,
-        label: environment.label,
-        online: hub.isOnline(environment.id),
-      })
+    if (config.role === 'main') {
+      for (const environment of registry.list()) {
+        rows.push({
+          envId: environment.id,
+          label: environment.label,
+          online: hub.isOnline(environment.id),
+        })
+      }
+      return rows
+    }
+    // An edge's own registry is empty: environments are the main node's to know, and an
+    // edge has no tunnel to any of them. Without asking, the tool would answer "just
+    // yourself" and the model could never learn a peer's id.
+    const answer = await agent.listEnvironments()
+    for (const row of answer?.environments ?? []) {
+      if (row.envId === 'self') continue
+      rows.push({ envId: row.envId, label: row.label, online: row.online })
     }
     return rows
   }

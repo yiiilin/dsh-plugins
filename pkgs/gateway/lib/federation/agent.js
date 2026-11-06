@@ -414,10 +414,57 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
     })
   }
 
+  /**
+   * Ask the main node which environments exist, and which are online.
+   *
+   * An edge's own registry is empty by design — environments are the main node's to
+   * know — so this is the only way `agent_list_envs` can answer anything useful on an
+   * edge. The answer comes back on the same request/response path every edge-originated
+   * call uses.
+   *
+   * @param options.timeoutMs - how long to wait for the answer.
+   * @returns `{ environments: { envId, label, online }[] }`, or an empty list.
+   */
+  function listEnvironments({ timeoutMs = 10_000 } = {}) {
+    return new Promise((resolve) => {
+      if (socket === undefined || socket.readyState !== WebSocket.OPEN) {
+        resolve({ environments: [] })
+        return
+      }
+      const settled = { done: false, body: '' }
+      const finish = (value) => {
+        if (settled.done) return
+        settled.done = true
+        resolve(value)
+      }
+      const timer = setTimeout(() => finish({ environments: [] }), timeoutMs)
+      const id = newRequestId()
+      const key = id.toString('hex')
+      inFlight.set(key, {
+        onRequestBody(payload) { settled.body += payload.toString('utf8') },
+        onRequestEnd() {
+          clearTimeout(timer)
+          try {
+            const parsed = JSON.parse(settled.body)
+            finish({ environments: Array.isArray(parsed?.environments) ? parsed.environments : [] })
+          } catch {
+            finish({ environments: [] })
+          }
+        },
+        close() {
+          clearTimeout(timer)
+          finish({ environments: [] })
+        },
+      })
+      sendOrClose(encodeJsonFrame(FRAME.agentMessage, id, { kind: 'list-environments' }))
+    })
+  }
+
   return {
     start,
     stop,
     sendAgentMessage,
+    listEnvironments,
     connected: () => socket?.readyState === WebSocket.OPEN,
   }
 }
