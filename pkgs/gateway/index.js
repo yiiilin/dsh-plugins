@@ -32,7 +32,7 @@ import { createTunnelAgent } from './lib/federation/agent.js'
 import { createTunnelHub, createTunnelServer, tokenOf, TUNNEL_PATH } from './lib/federation/hub.js'
 import { deliverToSession } from './lib/agent-message.js'
 import { listSessions, listWorkspaces } from './lib/remote-info.js'
-import { abortTransfer, appendTransfer, beginTransfer, commitTransfer, readForTransfer } from './lib/file-transfer.js'
+import { abortTransfer, appendTransfer, beginTransfer, commitTransfer, describeTransfer, readTransferChunk } from './lib/file-transfer.js'
 import { agentMessageTools } from './tools.js'
 import { defaultSkillsRoot, readInventory } from './lib/inventory.js'
 import { installUnit, renderUnit, underSystemd, unitNameFor } from './lib/systemd.js'
@@ -769,6 +769,15 @@ export function apply(ctx, config) {
    */
   const requestOverTunnel = (envId, method, path, body) => hub.relayOverTunnel(envId, { method, path, body })
 
+  /** The same two reads a peer would serve, answered from this process. */
+  const readLocalFile = async (payload) => {
+    if (payload.action === 'describe') return await describeTransfer(payload.path)
+    if (payload.action === 'chunk') {
+      return await readTransferChunk({ path: payload.path, index: payload.index, chunkBytes: payload.chunkBytes })
+    }
+    return { ok: false, error: `unknown file action "${payload.action}"` }
+  }
+
   /**
    * Ask one environment for its workspace table.
    *
@@ -811,55 +820,60 @@ export function apply(ctx, config) {
    * @param request - `{ path, envId, sourcePath, chunks, overwrite }`.
    * @returns `{ ok, path?, bytes?, error? }`.
    */
-  const putFile = async (request) => {
-    const target = String(request.envId ?? '').trim()
-    let chunks = request.chunks
-    if (chunks === undefined) {
-      if (request.sourcePath === '') {
-        return { ok: false, error: 'give sourcePath to read here, or chunks as the content' }
-      }
-      const read = await readForTransfer(request.sourcePath)
-      if (read.ok !== true) return { ok: false, error: read.error }
-      chunks = read.chunks
-    }
-    if (!Array.isArray(chunks) || chunks.length === 0) return { ok: false, error: 'nothing to send' }
+  /**
+   * Pull a file from one environment into this machine.
+   *
+   * The direction is deliberate. Pushing writes into a machine the sender does not own,
+   * where a wrong path or an unexpected overwrite is somebody else's problem and nobody
+   * is watching. Pulling writes only here: the caller already has the right to run code
+   * on this node, so the consequence stays with whoever asked.
+   *
+   * The source is read one chunk per round trip, so no single message can exceed the
+   * 8 MiB frame cap however large the file is.
+   *
+   * @param request - `{ path, envId, toPath, overwrite }`.
+   * @returns `{ ok, name?, size?, path?, chunks?, error? }`.
+   */
+  const getFile = async (request) => {
+    const source = String(request.envId ?? '').trim()
+    const remote = source !== '' && source !== 'self'
 
-    // A file can exceed one frame, so it goes over as pieces: begin, one chunk per call,
-    // then commit. Each call is a separate tunnel round trip, which is what keeps any
-    // single payload well under the frame cap.
-    const send = async (path, body) => {
-      if (target === '' || target === 'self') {
-        // Local: the same staged protocol, so both paths behave identically.
-        const began = await beginTransfer({ path: body.path, overwrite: body.overwrite, totalChunks: body.totalChunks })
-        if (began.ok !== true) return began
-        for (const piece of body.chunks) {
-          const step = await appendTransfer(began.transferId, piece)
-          if (step.ok !== true) return step
-        }
-        return await commitTransfer(began.transferId)
-      }
-      const call = async (payload) => {
-        if (config.role !== 'main') return await agent.readRemote(target, 'POST', '/admin/file', payload)
-        return await requestOverTunnel(target, 'POST', '/admin/file', payload)
-      }
-      const began = await call({ action: 'begin', path: body.path, overwrite: body.overwrite, totalChunks: body.totalChunks })
-      if (began.ok !== true || began.transferId === undefined) return began
-      for (const piece of body.chunks) {
-        const step = await call({ action: 'chunk', transferId: began.transferId, data: piece })
-        if (step.ok !== true) {
-          await call({ action: 'abort', transferId: began.transferId })
-          return step
-        }
-      }
-      return await call({ action: 'commit', transferId: began.transferId })
+    const call = async (payload) => {
+      if (!remote) return await readLocalFile(payload)
+      if (config.role !== 'main') return await agent.readRemote(source, 'POST', '/admin/file', payload)
+      return await requestOverTunnel(source, 'POST', '/admin/file', payload)
     }
 
-    return await send(request.path, {
-      path: request.path,
-      chunks,
-      totalChunks: chunks.length,
+    const described = await call({ action: 'describe', path: request.path })
+    if (described.ok !== true) return { ok: false, error: described.error ?? 'could not describe the file' }
+
+    const pieces = []
+    for (let index = 0; index < described.chunks; index += 1) {
+      const piece = await call({ action: 'chunk', path: request.path, index, chunkBytes: described.chunkBytes })
+      if (piece.ok !== true) return { ok: false, error: piece.error ?? `could not read chunk ${index}` }
+      pieces.push(piece.data)
+      if (piece.eof === true) break
+    }
+
+    if (request.toPath === '') {
+      return { ok: true, name: described.name, size: described.size, chunks: pieces }
+    }
+    // Writing happens on this node only, through the staged protocol, so a partial
+    // download never appears under the destination name.
+    const began = await beginTransfer({
+      path: request.toPath,
       overwrite: request.overwrite === true,
+      totalChunks: pieces.length,
     })
+    if (began.ok !== true) return began
+    for (const piece of pieces) {
+      const step = await appendTransfer(began.transferId, piece)
+      if (step.ok !== true) {
+        await abortTransfer(began.transferId)
+        return step
+      }
+    }
+    return await commitTransfer(began.transferId)
   }
 
   if (typeof ctx.inject === 'function') {
@@ -869,7 +883,7 @@ export function apply(ctx, config) {
         send: sendAgentMessage,
         listWorkspaces: readWorkspacesOf,
         listSessions: readSessionsOf,
-        putFile,
+        getFile,
       })) {
         toolCtx.tools.register(definition)
       }

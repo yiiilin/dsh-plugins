@@ -80,12 +80,12 @@ const SESSIONS_DESCRIPTION = [
   'creation time, parent, and whether it is live and persisted on that node. Read-only.',
 ].join(' ')
 
-const PUT_FILE_DESCRIPTION = [
-  'Copy one file to another DSH environment. Give an absolute destination path on the',
-  'target, and either a sourcePath to read here or base64 chunks as the content. Files are',
-  'staged next to the destination and renamed into place, so a partial transfer never',
-  'appears as a file. An existing destination is refused unless overwrite is true.',
-  'The limit is 32 MiB per call.',
+const GET_FILE_DESCRIPTION = [
+  'Pull one file from another DSH environment (or from this one) into this machine.',
+  'Give the absolute source path and, to keep it, a local toPath — it is written here,',
+  'staged and renamed so a partial transfer never appears as a file; an existing local',
+  'file is refused unless overwrite is true. Omit toPath to receive the content as base64',
+  'chunks instead. Nothing is ever written on the source machine. Limit 32 MiB.',
 ].join(' ')
 
 /**
@@ -95,10 +95,10 @@ const PUT_FILE_DESCRIPTION = [
  * @param options.send - `(message) => Promise<{ ok, accepted?, error? }>`.
  * @param options.listWorkspaces - `(envId) => Promise<{ ok, workspaces?, error? }>`.
  * @param options.listSessions - `(envId, workspaceId) => Promise<{ ok, sessions?, error? }>`.
- * @param options.putFile - `(request) => Promise<{ ok, path?, bytes?, error? }>`.
+ * @param options.getFile - `(request) => Promise<{ ok, name?, size?, path?, chunks?, error? }>`.
  * @returns the tool definitions.
  */
-export function agentMessageTools({ listEnvironments, send, listWorkspaces, listSessions, putFile }) {
+export function agentMessageTools({ listEnvironments, send, listWorkspaces, listSessions, getFile }) {
   return [
     defineTool({
       name: 'agent_list_envs',
@@ -216,30 +216,25 @@ export function agentMessageTools({ listEnvironments, send, listWorkspaces, list
       },
     }),
     defineTool({
-      name: 'agent_put_file',
-      description: PUT_FILE_DESCRIPTION,
+      name: 'agent_get_file',
+      description: GET_FILE_DESCRIPTION,
       parameters: {
         path: {
           type: 'string',
-          description: 'Absolute destination path on the target environment.',
+          description: 'Absolute path of the file to read on the source environment.',
           required: true,
         },
         envId: {
           type: 'string',
-          description: 'Destination environment from agent_list_envs. Omit to write on this node.',
+          description: 'Environment to read from, from agent_list_envs. Omit to read this node.',
         },
-        sourcePath: {
+        toPath: {
           type: 'string',
-          description: 'Absolute path to read here and copy over. Omit when passing base64 chunks.',
-        },
-        chunks: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Base64 file content, split across entries. Use instead of sourcePath.',
+          description: 'Absolute path to write here. Omit to keep the file in memory and return it as chunks.',
         },
         overwrite: {
           type: 'boolean',
-          description: 'Replace an existing destination file. Defaults to refusing.',
+          description: 'Replace an existing local file at toPath. Defaults to refusing.',
         },
       },
       output: {
@@ -248,19 +243,20 @@ export function agentMessageTools({ listEnvironments, send, listWorkspaces, list
           additionalProperties: true,
           properties: {
             ok: { type: 'boolean', required: true },
+            name: { type: 'string' },
+            size: { type: 'integer' },
             path: { type: 'string' },
-            bytes: { type: 'integer' },
+            chunks: { type: 'array', items: { type: 'string' } },
             error: { type: 'string' },
           },
         },
         render: jsonRender,
       },
       async execute(args) {
-        return await putFile({
+        return await getFile({
           path: String(args?.path ?? '').trim(),
           envId: String(args?.envId ?? '').trim(),
-          sourcePath: String(args?.sourcePath ?? '').trim(),
-          chunks: Array.isArray(args?.chunks) ? args.chunks : undefined,
+          toPath: String(args?.toPath ?? '').trim(),
           overwrite: args?.overwrite === true,
         })
       },

@@ -17,7 +17,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
-import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises'
+import { mkdir, open, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, resolve } from 'node:path'
 
 /** Largest file one call may move. Chunked, so this is a policy cap, not a frame cap. */
@@ -47,12 +47,16 @@ export function validateDestination(path) {
 }
 
 /**
- * Read one file and describe it as chunks the sender can put on the wire.
+ * Describe one file without sending its contents.
  *
- * @param path - absolute path to read.
- * @returns `{ ok: true, name, size, chunks }` or `{ ok: false, error }`.
+ * A caller pulls a file in pieces, so it first needs to know whether the file is there
+ * and how big it is. Returning the whole file here is what made the read path unusable
+ * above roughly 6 MiB: the tunnel caps a frame at 8 MiB, and base64 inflates by a third.
+ *
+ * @param path - absolute path to inspect.
+ * @returns `{ ok: true, name, size, chunkBytes, chunks }` or `{ ok: false, error }`.
  */
-export async function readForTransfer(path) {
+export async function describeTransfer(path) {
   const checked = validateDestination(path)
   if (checked.ok !== true) return checked
   try {
@@ -61,14 +65,48 @@ export async function readForTransfer(path) {
     if (info.size > MAX_FILE_BYTES) {
       return { ok: false, error: `file is ${info.size} bytes; the limit is ${MAX_FILE_BYTES}` }
     }
-    const bytes = await readFile(checked.path)
-    const chunks = []
-    for (let at = 0; at < bytes.length; at += CHUNK_BYTES) {
-      chunks.push(bytes.subarray(at, at + CHUNK_BYTES).toString('base64'))
+    return {
+      ok: true,
+      name: basename(checked.path),
+      size: info.size,
+      chunkBytes: CHUNK_BYTES,
+      chunks: Math.max(1, Math.ceil(info.size / CHUNK_BYTES)),
     }
-    return { ok: true, name: basename(checked.path), size: bytes.length, chunks }
   } catch (error) {
     return { ok: false, error: `could not read "${checked.path}": ${error?.message ?? error}` }
+  }
+}
+
+/**
+ * Read one piece of a file.
+ *
+ * The piece is bounded by {@link CHUNK_BYTES}, so its base64 form stays well inside one
+ * frame whatever the file's size.
+ *
+ * @param request - `{ path, index, chunkBytes }`.
+ * @returns `{ ok: true, index, data, eof }` or `{ ok: false, error }`.
+ */
+export async function readTransferChunk({ path, index, chunkBytes = CHUNK_BYTES }) {
+  const checked = validateDestination(path)
+  if (checked.ok !== true) return checked
+  const at = Number(index)
+  if (!Number.isInteger(at) || at < 0) return { ok: false, error: 'index must be a non-negative integer' }
+  const span = Math.min(Math.max(1, Number(chunkBytes) || CHUNK_BYTES), CHUNK_BYTES)
+  let handle
+  try {
+    handle = await open(checked.path, 'r')
+    const buffer = Buffer.alloc(span)
+    const { bytesRead } = await handle.read(buffer, 0, span, at * span)
+    if (bytesRead === 0 && at > 0) {
+      return { ok: false, error: `"${checked.path}" is shorter than expected` }
+    }
+    const data = buffer.subarray(0, bytesRead)
+    const more = await handle.read(Buffer.alloc(1), 0, 1, (at + 1) * span)
+    return { ok: true, index: at, data: data.toString('base64'), eof: more.bytesRead === 0 }
+  } catch (error) {
+    return { ok: false, error: `could not read "${checked.path}": ${error?.message ?? error}` }
+  } finally {
+    await handle?.close().catch(() => {})
   }
 }
 

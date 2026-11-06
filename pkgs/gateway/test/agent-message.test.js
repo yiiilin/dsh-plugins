@@ -22,7 +22,7 @@ import { agentMessageTools } from '../tools.js'
 const inert = {
   listWorkspaces: async () => ({ ok: true, workspaces: [] }),
   listSessions: async () => ({ ok: true, sessions: [] }),
-  putFile: async () => ({ ok: true }),
+  getFile: async () => ({ ok: true }),
 }
 
 const quiet = { info() {}, warn() {} }
@@ -344,15 +344,14 @@ test('the five tools are registered with the arguments each one needs', () => {
     ...inert,
   })
   const names = tools.map((tool) => tool.name).sort()
-  assert.deepEqual(names, ['agent_list_envs', 'agent_put_file', 'agent_send', 'agent_sessions', 'agent_workspaces'])
+  assert.deepEqual(names, ['agent_get_file', 'agent_list_envs', 'agent_send', 'agent_sessions', 'agent_workspaces'])
 
   // `defineTool` compiles the declaration into JSON Schema, so required fields land in
   // the top-level list rather than on each property.
-  const put = tools.find((tool) => tool.name === 'agent_put_file')
-  assert.deepEqual(put.parameters.required, ['path'])
-  // Content comes from sourcePath or chunks, so neither may be required on its own.
-  assert.ok(!put.parameters.required.includes('sourcePath'))
-  assert.ok(!put.parameters.required.includes('chunks'))
+  const get = tools.find((tool) => tool.name === 'agent_get_file')
+  assert.deepEqual(get.parameters.required, ['path'])
+  // Where to keep the file is the caller's choice; a pull with no toPath returns content.
+  assert.ok(!get.parameters.required.includes('toPath'))
 
   const sessions = tools.find((tool) => tool.name === 'agent_sessions')
   assert.equal(sessions.parameters.required, undefined, 'both filters are optional')
@@ -366,30 +365,30 @@ test('agent_workspaces and agent_sessions forward the envId they were given', as
     ...inert,
     listWorkspaces: async (envId) => { asked.push(['workspaces', envId]); return { ok: true, workspaces: [] } },
     listSessions: async (envId, workspaceId) => { asked.push(['sessions', envId, workspaceId]); return { ok: true, sessions: [] } },
-    putFile: async () => ({ ok: true }),
+    getFile: async () => ({ ok: true }),
   })
   await tools.find((t) => t.name === 'agent_workspaces').execute({ envId: 'edgeb' })
   await tools.find((t) => t.name === 'agent_sessions').execute({ envId: 'edgeb', workspaceId: 'ws-1' })
   assert.deepEqual(asked, [['workspaces', 'edgeb'], ['sessions', 'edgeb', 'ws-1']])
 })
 
-test('agent_put_file will not read a truthy string as consent to overwrite', async () => {
+test('agent_get_file will not read a truthy string as consent to overwrite', async () => {
   const seen = []
   const tools = agentMessageTools({
     listEnvironments: () => [],
     send: async () => ({ ok: true }),
     ...inert,
-    putFile: async (request) => { seen.push(request); return { ok: true } },
+    getFile: async (request) => { seen.push(request); return { ok: true } },
   })
-  const put = tools.find((t) => t.name === 'agent_put_file')
+  const get = tools.find((t) => t.name === 'agent_get_file')
   // The schema rejects it before the tool runs — the stronger guarantee, since a model
   // cannot talk its way past it.
-  await assert.rejects(() => put.execute({ path: '/tmp/x', sourcePath: '/h', overwrite: 'yes' }))
+  await assert.rejects(() => get.execute({ path: '/h', toPath: '/tmp/x', overwrite: 'yes' }))
   assert.equal(seen.length, 0, 'nothing may reach the writer')
   // Omission is the normal case and must arrive as a real boolean.
-  await put.execute({ path: '/tmp/x', sourcePath: '/h' })
+  await get.execute({ path: '/h', toPath: '/tmp/x' })
   assert.equal(seen[0].overwrite, false)
-  await put.execute({ path: '/tmp/x', sourcePath: '/h', overwrite: true })
+  await get.execute({ path: '/h', toPath: '/tmp/x', overwrite: true })
   assert.equal(seen[1].overwrite, true)
 })
 

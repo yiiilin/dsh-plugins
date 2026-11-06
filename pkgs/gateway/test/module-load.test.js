@@ -30,7 +30,7 @@ test('the entry point uses names it actually imports', async () => {
   // A missing import is a ReferenceError at call time, which no unit test reaches when
   // the helper itself is imported directly by the test.
   const source = await readFile(new URL('index.js', ROOT), 'utf8')
-  for (const name of ['listWorkspaces', 'listSessions', 'readForTransfer', 'writeFromTransfer', 'deliverToSession']) {
+  for (const name of ['listWorkspaces', 'listSessions', 'describeTransfer', 'readTransferChunk', 'deliverToSession']) {
     const used = new RegExp(`\\b${name}\\(`, 'u').test(source)
     if (!used) continue
     const imported = new RegExp(`import \\{[^}]*\\b${name}\\b[^}]*\\} from`, 'u').test(source)

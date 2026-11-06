@@ -18,11 +18,26 @@ import {
   beginTransfer,
   CHUNK_BYTES,
   commitTransfer,
+  describeTransfer,
   MAX_FILE_BYTES,
   openTransfers,
-  readForTransfer,
+  readTransferChunk,
   validateDestination,
 } from '../lib/file-transfer.js'
+
+/** Pull a file the way the tool does: describe, then one chunk per index. */
+async function pull(path) {
+  const described = await describeTransfer(path)
+  if (described.ok !== true) return described
+  const pieces = []
+  for (let index = 0; index < described.chunks; index += 1) {
+    const piece = await readTransferChunk({ path, index, chunkBytes: described.chunkBytes })
+    if (piece.ok !== true) return piece
+    pieces.push(piece.data)
+    if (piece.eof === true) break
+  }
+  return { ok: true, name: described.name, size: described.size, bytes: Buffer.concat(pieces.map((p) => Buffer.from(p, 'base64'))) }
+}
 
 /** Upload one buffer the way the sender does: begin, chunks, commit. */
 async function upload(path, bytes, { overwrite = false } = {}) {
@@ -124,7 +139,7 @@ test('a file round-trips through chunks', async () => {
     const source = join(home, 'source.bin')
     // Binary content, including a NUL and a high byte: text-only handling would corrupt it.
     await writeFile(source, Buffer.from([0x00, 0xff, 0x41, 0x7f]))
-    const read = await readForTransfer(source)
+    const read = await pull(source)
     assert.equal(read.ok, true)
     assert.equal(read.size, 4)
 
@@ -227,4 +242,70 @@ test('a large file crosses in pieces that each fit one frame', async () => {
   } finally {
     await rm(home, { recursive: true, force: true })
   }
+})
+
+// --- the pull direction -------------------------------------------------------
+
+test('a file larger than one frame is pulled one piece at a time', async () => {
+  // 8 MiB is the tunnel's frame cap; base64 inflates by a third, so a one-shot read was
+  // unusable above roughly 6 MiB. 7 MiB exercises exactly that boundary.
+  const home = await mkdtemp(join(tmpdir(), 'gw-pull-'))
+  try {
+    const big = Buffer.alloc(7 * 1024 * 1024)
+    for (let i = 0; i < big.length; i += 4093) big[i] = i % 251
+    const source = join(home, 'big.bin')
+    await writeFile(source, big)
+
+    const described = await describeTransfer(source)
+    assert.equal(described.ok, true)
+    assert.equal(described.size, big.length)
+    assert.ok(described.chunks > 1, 'must span several pieces')
+
+    // Every piece on its own must stay inside one frame once encoded.
+    const piece = await readTransferChunk({ path: source, index: 0, chunkBytes: described.chunkBytes })
+    assert.equal(piece.ok, true)
+    assert.ok(Buffer.from(piece.data, 'base64').length <= CHUNK_BYTES)
+    assert.ok(piece.data.length < 8 * 1024 * 1024, 'one encoded piece must fit a frame')
+
+    const pulled = await pull(source)
+    assert.equal(pulled.ok, true)
+    assert.ok(pulled.bytes.equals(big), 'the reassembled file must match byte for byte')
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test('reading past the end of a small file is an error, not silence', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'gw-pull-'))
+  try {
+    const source = join(home, 'small.txt')
+    await writeFile(source, 'abc')
+    const past = await readTransferChunk({ path: source, index: 9 })
+    assert.equal(past.ok, false)
+    assert.match(past.error, /shorter than expected/u)
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test('describe reports the size without sending the content', async () => {
+  // The whole point of the two-step pull: a caller learns what it is about to receive
+  // before any bytes cross the wire.
+  const home = await mkdtemp(join(tmpdir(), 'gw-pull-'))
+  try {
+    const source = join(home, 'f.txt')
+    await writeFile(source, 'hello')
+    const described = await describeTransfer(source)
+    assert.equal(described.name, 'f.txt')
+    assert.equal(described.size, 5)
+    assert.equal(described.data, undefined, 'describe must not carry content')
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test('a missing source is reported, never invented', async () => {
+  const described = await describeTransfer('/nonexistent-dsh-pull/file.txt')
+  assert.equal(described.ok, false)
+  assert.match(described.error, /could not read/u)
 })

@@ -19,7 +19,7 @@
 import { PAIRING_CREDENTIAL_MIN_LENGTH } from './auth/pairing-credential.js'
 import { validateMessageRequest } from './agent-message.js'
 import { listSessions, listWorkspaces } from './remote-info.js'
-import { MAX_FILE_BYTES, abortTransfer, appendTransfer, beginTransfer, commitTransfer, readForTransfer } from './file-transfer.js'
+import { describeTransfer, readTransferChunk } from './file-transfer.js'
 import { deriveId, freshToken, normalizeEnvironment } from './registry.js'
 
 /** How long a tunnel status stays cached, so a panel refresh is not a probe storm. */
@@ -253,42 +253,29 @@ export function createAdmin({
     }
 
     if (pathname === '/admin/file') {
+      // Read-only by design. A peer may *pull* a file from this node; nothing here lets
+      // one node write into another, because a push decides something on a machine its
+      // sender does not own. The pulling side applies the change locally, where the
+      // consequences are its own.
       if (method !== 'POST') {
         json(res, 405, { ok: false, error: `${method} is not supported on ${pathname}` }, { allow: 'POST' })
         return true
       }
-      // Base64 inflates the file by a third, and the whole thing arrives in one body.
-      const body = await readJson(req, Math.ceil(MAX_FILE_BYTES * 4 / 3) + 8192)
+      const body = await readJson(req)
       const action = typeof body.action === 'string' ? body.action : ''
-      if (action === 'read') {
-        json(res, 200, await readForTransfer(body.path))
-        return true
-      }
-      if (action === 'begin') {
-        // A file may be larger than one frame, so it arrives in pieces: `begin` opens a
-        // staged file, each `chunk` appends, and `commit` renames it into place. An
-        // abandoned upload leaves only its staged file, which `abort` (or the sender
-        // dying) removes.
-        json(res, 200, await beginTransfer({
-          path: body.path,
-          overwrite: body.overwrite === true,
-          totalChunks: body.totalChunks,
-        }))
+      if (action === 'describe') {
+        json(res, 200, await describeTransfer(body.path))
         return true
       }
       if (action === 'chunk') {
-        json(res, 200, await appendTransfer(body.transferId, body.data))
+        json(res, 200, await readTransferChunk({
+          path: body.path,
+          index: body.index,
+          chunkBytes: body.chunkBytes,
+        }))
         return true
       }
-      if (action === 'commit') {
-        json(res, 200, await commitTransfer(body.transferId))
-        return true
-      }
-      if (action === 'abort') {
-        json(res, 200, await abortTransfer(body.transferId))
-        return true
-      }
-      json(res, 400, { ok: false, error: 'action must be "read", "begin", "chunk", "commit" or "abort"' })
+      json(res, 400, { ok: false, error: 'action must be "describe" or "chunk"' })
       return true
     }
 
