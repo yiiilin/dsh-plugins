@@ -39,7 +39,7 @@ const BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000]
  * everything — socket, reader, reconnect timer, clock estimate — and sharing any of that
  * would make one link's failure disturb another.
  */
-function createUpstream({ url, token, selfName, logger, onTopology, onFrame, onClockSample }) {
+function createUpstream({ url, token, selfName, logger, onTopology, onFrame, onClockSample, onLinkUp }) {
   let socket
   let reader
   /** The keepalive for the current socket; cleared whenever that socket goes away. */
@@ -99,7 +99,7 @@ function createUpstream({ url, token, selfName, logger, onTopology, onFrame, onC
         if (frame.type === TOPOLOGY_FRAME) {
           try {
             const table = JSON.parse(frame.payload.toString('utf8'))
-            onTopology(table)
+            onTopology(table, api)
           } catch (error) {
             logger.warn(`federation: could not read the topology from ${url}: ${error.message}`)
           }
@@ -217,6 +217,24 @@ function createUpstream({ url, token, selfName, logger, onTopology, onFrame, onC
         },
       }
     },
+    /**
+     * Report this node's view upstream.
+     *
+     * Every link reports, not only those below: a parent that never hears from a child
+     * believes the child's subtree is the child alone.
+     *
+     * @param table - what to send; nothing is sent when undefined.
+     */
+    reportTopology(table) {
+      if (table === undefined) return false
+      if (socket === undefined || socket.readyState !== WebSocket.OPEN) return false
+      try {
+        socket.send(encodeJsonFrame(TOPOLOGY_FRAME, Buffer.alloc(16), table))
+        return true
+      } catch {
+        return false
+      }
+    },
     /** Record one clock exchange; the best round trip wins. */
     addClockSample(sample) {
       const estimate = clock.add(sample)
@@ -248,13 +266,16 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, log
     token: upstream.token,
     selfName: claimedName,
     logger,
-    onTopology(table) {
+    onTopology(table, owner) {
       // The upstream says which environment this edge is; a leaf knows only its token.
       if (typeof table?.selfEnvId === 'string' && table.selfEnvId !== '') {
         topology.setSelfId(table.selfEnvId)
       }
-      const adopted = topology.apply(table)
+      // Attribute the table to the link it arrived on, so its sequence numbers order
+      // separately from another upstream's.
+      const adopted = topology.apply(table, { source: owner?.url })
       logger.info(`federation: topology ${adopted ? 'updated' : 'ignored stale'} (seq ${table?.seq}, ${table?.nodes?.length ?? 0} node(s))`)
+      if (adopted) announce(owner)
     },
     onFrame(frame, owner) {
       // A frame for a stream this node never opened: either an `open` addressed to this
@@ -276,10 +297,34 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, log
       }
       if (frame.type === FRAME.end) endLocal(frame.id)
     },
+    onLinkUp() {
+      // A fresh link needs the current view, and the parent must hear about this subtree
+      // or it will believe the subtree is one node.
+      announce()
+    },
     onClockSample(estimate) {
       logger.info(`federation: clock offset to ${upstream.url} is ${Math.round(estimate.offset)} ms (rtt ${Math.round(estimate.rtt)} ms)`)
     },
   }))
+
+  /**
+   * Tell every upstream what this node knows, except what it learned from that one.
+   *
+   * The exception is split-horizon: echoing a peer's own report back is what would keep a
+   * loop circulating. Withholding terminates propagation — no hop limit, no visited set.
+   *
+   * @param origin - the link a table just arrived on; omitted for a local change.
+   */
+  function announce(origin) {
+    for (const one of links) {
+      if (one === origin) continue
+      const table = topology.outbound({ exclude: one.url })
+      const sent = one.reportTopology(table)
+      if (table !== undefined) {
+        logger.info(`federation: reporting ${table.nodes.length} node(s) to ${one.url}${sent ? '' : ' (link not open)'}`)
+      }
+    }
+  }
 
   /**
    * Deliver a stream aimed at this node to one of its own ports.
@@ -343,6 +388,19 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, log
   return {
     start() {
       for (const one of links) one.start()
+    },
+    /**
+     * Report this node's view to every upstream.
+     *
+     * @param options.view - a richer view to report from; the hub has one that folds in
+     *   what its own children reported, which the agent's view does not contain.
+     */
+    announce({ view } = {}) {
+      for (const one of links) {
+        const table = (view ?? topology).outbound({ exclude: one.url })
+        if (table === undefined) continue
+        one.reportTopology(table)
+      }
     },
     stop() {
       for (const one of links) one.stop()

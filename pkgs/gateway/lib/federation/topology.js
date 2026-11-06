@@ -112,72 +112,132 @@ export function isNewer(held, incoming) {
  * @returns `{ apply, nodes, edges, routeTo, get }`.
  */
 export function createTopologyView({ selfId = '' } = {}) {
-  let current
-  let me = selfId
-
   /**
-   * The highest `seq` seen from each source.
+   * What this node knows about the federation, by environment id.
    *
-   * Per source, not global: two upstreams each count from one, so comparing a snapshot
-   * from one against the other's counter discards whichever happens to be behind. A node
-   * with two upstreams saw exactly that — the second upstream's table looked stale on
-   * every broadcast and was dropped, so the node kept a view from the first alone.
+   * A map rather than one snapshot because two paths can describe the same node, and
+   * "which is right" has an answer — the shorter path, in hops. Keeping the last snapshot
+   * whole made the answer depend on message arrival order.
    */
+  const known = new Map()
+
+  /** The highest `seq` seen from each source, so one sender's late message is dropped. */
   const highWater = new Map()
 
+  /** Every edge, so a route can name the next hop. */
+  const edgeRoutes = new Map()
+
+  let me = selfId
+
+  /** This node's own counter for the tables it sends. */
+  let outboundSeq = 0
+
+  /** Fold one snapshot in. @returns whether anything changed. */
+  function absorb(incoming, source) {
+    const fromHops = Number(incoming.hops ?? 0)
+    let changed = false
+    const rows = Array.isArray(incoming.nodes) ? incoming.nodes : []
+    for (const row of rows) {
+      const envId = row.envId
+      if (typeof envId !== 'string' || envId === '') continue
+      const hops = envId === me ? 0 : fromHops + 1
+      const held = known.get(envId)
+      // Shorter is truer: a node one hop away should not be described as three because a
+      // longer path reported it later. Equal hops keep the incumbent, so two equally good
+      // paths do not flap.
+      if (held !== undefined && held.hops <= hops) continue
+      known.set(envId, { ...row, hops })
+      changed = true
+    }
+    for (const row of incoming.edges ?? []) {
+      if (typeof row.to !== 'string' || row.to === '') continue
+      const hops = Number(row.hops ?? fromHops) + 1
+      const held = edgeRoutes.get(row.to)
+      if (held !== undefined && held.hops <= hops) continue
+      edgeRoutes.set(row.to, { to: row.to, via: row.via ?? source, hops })
+      changed = true
+    }
+    // This node is always reachable from itself, whatever anyone else says.
+    if (me !== '' && !known.has(me)) {
+      known.set(me, { envId: me, label: me, kind: 'self', online: true, lastSeen: 0, hops: 0 })
+      changed = true
+    }
+    return changed
+  }
+
   return {
-    /**
-     * Learn which environment this node is.
-     *
-     * A leaf knows only its token; the main node knows which environment the token
-     * belongs to and says so in the broadcast. Without it `routeTo` cannot tell "the
-     * destination is me" from "the destination is a peer".
-     */
+    /** Learn which environment this node is. */
     setSelfId(envId) {
       me = envId
+      known.set(envId, { envId, label: envId, kind: 'self', online: true, lastSeen: 0, hops: 0 })
     },
-    /** Adopt a snapshot if it is newer than what is held. @returns whether it was adopted. */
-    apply(incoming) {
+
+    /**
+     * Fold a snapshot in.
+     *
+     * `seq` orders one sender's broadcasts, compared per source: two upstreams each count
+     * from one, and comparing across them discarded whichever was behind.
+     */
+    apply(incoming, { source } = {}) {
       if (incoming === undefined || incoming === null) return false
-      if (!Array.isArray(incoming.nodes) || !Array.isArray(incoming.edges)) return false
-      const source = typeof incoming.from === 'string' ? incoming.from : ''
+      if (!Array.isArray(incoming.nodes)) return false
+      const from = typeof incoming.from === 'string' && incoming.from !== '' ? incoming.from : (source ?? '')
       const seq = Number(incoming.seq)
-      const seen = highWater.get(source)
-      // `seq` orders the broadcasts of one sender. Across senders there is no order to
-      // recover — each counts independently — so a table from a different source is
-      // adopted rather than compared against a counter it never shared.
+      const seen = highWater.get(from)
       if (seen !== undefined && seq <= seen) return false
-      highWater.set(source, seq)
-      current = incoming
+      highWater.set(from, seq)
+      // A newer table from a known source is news even when it adds no row: the source is
+      // still reporting, and a caller uses the return value to decide whether to log.
+      absorb(incoming, from)
       return true
     },
-    /** Every node row, this node included. */
+
+    /** Every node row this node knows, itself included. */
     nodes() {
-      return current === undefined ? [] : [...current.nodes]
+      return [...known.values()]
     },
-    /** Every edge row. */
+
+    /** Every edge, as `{ to, via, hops }`. */
     edges() {
-      return current === undefined ? [] : [...current.edges]
+      return [...edgeRoutes.values()]
     },
+
     /** The row for one environment, or undefined. */
     get(envId) {
-      return current?.nodes.find((row) => row.envId === envId)
+      return known.get(envId)
     },
-    /**
-     * The next hop toward `envId`, or `undefined` when this node has no route.
-     *
-     * `{ done: true }` means the destination is this node — the caller answers locally.
-     * `{ next: '' }` means a direct tunnel. `{ next: 'x' }` means hand the stream to `x`.
-     */
+
+    /** What to hand to a stream addressed to `envId`. */
     routeTo(envId) {
       if (envId === '' || envId === me) return { done: true }
-      const edge = current?.edges.find((row) => row.to === envId)
-      if (edge === undefined) return undefined
-      return { done: false, next: edge.via }
+      const route = edgeRoutes.get(envId)
+      if (route === undefined) {
+        if (known.has(envId)) return { done: false, next: '' }
+        return undefined
+      }
+      return { done: false, next: route.via }
     },
+
+    /**
+     * What to send uphill: this node's view, minus what came from the receiving side.
+     *
+     * Split-horizon. Echoing back what a peer just told us is what would make a loop
+     * circulate forever; withholding it terminates propagation without a hop limit.
+     */
+    outbound({ exclude } = {}) {
+      const nodes = [...known.values()]
+        .filter((row) => row.envId !== exclude)
+        .map(({ hops, ...row }) => row)
+      if (nodes.length === 0) return undefined
+      const edges = [...edgeRoutes.values()]
+        .filter((row) => row.to !== exclude && row.via !== exclude)
+        .map((row) => ({ to: row.to, via: '', hops: row.hops }))
+      return { seq: outboundSeq += 1, from: me, nodes, edges }
+    },
+
     /** The raw snapshot, for diagnostics. */
     get snapshot() {
-      return current
+      return { nodes: this.nodes(), edges: this.edges() }
     },
   }
 }

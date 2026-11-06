@@ -61,10 +61,12 @@ test('a malformed snapshot is refused rather than adopted', () => {
   assert.equal(isNewer(held, undefined), false)
 })
 
-test('the view keeps the newest snapshot it was given', () => {
+test('a snapshot is merged, not substituted', () => {
   const v = view([nodeRow(edgeA)], [edgeRow('n95c')], 1)
-  assert.equal(v.apply(snapshot({ seq: 1, nodes: [], edges: [] })), false, 'same seq is not newer')
-  assert.equal(v.nodes().length, 1)
+  assert.equal(v.apply({ from: 'x', seq: 2, nodes: [], edges: [] }), true)
+  // The node always knows itself, so the count is the reported row plus this node.
+  assert.deepEqual(v.nodes().map((row) => row.envId).sort(), ['n95c', 'self'],
+    'a silent snapshot does not erase what is known')
 })
 
 // --- routing ------------------------------------------------------------------

@@ -23,7 +23,7 @@ import { WebSocketServer } from 'ws'
 
 import { FRAME, FrameReader, encodeFrame, encodeJsonFrame, newRequestId } from './frames.js'
 import { keepAlive } from './keepalive.js'
-import { edgeRow, nodeRow, snapshot, TOPOLOGY_FRAME } from './topology.js'
+import { createTopologyView, edgeRow, nodeRow, snapshot, TOPOLOGY_FRAME } from './topology.js'
 
 /** Path the edges connect to. */
 export const TUNNEL_PATH = '/_tunnel'
@@ -64,6 +64,18 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    * stream that came from A is A's, and belongs on the way to B.
    */
   const routes = new Map()
+
+  /**
+   * What this node's children have reported, folded together.
+   *
+   * A parent sees only its own tunnels; without this it believes a cascade is exactly as
+   * wide as its own links, so a node several hops down shows as offline and no route to it
+   * exists. Children report what they know and the authority merges it.
+   */
+  const reported = createTopologyView({})
+
+  /** Everything this node knows, for reporting uphill; children's reports fold in here. */
+  const ownView = createTopologyView({})
 
   /** Monotonic per sender, so a receiver can discard a late snapshot. */
   let topologySeq = 0
@@ -109,6 +121,17 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     const edges = nodes
       .filter((row) => row.kind !== 'self')
       .map((row) => edgeRow(row.envId))
+
+    // Add what the children reported but this node cannot see directly. Without this the
+    // authority believes its own links are the whole federation, so a node deeper in a
+    // cascade is reported as absent — it shows offline and no route to it exists.
+    const seen = new Set(nodes.map((row) => row.envId))
+    for (const row of reported.nodes()) {
+      if (seen.has(row.envId)) continue
+      seen.add(row.envId)
+      nodes.push(nodeRow(row, { online: row.online, selfId: row.envId }))
+      edges.push(edgeRow(row.envId, { hops: row.hops ?? 1 }))
+    }
     // No seq here: it belongs to the message about to be sent, not to the act of reading
     // the table. Incrementing while building let a re-entrant broadcast hand out two
     // sequences for one state, and a failed send burn one.
@@ -124,7 +147,19 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    *
    * @returns how many edges were told.
    */
-  function broadcastTopology() {
+  /** The table as it was last sent, so an unchanged table is not broadcast again. */
+  let lastSent = ''
+
+  /**
+   * Broadcast, but only when the table changed.
+   *
+   * The loop guard belongs here rather than in a caller. Two nodes that each report to the
+   * other will answer every report with one of their own; without a "nothing changed"
+   * check the conversation never ends, and each round carries a higher sequence number so
+   * the receiver treats it as news. Comparing the serialized table terminates it: once the
+   * merges settle, both sides produce the same thing.
+   */
+  function broadcastTopology(force = false) {
     // One snapshot per burst, and one sequence number for it.
     //
     // A send can synchronously trigger a `close` on another socket, which calls back into
@@ -144,6 +179,9 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
         topologyDirty = false
         const table = buildSnapshot()
         if (table === undefined) break
+        const serialized = JSON.stringify(table)
+        if (force !== true && serialized === lastSent) break
+        lastSent = serialized
         topologySeq += 1
         const seq = topologySeq
         for (const [, record] of connections) {
@@ -161,6 +199,17 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       broadcasting = false
     }
     return sent
+  }
+
+  /** Broadcast after the current turn, so a report is not answered inside its own handler. */
+  let scheduled
+  function scheduleBroadcast() {
+    if (scheduled !== undefined) return
+    scheduled = setTimeout(() => {
+      scheduled = undefined
+      if (topologyDirty) broadcastTopology()
+    }, 50)
+    scheduled.unref?.()
   }
 
   /**
@@ -261,7 +310,27 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
   function dispatch(record, frame) {
     const key = frame.id.toString('hex')
 
-    if (frame.type === TOPOLOGY_FRAME) return
+    if (frame.type === TOPOLOGY_FRAME) {
+      // A child reporting what it knows. Merged into the authority's view so a node deeper
+      // in a cascade is reachable and shows as online, instead of being invisible beyond
+      // the first hop.
+      try {
+        const table = JSON.parse(frame.payload.toString('utf8'))
+        // The merge changes what this node would tell others, so the next broadcast must
+        // include it — but not *now*. Rebroadcasting inside the receive path closes a loop
+        // across messages: each node answers the other's report with its own, for ever.
+        // Measured on four nodes: 592,949 broadcasts and rising before it was stopped.
+        const merged = reported.apply(table, { source: record.envId })
+        logger.info(`federation: ${record.envId} reported ${table?.nodes?.length ?? 0} node(s); ${merged ? 'merged' : 'no change'}`)
+        if (merged) {
+          topologyDirty = true
+          scheduleBroadcast()
+        }
+      } catch (error) {
+        logger.warn(`federation: ${record.envId} reported a topology this node could not read: ${error.message}`)
+      }
+      return
+    }
 
     if (frame.type === FRAME.open) {
       let payload
@@ -384,6 +453,15 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
   /** Supplied by the gateway: how this node answers a stream aimed at itself. */
   let handleLocalStream
 
+  /**
+   * Supplied by the gateway: tell this node's own upstreams what it now knows.
+   *
+   * A node can be a parent and a child at once. When a child reports something new the
+   * result has to travel on to this node's own parents — otherwise a cascade only ever
+   * propagates downward and the root of a chain never learns about its tail.
+   */
+  let notifyUplinks
+
   /** The retired request-shaped list-environments call. */
   async function receiveListEnvironments(record, frame) {
     const table = listEnvironments === undefined ? [] : listEnvironments()
@@ -495,6 +573,23 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     return connections.has(envId)
   }
 
+  /**
+   * Whether this environment is reachable at all, including through a child.
+   *
+   * `isOnline` answers only for a direct tunnel, which is the wrong question in a cascade:
+   * a node two hops down has no tunnel here, yet a route exists. Reporting it offline is
+   * what made the panel show a live node as dead.
+   */
+  function isReachable(envId) {
+    if (connections.has(envId)) return true
+    return reported.nodes().some((row) => row.envId === envId && row.online !== false)
+  }
+
+  /** Every node reachable here, merged from direct tunnels and child reports. */
+  function knownNodes() {
+    return reported.nodes()
+  }
+
   /** Every environment id with a live tunnel. */
   function ids() {
     return [...connections.keys()]
@@ -545,6 +640,12 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     setLocalStreamHandler(handler) {
       handleLocalStream = handler
     },
+    /** How this node tells its own upstreams what it knows; set once at mount. */
+    setUplinkNotifier(handler) {
+      notifyUplinks = handler
+    },
+    /** Everything this node has heard, children included. */
+    ownView,
     /** Called by `dispatch` for a data/end frame on a stream this node opened. */
     receiveLocalAnswer,
     /**
@@ -558,6 +659,8 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     },
     openStream,
     isOnline,
+    isReachable,
+    knownNodes,
     ids,
     listKnownEnvironments,
     recordOf,

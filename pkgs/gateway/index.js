@@ -315,6 +315,10 @@ export function apply(ctx, config) {
       })),
     ],
   })
+  // A node that both accepts and dials has to relay: what a child reports must reach this
+  // node's own upstreams, or a cascade only ever propagates downward.
+  hub.setUplinkNotifier(() => agent?.announce({ view: hub.ownView }))
+
   const tunnelServer = createTunnelServer()
 
   /** Facts about this process, shown on the panel. */
@@ -865,7 +869,9 @@ export function apply(ctx, config) {
         ...registry.list().map((environment) => ({
           envId: environment.id,
           label: environment.label,
-          online: hub.isOnline(environment.id),
+          // Reachable through a child counts: a cascade puts nodes two hops away, and
+          // `isOnline` — direct tunnels only — called them dead.
+          online: hub.isReachable(environment.id),
         })),
       ]
     }
