@@ -257,6 +257,11 @@ export function createAdmin({
       // one node write into another, because a push decides something on a machine its
       // sender does not own. The pulling side applies the change locally, where the
       // consequences are its own.
+      //
+      // `describe` is metadata and answers JSON. `chunk` answers the piece as the
+      // response body itself — raw bytes, or a zstd frame — so no encoding layer sits
+      // between the file and the wire. Headers carry what a JSON envelope used to:
+      // the encoding, the piece index, and whether this was the last one.
       if (method !== 'POST') {
         json(res, 405, { ok: false, error: `${method} is not supported on ${pathname}` }, { allow: 'POST' })
         return true
@@ -268,11 +273,25 @@ export function createAdmin({
         return true
       }
       if (action === 'chunk') {
-        json(res, 200, await readTransferChunk({
+        const piece = await readTransferChunk({
           path: body.path,
           index: body.index,
           chunkBytes: body.chunkBytes,
-        }))
+          encoding: body.encoding,
+        })
+        if (piece.ok !== true) {
+          json(res, 400, { ok: false, error: piece.error })
+          return true
+        }
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'content-length': String(piece.data.length),
+          'x-dsh-chunk-encoding': piece.encoding,
+          'x-dsh-chunk-index': String(piece.index),
+          'x-dsh-chunk-eof': piece.eof === true ? '1' : '0',
+          'cache-control': 'no-store',
+        })
+        res.end(piece.data)
         return true
       }
       json(res, 400, { ok: false, error: 'action must be "describe" or "chunk"' })

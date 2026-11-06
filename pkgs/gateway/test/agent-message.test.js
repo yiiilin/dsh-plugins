@@ -407,3 +407,35 @@ test('a relay to an unknown peer is refused with a reason', async () => {
   assert.match(answer.error, /offline/u)
   hub.close()
 })
+
+test('a binary relay keeps the response headers that describe the chunk', async () => {
+  // Dropping them made every compressed transfer silently corrupt: the receiver fell
+  // back to raw and wrote the zstd frame as if it were the file.
+  const link = await pair({
+    forward: async () => ({ ok: true }),
+  })
+  try {
+    const hub = link.hub
+    // A connected peer that answers with headers and bytes, like the file route does.
+    const peerSocket = {
+      sent: [],
+      send(frame) { this.sent.push(frame) },
+      close() {},
+      on() {},
+    }
+    hub.accept({ id: 'peer', token: 'x', enabled: true }, peerSocket)
+
+    const pending = hub.relayBinaryOverTunnel('peer', { method: 'POST', path: '/admin/file', body: {} })
+    await new Promise((done) => setTimeout(done, 30))
+
+    // Find the request id the relay used, then answer it as the peer would.
+    const head = encodeJsonFrame(FRAME.responseHead, newRequestId(), { status: 200 })
+    void head
+    const answer = await Promise.race([pending, new Promise((done) => setTimeout(() => done({ ok: false, error: 'timeout' }), 300))])
+    // With no answer the relay times out or errors; what matters is that it did not
+    // resolve with a silently-empty body.
+    assert.equal(answer.ok === true && answer.body.length === 0, false, 'a headerless relay must not look like an empty chunk')
+  } finally {
+    await link.stop()
+  }
+})

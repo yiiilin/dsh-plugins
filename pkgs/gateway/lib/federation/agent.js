@@ -126,7 +126,11 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
       // request-shaped frames the edge answers. Both spellings mean the same thing to
       // the half that is waiting, so both are accepted here: `agentMessage` is the one
       // request an edge may originate, and its answer is an ordinary response.
-      if (frame.type === FRAME.requestBody || frame.type === FRAME.responseBody) {
+      if (frame.type === FRAME.responseHead) {
+        // An entry that cares about status and headers (a binary relay) gets them; one
+        // that does not simply has no handler.
+        entry.onResponseHead?.(JSON.parse(frame.payload.toString('utf8')))
+      } else if (frame.type === FRAME.requestBody || frame.type === FRAME.responseBody) {
         entry.onRequestBody(frame.payload)
       } else if (frame.type === FRAME.requestEnd || frame.type === FRAME.responseEnd) {
         inFlight.delete(key)
@@ -415,6 +419,69 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
   }
 
   /**
+   * Ask a peer for one file chunk, through the main node.
+   *
+   * The answer carries bytes, not JSON, so it is accumulated as a Buffer and the
+   * describing headers are returned beside it. Reading it as text would corrupt every
+   * byte above 0x7f.
+   *
+   * @param toEnvId - peer environment id.
+   * @param path - source path on the peer.
+   * @param index - chunk index.
+   * @param encoding - how the chunk was encoded.
+   * @returns `{ ok: true, data, encoding, index, eof }` or `{ ok: false, error }`.
+   */
+  function readRemoteChunk(toEnvId, path, index, encoding) {
+    return new Promise((resolve) => {
+      if (socket === undefined || socket.readyState !== WebSocket.OPEN) {
+        resolve({ ok: false, error: 'this edge is not connected to the main node' })
+        return
+      }
+      let settled = false
+      let body = Buffer.alloc(0)
+      let head
+      const finish = (value) => {
+        if (settled) return
+        settled = true
+        resolve(value)
+      }
+      const timer = setTimeout(() => finish({ ok: false, error: 'the main node did not answer in time' }), 60_000)
+      const id = newRequestId()
+      const key = id.toString('hex')
+      inFlight.set(key, {
+        onResponseHead(value) { head = value },
+        onRequestBody(payload) { body = Buffer.concat([body, payload]) },
+        onRequestEnd() {
+          clearTimeout(timer)
+          if (head !== undefined && head.status !== 200) {
+            finish({ ok: false, error: body.toString('utf8').slice(0, 300) || `status ${head.status}` })
+            return
+          }
+          finish({
+            ok: true,
+            data: body,
+            encoding: head?.headers?.['x-dsh-chunk-encoding'] ?? encoding ?? 'raw',
+            index: Number(head?.headers?.['x-dsh-chunk-index'] ?? index),
+            eof: head?.headers?.['x-dsh-chunk-eof'] === '1',
+          })
+        },
+        close() {
+          clearTimeout(timer)
+          finish({ ok: false, error: 'the tunnel closed before the peer answered' })
+        },
+      })
+      sendOrClose(encodeJsonFrame(FRAME.agentMessage, id, {
+        kind: 'relay',
+        toEnvId,
+        method: 'POST',
+        path: '/admin/file',
+        binary: true,
+        body: JSON.stringify({ action: 'chunk', path, index, encoding }),
+      }))
+    })
+  }
+
+  /**
    * Ask the main node which environments exist, and which are online.
    *
    * An edge's own registry is empty by design — environments are the main node's to
@@ -519,6 +586,7 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
     sendAgentMessage,
     listEnvironments,
     readRemote,
+    readRemoteChunk,
     connected: () => socket?.readyState === WebSocket.OPEN,
   }
 }

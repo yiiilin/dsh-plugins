@@ -19,6 +19,8 @@ import { randomUUID } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { mkdir, open, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, resolve } from 'node:path'
+import { chooseEncoding, decodeChunk, ENCODING, encodeChunk } from './transfer-codec.js'
+import { MAX_FRAME_BYTES } from './federation/frames.js'
 
 /** Largest file one call may move. Chunked, so this is a policy cap, not a frame cap. */
 export const MAX_FILE_BYTES = 32 * 1024 * 1024
@@ -47,46 +49,53 @@ export function validateDestination(path) {
 }
 
 /**
- * Describe one file without sending its contents.
+ * Describe one file without sending its contents, and decide how it will be encoded.
  *
- * A caller pulls a file in pieces, so it first needs to know whether the file is there
- * and how big it is. Returning the whole file here is what made the read path unusable
- * above roughly 6 MiB: the tunnel caps a frame at 8 MiB, and base64 inflates by a third.
+ * The encoding is chosen here, once, from the first chunk: the receiver must be told,
+ * because a `raw` chunk and a `zstd` chunk are different byte streams.
  *
  * @param path - absolute path to inspect.
- * @returns `{ ok: true, name, size, chunkBytes, chunks }` or `{ ok: false, error }`.
+ * @returns `{ ok: true, name, size, chunkBytes, chunks, encoding }` or `{ ok: false, error }`.
  */
 export async function describeTransfer(path) {
   const checked = validateDestination(path)
   if (checked.ok !== true) return checked
+  let handle
   try {
     const info = await stat(checked.path)
     if (!info.isFile()) return { ok: false, error: `not a regular file: "${checked.path}"` }
     if (info.size > MAX_FILE_BYTES) {
       return { ok: false, error: `file is ${info.size} bytes; the limit is ${MAX_FILE_BYTES}` }
     }
+    handle = await open(checked.path, 'r')
+    const probe = Buffer.alloc(Math.min(CHUNK_BYTES, Math.max(1, info.size)))
+    const { bytesRead } = await handle.read(probe, 0, probe.length, 0)
+    const chosen = chooseEncoding(probe.subarray(0, bytesRead))
     return {
       ok: true,
       name: basename(checked.path),
       size: info.size,
       chunkBytes: CHUNK_BYTES,
       chunks: Math.max(1, Math.ceil(info.size / CHUNK_BYTES)),
+      encoding: chosen.encoding,
     }
   } catch (error) {
     return { ok: false, error: `could not read "${checked.path}": ${error?.message ?? error}` }
+  } finally {
+    await handle?.close().catch(() => {})
   }
 }
 
 /**
- * Read one piece of a file.
+ * Read and encode one piece of a file.
  *
- * The piece is bounded by {@link CHUNK_BYTES}, so its base64 form stays well inside one
- * frame whatever the file's size.
+ * The piece is {@link CHUNK_BYTES} of the file, encoded per the transfer's choice. Even
+ * when it compresses badly, the raw form is a quarter of the 8 MiB frame cap.
  *
- * @param request - `{ path, index, chunkBytes }`.
- * @returns `{ ok: true, index, data, eof }` or `{ ok: false, error }`.
+ * @param request - `{ path, index, chunkBytes, encoding }`.
+ * @returns `{ ok: true, index, data, eof }` or `{ ok: false, error }`; `data` is a Buffer.
  */
-export async function readTransferChunk({ path, index, chunkBytes = CHUNK_BYTES }) {
+export async function readTransferChunk({ path, index, chunkBytes = CHUNK_BYTES, encoding = ENCODING.raw }) {
   const checked = validateDestination(path)
   if (checked.ok !== true) return checked
   const at = Number(index)
@@ -98,11 +107,16 @@ export async function readTransferChunk({ path, index, chunkBytes = CHUNK_BYTES 
     const buffer = Buffer.alloc(span)
     const { bytesRead } = await handle.read(buffer, 0, span, at * span)
     if (bytesRead === 0 && at > 0) {
+      // Past the end: the file shrank between the description and this read.
       return { ok: false, error: `"${checked.path}" is shorter than expected` }
     }
-    const data = buffer.subarray(0, bytesRead)
+    const raw = buffer.subarray(0, bytesRead)
+    const data = encodeChunk(raw, encoding)
+    if (data.length > MAX_FRAME_BYTES) {
+      return { ok: false, error: `chunk ${at} is ${data.length} bytes, over the frame limit` }
+    }
     const more = await handle.read(Buffer.alloc(1), 0, 1, (at + 1) * span)
-    return { ok: true, index: at, data: data.toString('base64'), eof: more.bytesRead === 0 }
+    return { ok: true, index: at, data, encoding, eof: more.bytesRead === 0 }
   } catch (error) {
     return { ok: false, error: `could not read "${checked.path}": ${error?.message ?? error}` }
   } finally {
@@ -184,11 +198,20 @@ export async function beginTransfer({ path, overwrite = false, totalChunks }) {
  * @param data - the piece, base64.
  * @returns `{ ok: true, received }` or `{ ok: false, error }`.
  */
-export async function appendTransfer(transferId, data) {
+export async function appendTransfer(transferId, data, encoding = ENCODING.raw) {
   const stage = transfers.get(String(transferId ?? ''))
   if (stage === undefined) return { ok: false, error: 'no such transfer; it was aborted or never began' }
-  const piece = Buffer.from(String(data ?? ''), 'base64')
-  if (piece.length === 0) return { ok: false, error: 'chunk is empty' }
+  // `data` arrives as the bytes themselves — no base64 layer. The encoding says whether
+  // those bytes are a zstd frame or the file's own content.
+  const wire = Buffer.isBuffer(data) ? data : Buffer.from(data ?? '')
+  if (wire.length === 0) return { ok: false, error: 'chunk is empty' }
+  let piece
+  try {
+    piece = decodeChunk(wire, encoding)
+  } catch (error) {
+    await abortTransfer(transferId)
+    return { ok: false, error: `chunk is not valid ${encoding}: ${error?.message ?? error}` }
+  }
   if (stage.bytes + piece.length > MAX_FILE_BYTES) {
     await abortTransfer(transferId)
     return { ok: false, error: `file exceeds the ${MAX_FILE_BYTES} byte limit` }
@@ -202,7 +225,7 @@ export async function appendTransfer(transferId, data) {
   }
   stage.received += 1
   stage.bytes += piece.length
-  return { ok: true, received: stage.received }
+  return { ok: true, received: stage.received, bytes: stage.bytes }
 }
 
 /**

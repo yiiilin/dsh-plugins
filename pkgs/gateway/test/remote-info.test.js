@@ -24,6 +24,7 @@ import {
   readTransferChunk,
   validateDestination,
 } from '../lib/file-transfer.js'
+import { decompress } from '../lib/transfer-codec.js'
 
 /** Pull a file the way the tool does: describe, then one chunk per index. */
 async function pull(path) {
@@ -31,20 +32,21 @@ async function pull(path) {
   if (described.ok !== true) return described
   const pieces = []
   for (let index = 0; index < described.chunks; index += 1) {
-    const piece = await readTransferChunk({ path, index, chunkBytes: described.chunkBytes })
+    const piece = await readTransferChunk({ path, index, encoding: described.encoding })
     if (piece.ok !== true) return piece
-    pieces.push(piece.data)
+    // A chunk arrives in the transfer's chosen encoding; the test decodes it the same way
+    // the receiver does rather than assuming raw.
+    pieces.push(piece.encoding === 'zstd' ? decompress(piece.data) : piece.data)
     if (piece.eof === true) break
   }
-  return { ok: true, name: described.name, size: described.size, bytes: Buffer.concat(pieces.map((p) => Buffer.from(p, 'base64'))) }
+  return { ok: true, name: described.name, size: described.size, bytes: Buffer.concat(pieces) }
 }
 
-/** Upload one buffer the way the sender does: begin, chunks, commit. */
+/** Upload one buffer: begin, raw chunks, commit. */
 async function upload(path, bytes, { overwrite = false } = {}) {
   const chunks = []
-  for (let at = 0; at < bytes.length; at += CHUNK_BYTES) {
-    chunks.push(bytes.subarray(at, at + CHUNK_BYTES).toString('base64'))
-  }
+  for (let at = 0; at < bytes.length; at += CHUNK_BYTES) chunks.push(bytes.subarray(at, at + CHUNK_BYTES))
+  if (chunks.length === 0) chunks.push(Buffer.alloc(0))
   const began = await beginTransfer({ path, overwrite, totalChunks: chunks.length })
   if (began.ok !== true) return began
   for (const piece of chunks) {
@@ -53,6 +55,8 @@ async function upload(path, bytes, { overwrite = false } = {}) {
   }
   return await commitTransfer(began.transferId)
 }
+
+
 import { listSessions, listWorkspaces, workspaceRow } from '../lib/remote-info.js'
 
 /** A workspace entity stand-in: the same fields the registry exposes. */
@@ -264,7 +268,7 @@ test('a file larger than one frame is pulled one piece at a time', async () => {
     // Every piece on its own must stay inside one frame once encoded.
     const piece = await readTransferChunk({ path: source, index: 0, chunkBytes: described.chunkBytes })
     assert.equal(piece.ok, true)
-    assert.ok(Buffer.from(piece.data, 'base64').length <= CHUNK_BYTES)
+    assert.ok(piece.data.length <= CHUNK_BYTES)
     assert.ok(piece.data.length < 8 * 1024 * 1024, 'one encoded piece must fit a frame')
 
     const pulled = await pull(source)

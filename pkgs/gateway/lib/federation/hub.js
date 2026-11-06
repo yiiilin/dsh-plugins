@@ -299,7 +299,12 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     const id = newRequestId()
     const key = id.toString('hex')
     record.pending.set(key, {
-      onHead() {},
+      // Headers are part of the answer: a file chunk says how it was encoded and whether
+      // it was the last one, and dropping them here silently corrupted every compressed
+      // transfer — the receiver fell back to raw and wrote the zstd frame as content.
+      onHead(head) {
+        handlers.onHead?.(head)
+      },
       onBody(payload) {
         handlers.onBody(payload)
       },
@@ -344,6 +349,20 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       // A relayed request may only address the peer's daemon-owned routes. Letting it
       // reach the harness would hand one edge a signed-in view of another's UI.
       return { ok: false, error: 'relay may only address /admin/ paths' }
+    }
+    if (payload.binary === true) {
+      const answer = await relayBinaryOverTunnel(toEnvId, { method, path, body: payload.body })
+      if (answer.ok !== true) return { ok: false, error: answer.error }
+      return {
+        __binary: true,
+        ok: true,
+        headers: {
+          'x-dsh-chunk-encoding': answer.headers['x-dsh-chunk-encoding'] ?? 'raw',
+          'x-dsh-chunk-index': answer.headers['x-dsh-chunk-index'] ?? '0',
+          'x-dsh-chunk-eof': answer.headers['x-dsh-chunk-eof'] ?? '0',
+        },
+        body: answer.body,
+      }
     }
     return await relayOverTunnel(toEnvId, { method, path, body: payload.body })
   }
@@ -415,12 +434,20 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    */
   function sendAgentAnswer(record, frame, answer) {
     try {
+      // A relayed file chunk is bytes, not JSON: send it as the body itself and let the
+      // headers say how to read it. Everything else stays a JSON object.
+      const binary = answer?.__binary === true
       record.socket.send(encodeJsonFrame(FRAME.responseHead, frame.id, {
-        status: answer.ok === true ? 200 : 502,
-        statusText: answer.ok === true ? 'OK' : 'Bad Gateway',
-        headers: { 'content-type': 'application/json; charset=utf-8' },
+        status: answer?.ok === false ? 502 : 200,
+        statusText: answer?.ok === false ? 'Bad Gateway' : 'OK',
+        headers: binary
+          ? { ...answer.headers, 'x-dsh-binary': '1' }
+          : { 'content-type': 'application/json; charset=utf-8' },
       }))
-      record.socket.send(encodeFrame(FRAME.responseBody, frame.id, Buffer.from(JSON.stringify(answer), 'utf8')))
+      const payload = binary
+        ? answer.body
+        : Buffer.from(JSON.stringify(answer), 'utf8')
+      record.socket.send(encodeFrame(FRAME.responseBody, frame.id, payload))
       record.socket.send(encodeFrame(FRAME.responseEnd, frame.id))
     } catch (error) {
       logger.warn(`federation: could not answer ${record.envId}'s agent message: ${error.message}`)
@@ -550,6 +577,61 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     })
   }
 
+  /**
+   * Send one HTTP request into an edge and return its response **bytes**.
+   *
+   * The JSON sibling above decodes the answer as text; a file chunk is not text, and
+   * decoding it as UTF-8 would corrupt every byte above 0x7f. This keeps the body as a
+   * Buffer and lifts the few response headers that describe it.
+   *
+   * @param envId - target environment.
+   * @param request - `{ method, path, body }`.
+   * @param options.timeoutMs - how long to wait.
+   * @returns `{ ok: true, status, headers, body }` or `{ ok: false, error }`.
+   */
+  function relayBinaryOverTunnel(envId, outbound, { timeoutMs = 60_000 } = {}) {
+    if (!connections.has(envId)) {
+      return Promise.resolve({ ok: false, error: `environment "${envId}" is offline` })
+    }
+    return new Promise((resolve) => {
+      const settled = { done: false, body: Buffer.alloc(0), head: undefined }
+      const finish = (value) => {
+        if (settled.done) return
+        settled.done = true
+        resolve(value)
+      }
+      const timer = setTimeout(() => finish({ ok: false, error: `environment "${envId}" did not answer in time` }), timeoutMs)
+      const sent = request(envId, {
+        method: outbound.method,
+        path: outbound.path,
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+        body: typeof outbound.body === 'string'
+          ? outbound.body
+          : (outbound.body === undefined ? undefined : JSON.stringify(outbound.body)),
+      }, {
+        onHead(head) { settled.head = head },
+        onBody(chunk) { settled.body = Buffer.concat([settled.body, chunk]) },
+        onEnd() {
+          clearTimeout(timer)
+          const status = settled.head?.status ?? 200
+          if (status !== 200) {
+            finish({ ok: false, error: settled.body.toString('utf8').slice(0, 300) || `status ${status}` })
+            return
+          }
+          finish({ ok: true, status, headers: settled.head?.headers ?? {}, body: settled.body })
+        },
+        onError(error) {
+          clearTimeout(timer)
+          finish({ ok: false, error: String(error?.message ?? error) })
+        },
+      })
+      if (sent === false) {
+        clearTimeout(timer)
+        finish({ ok: false, error: `environment "${envId}" is offline` })
+      }
+    })
+  }
+
   /** The environment table an edge asks for; empty when this hub was given no source. */
   function listKnownEnvironments() {
     return listEnvironments?.() ?? []
@@ -563,6 +645,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     request,
     sendAgentMessage,
     relayOverTunnel,
+    relayBinaryOverTunnel,
     listEnvironments: listKnownEnvironments,
     isOnline,
     ids,
