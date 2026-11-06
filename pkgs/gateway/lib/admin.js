@@ -45,6 +45,7 @@ export function createAdmin({
   changeCredential, logger, relayTimeoutMs = RELAY_TIMEOUT_MS, deliverMessage,
   remoteInfo = {},
   topologyChanged,
+  harnessUrl,
 }) {
   /** id -> `{ at, value }` for the last known connection state. */
   const statusCache = new Map()
@@ -267,6 +268,24 @@ export function createAdmin({
       // Answered on both roles: an edge's answer is what the main node relays into its
       // own table, and it is also what a session view read on the edge directly shows.
       json(res, 200, await overview(sessionId))
+      return true
+    }
+
+    if (pathname === '/admin/harness-url' && method === 'GET') {
+      // The tokenized URL for this node's own UI, handed only to a caller that reached
+      // this route over an authenticated tunnel. `dsh web` authenticates by exchanging a
+      // launch token for a cookie, and that token cannot be derived by a peer — so the
+      // node that holds it supplies the exchange for one.
+      if (harnessUrl === undefined) {
+        json(res, 503, { ok: false, error: 'this node has no harness listener' })
+        return true
+      }
+      try {
+        const url = await harnessUrl()
+        json(res, 200, url === undefined ? { ok: false, error: 'no session URL available' } : { ok: true, url })
+      } catch (error) {
+        json(res, 500, { ok: false, error: error?.message ?? String(error) })
+      }
       return true
     }
 

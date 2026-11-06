@@ -749,6 +749,28 @@ export function apply(ctx, config) {
     hub,
     deliverMessage,
     remoteInfo,
+    /**
+     * A tokenized URL for this node's own UI.
+     *
+     * Supplied to a peer over the tunnel so it can complete `dsh web` authentication on a
+     * human's behalf. The token is short-lived and only meaningful to this node's harness,
+     * which is why the node that owns it produces it rather than a caller guessing.
+     */
+    harnessUrl: () => {
+      const connection = ctx.get('connection')
+      if (connection === undefined || typeof connection.authenticatedUrl !== 'function') return undefined
+      const port = embeddedRoot.portOrZero()
+      if (port === 0) return undefined
+      const tokenized = connection.authenticatedUrl(`http://127.0.0.1:${port}/`)
+      // The caller is a browser on another machine: it can reach the token, not this
+      // loopback address. Only the query string is meaningful to it, so only that travels.
+      try {
+        const parsed = new URL(tokenized)
+        return { search: parsed.search }
+      } catch {
+        return undefined
+      }
+    },
     topologyChanged: () => hub.broadcastTopology(),
     config: { ...config, cacheDir },
     profileSelf: selfInfo,

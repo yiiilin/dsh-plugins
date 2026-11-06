@@ -638,6 +638,36 @@ window.__ModuleLoader__.load({
       }, [label, load, t])
 
         /**
+         * Open an environment's own UI.
+         *
+         * `dsh web` authenticates by exchanging a launch token for a cookie, and only the
+         * node holding that token can perform the exchange. So the node is asked for it,
+         * over the same authenticated tunnel, and the tab opens with it. Without it the
+         * far harness answers 401, which reads as a broken environment rather than a
+         * missing credential.
+         */
+        const openEnvironment = useCallback(async (envId) => {
+          const fallback = `/${envId}/`
+          try {
+            // Addressed to the environment itself: the tunnel carries it there, and that
+            // node answers with its own token.
+            const answer = await fetch(`/${envId}/admin/harness-url`)
+            if (!answer.ok) { window.open(fallback, '_blank'); return }
+            const body = await answer.json()
+            const search = body?.url?.search ?? ''
+            if (search === '') { window.open(fallback, '_blank'); return }
+            // The token is exchanged for a cookie by the *browser*, so the exchange has
+            // to happen before the tab opens: a tab that loads the tokenized URL carries
+            // no cookie yet and the far harness answers 401. Fetching it here leaves the
+            // cookie in place, and the tab then opens signed in.
+            await fetch(`${fallback}${search}`, { credentials: 'same-origin', redirect: 'manual' })
+            window.open(fallback, '_blank')
+          } catch {
+            window.open(fallback, '_blank')
+          }
+        }, [])
+
+        /**
          * Rename one environment.
          *
          * Only the label changes. The id is the node identifier and the URL is built from

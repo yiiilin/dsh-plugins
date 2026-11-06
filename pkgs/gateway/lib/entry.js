@@ -306,7 +306,7 @@ async function handleHttp({ req, res, url, listEnvironments, local, root, tunnel
    * @param res - the browser's response.
    * @returns `{ push(bytes) }`.
    */
-  function createResponseSplitter(res) {
+  function createResponseSplitter(res, envId) {
     let buffer = Buffer.alloc(0)
     let headSent = false
     // The remote daemon answers over HTTP/1.1, which defaults to chunked framing even when
@@ -330,6 +330,7 @@ async function handleHttp({ req, res, url, listEnvironments, local, root, tunnel
         const match = /^HTTP\/\d+\.\d+ (\d{3})(?: (.*))?$/u.exec(statusLine ?? '')
         const status = match === null ? 502 : Number(match[1])
         const headers = {}
+        const cookies = []
         for (const line of headerLines) {
           const at = line.indexOf(':')
           if (at <= 0) continue
@@ -338,9 +339,24 @@ async function handleHttp({ req, res, url, listEnvironments, local, root, tunnel
           // Length and framing are the browser's business now, and a stale
           // `content-length` would truncate a streamed body.
           if (name === 'transfer-encoding' || name === 'content-length' || name === 'connection') continue
+          // A cookie the far harness scoped to `/` would be sent to the portal and to every
+          // other environment; scoped to this environment's prefix, it only comes back
+          // here. `res.writeHead` takes one value per name, so several cookies have to be
+          // joined rather than overwritten.
+          if (name === 'set-cookie') {
+            // Several cookies share this header name, so they are collected as an array
+            // and set with `setHeader`, which is the one form Node serializes correctly.
+            cookies.push(scopeCookiePath(value, `/${envId}`))
+            continue
+          }
           headers[name] = value
         }
         chunked = /\bchunked\b/iu.test(head)
+        // Headers must be set *before* `writeHead`: afterwards Node throws
+        // ERR_HTTP_HEADERS_SENT, which is an uncaught exception and took the whole daemon
+        // down. `set-cookie` is the one header Node needs written first, because several
+        // cookies share the name and only an array serializes correctly.
+        if (cookies.length > 0) res.setHeader('set-cookie', cookies)
         res.writeHead(status, headers)
         headSent = true
         if (rest.length > 0) writeBody(rest)
@@ -382,7 +398,7 @@ async function handleHttp({ req, res, url, listEnvironments, local, root, tunnel
     // included — the tunnel carries bytes, not a parsed response. Writing those bytes
     // straight to `res` makes the browser read them as the *body* of a response whose
     // head it already has, so the head has to be parsed off the front here.
-    const relay = createResponseSplitter(res)
+    const relay = createResponseSplitter(res, envId)
     // `/admin` belongs to the daemon and everything else is the profile's own UI, which
     // lives behind its harness listener. Sending page requests to the daemon returned its
     // login page — the reason a proxied environment never showed its own interface.
