@@ -207,12 +207,11 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
 
     const prepared = await rewriteHeaders(head.headers)
     let response
-      // `/admin` is the daemon's JSON surface; `/file` is its byte surface. Both belong
-      // to the daemon rather than the harness behind it, and both are answered only for
-      // a request that carried this node's federation token.
+      // Everything under `/admin` belongs to the daemon rather than the harness behind
+      // it — JSON routes and the byte surface alike — and is answered only for a request
+      // that carried this node's federation token.
       const pathname = head.path.split('?')[0]
       const daemonOwned = pathname === '/admin' || pathname.startsWith('/admin/')
-        || pathname === '/file' || pathname.startsWith('/file/')
       const check = httpRequest({
         host: '127.0.0.1',
         port: daemonOwned ? daemonPort() : harnessPort(),

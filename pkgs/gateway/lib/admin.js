@@ -19,7 +19,6 @@
 import { PAIRING_CREDENTIAL_MIN_LENGTH } from './auth/pairing-credential.js'
 import { validateMessageRequest } from './agent-message.js'
 import { listSessions, listWorkspaces } from './remote-info.js'
-import { describeTransfer, readTransferChunk } from './file-transfer.js'
 import { deriveId, freshToken, normalizeEnvironment } from './registry.js'
 
 /** How long a tunnel status stays cached, so a panel refresh is not a probe storm. */
@@ -249,54 +248,6 @@ export function createAdmin({
       }
       const workspaceId = new URL(`http://x${url}`).searchParams.get('workspaceId') ?? ''
       json(res, 200, await listSessions(remoteInfo, workspaceId))
-      return true
-    }
-
-    if (pathname === '/admin/file') {
-      // Read-only by design. A peer may *pull* a file from this node; nothing here lets
-      // one node write into another, because a push decides something on a machine its
-      // sender does not own. The pulling side applies the change locally, where the
-      // consequences are its own.
-      //
-      // `describe` is metadata and answers JSON. `chunk` answers the piece as the
-      // response body itself — raw bytes, or a zstd frame — so no encoding layer sits
-      // between the file and the wire. Headers carry what a JSON envelope used to:
-      // the encoding, the piece index, and whether this was the last one.
-      if (method !== 'POST') {
-        json(res, 405, { ok: false, error: `${method} is not supported on ${pathname}` }, { allow: 'POST' })
-        return true
-      }
-      const body = await readJson(req)
-      const action = typeof body.action === 'string' ? body.action : ''
-      if (action === 'describe') {
-        json(res, 200, await describeTransfer(body.path, { offset: body.offset, length: body.length }))
-        return true
-      }
-      if (action === 'chunk') {
-        const piece = await readTransferChunk({
-          path: body.path,
-          index: body.index,
-          chunkBytes: body.chunkBytes,
-          encoding: body.encoding,
-          offset: body.offset,
-          length: body.length,
-        })
-        if (piece.ok !== true) {
-          json(res, 400, { ok: false, error: piece.error })
-          return true
-        }
-        res.writeHead(200, {
-          'content-type': 'application/octet-stream',
-          'content-length': String(piece.data.length),
-          'x-dsh-chunk-encoding': piece.encoding,
-          'x-dsh-chunk-index': String(piece.index),
-          'x-dsh-chunk-eof': piece.eof === true ? '1' : '0',
-          'cache-control': 'no-store',
-        })
-        res.end(piece.data)
-        return true
-      }
-      json(res, 400, { ok: false, error: 'action must be "describe" or "chunk"' })
       return true
     }
 

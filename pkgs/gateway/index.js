@@ -34,10 +34,7 @@ import { createTunnelHub, createTunnelServer, tokenOf, TUNNEL_PATH } from './lib
 import { deliverToSession } from './lib/agent-message.js'
 import { listSessions, listWorkspaces } from './lib/remote-info.js'
 import { serveFileRoute } from './lib/file-route.js'
-import {
-  abortTransfer, appendTransfer, beginTransfer, commitTransfer, describeTransfer,
-  openStreamSink, readTransferChunk, validateDestination,
-} from './lib/file-transfer.js'
+import { openStreamSink, validateDestination } from './lib/file-transfer.js'
 import { agentMessageTools } from './tools.js'
 import { defaultSkillsRoot, readInventory } from './lib/inventory.js'
 import { installUnit, renderUnit, underSystemd, unitNameFor } from './lib/systemd.js'
@@ -358,11 +355,11 @@ export function apply(ctx, config) {
     const proof = req.headers['x-dsh-federation']
     if (proof !== undefined && config.token !== '' && proof === config.token) {
       const path = url.split('?')[0]
+      // `/admin/file` is the byte surface and everything else under `/admin` is JSON;
+      // both sit inside the one prefix, so one branch answers them and one gate protects
+      // them.
+      if (path === '/admin/file' || path.startsWith('/admin/file')) return await serveFileRoute(req, res, url)
       if (path === '/admin' || path.startsWith('/admin/')) return await admin(req, res, url)
-      // The byte surface. Answered before the session gate for the same reason as
-      // `/admin`: a peer node authenticated with this node's token, and it has no
-      // browser session to present.
-      if (path === '/file' || path.startsWith('/file/')) return await serveFileRoute(req, res, url)
     }
     // The auth layer matches its endpoints as exact strings, and the login page
     // posts from inside the mount, so the mount is stripped before it is asked.
@@ -777,15 +774,6 @@ export function apply(ctx, config) {
    * agent-message path uses.
    */
   const requestOverTunnel = (envId, method, path, body) => hub.relayOverTunnel(envId, { method, path, body })
-
-  /** The same two reads a peer would serve, answered from this process. */
-  const readLocalFile = async (payload) => {
-    if (payload.action === 'describe') return await describeTransfer(payload.path)
-    if (payload.action === 'chunk') {
-      return await readTransferChunk({ path: payload.path, index: payload.index, chunkBytes: payload.chunkBytes })
-    }
-    return { ok: false, error: `unknown file action "${payload.action}"` }
-  }
 
   /**
    * Ask one environment for its workspace table.

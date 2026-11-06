@@ -364,7 +364,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     }
     const sent = request(toEnvId, {
       method: 'GET',
-      path: `/file?path=${encodeURIComponent(path)}`,
+      path: `/admin/file?path=${encodeURIComponent(path)}`,
       headers: range === undefined ? {} : { range },
     }, {
       onHead(head) { sendHead(head) },
@@ -730,7 +730,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       const headers = range === undefined ? {} : { range }
       const sent = request(envId, {
         method: 'GET',
-        path: `/file?path=${encodeURIComponent(filePath)}`,
+        path: `/admin/file?path=${encodeURIComponent(filePath)}`,
         headers,
       }, {
         onHead(head) {

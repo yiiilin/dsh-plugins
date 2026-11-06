@@ -9,14 +9,15 @@
  *
  * So a file is now an ordinary HTTP response with ordinary HTTP semantics:
  *
- * - `GET /file?path=...` streams the whole file.
+ * - `GET /admin/file?path=...` streams the whole file.
  * - `Range: bytes=a-b` streams that range, which is what `curl -r`, resumable downloads
  *   and every HTTP client already understand.
  * - `HEAD` returns the size without a body, which is what `describe` used to do.
  *
- * The route is daemon-owned, so it is reachable only over a tunnel that presented this
- * node's federation token — a browser cannot talk to it. It is read-only by
- * construction: there is no method that writes.
+ * It lives under `/admin` rather than at its own prefix: that is the daemon's whole
+ * surface, so one branch dispatches it and one federation-token gate protects it — a
+ * browser cannot reach it, and there is no second prefix to keep in sync. Read-only by
+ * construction: no method writes.
  *
  * @module @yiln-dsh/dsh-gateway/file-route
  */
