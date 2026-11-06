@@ -234,12 +234,45 @@ async function withFakeHub({
   online = [], replies = {}, role = 'main', sessions = () => [], environments = [ALPHA, BETA], relayTimeoutMs,
 }, body) {
   const hub = fakeHub({ online, replies })
+  // The admin reaches other nodes through the peer accessor. This stub drives the fake
+  // hub's request simulation and honours `relayTimeoutMs`, which is what the `hang`
+  // replies exercise — without it a hanging node would wait for ever.
+  const getPeer = () => ({
+    json: (envId, request) => new Promise((resolve) => {
+      let body = ''
+      let done = false
+      const finish = (value) => {
+        if (done) return
+        done = true
+        clearTimeout(timer)
+        resolve(value)
+      }
+      const timer = setTimeout(
+        () => finish({ ok: false, error: 'the environment did not answer in time' }),
+        relayTimeoutMs ?? 50,
+      )
+      const sent = hub.request(envId, request, {
+        onBody(chunk) { body += chunk },
+        onEnd() {
+          try {
+            finish({ ok: true, body: JSON.parse(body === '' ? '{}' : body) })
+          } catch {
+            finish({ ok: false, error: 'not json' })
+          }
+        },
+        onError(error) { finish({ ok: false, error: String(error?.message ?? error) }) },
+        onClose() { finish({ ok: false, error: 'closed' }) },
+      })
+      if (sent === false) finish({ ok: false, error: `environment "${envId}" is offline` })
+    }),
+  })
   const admin = createAdmin({
     registry: fakeRegistry(environments),
     hub,
     config: { role },
     sessions,
     relayTimeoutMs,
+    getPeer,
     logger: { info: () => true, warn: () => true },
   })
   const server = createServer((req, res) => {

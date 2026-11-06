@@ -46,6 +46,7 @@ export function createAdmin({
   remoteInfo = {},
   topologyChanged,
   harnessUrl,
+  getPeer,
 }) {
   /** id -> `{ at, value }` for the last known connection state. */
   const statusCache = new Map()
@@ -98,23 +99,35 @@ export function createAdmin({
     if (!hub.isOnline(environment.id)) {
       return { ...node, state: 'offline', error: `environment "${environment.id}" is offline` }
     }
-    // The same read-only route this process answers, reached the way every other
-    // environment call is: one HTTP request into the tunnel, with its own timeout.
-    const answer = await relay(
-      hub,
-      environment.id,
-      { method: 'GET', path: '/admin/sessions', headers: {} },
-      relayTimeoutMs,
-    )
-    if (answer?.timeout === true) return { ...node, state: 'timeout', error: answer.error }
+    // The same read-only route this process answers, reached through the one accessor
+    // every cross-node call uses. It used to go through `relay`, built on `hub.request` —
+    // an API the frames rewrite removed — so this table reported "answered nothing" for
+    // every node whatever its real state.
+    const access = getPeer?.()
+    const answer = access === undefined
+      ? { ok: false, error: 'this node cannot reach others' }
+      : await access.json(environment.id, { method: 'GET', path: '/admin/sessions' })
     if (answer?.ok !== true) {
-      return { ...node, state: 'error', error: String(answer?.error ?? 'the environment answered nothing') }
+      // A node that never answers is not the same as one that answered badly: the panel
+      // renders a timeout differently, and a broken link reads as a fault rather than a
+      // node with nothing on it.
+      const timedOut = /did not answer in time|timed out/iu.test(String(answer?.error ?? ''))
+      return {
+        ...node,
+        state: timedOut ? 'timeout' : 'error',
+        error: String(answer?.error ?? 'the environment answered nothing'),
+      }
+    }
+    // The peer accessor puts the parsed JSON in `body`; the envelope's own `ok` sits there.
+    const payload = answer.body ?? {}
+    if (payload.ok !== true) {
+      return { ...node, state: 'error', error: String(payload.error ?? 'the environment answered nothing') }
     }
     // The edge answers the same envelope for itself, tagged `self` there. That tag is
     // local to the edge, so the entry is retagged with the id and label this registry
     // knows it by — the panel must name the node the way the environment list does.
-    const own = Array.isArray(answer.nodes)
-      ? answer.nodes.find((entry) => entry.id === SELF_NODE_ID)
+    const own = Array.isArray(payload.nodes)
+      ? payload.nodes.find((entry) => entry.id === SELF_NODE_ID)
       : undefined
     if (own === undefined || !Array.isArray(own.sessions)) {
       return { ...node, state: 'error', error: 'the environment answered without its own sessions' }
@@ -529,53 +542,6 @@ function askInventory(hub, envId) {
  * @returns the parsed JSON answer, or `{ ok: false, error }`. A timeout is flagged
  *   `{ ok: false, timeout: true }` so a caller can tell a slow node from a broken one.
  */
-function relay(hub, envId, request, timeoutMs = RELAY_TIMEOUT_MS) {
-  return new Promise((resolve) => {
-    const settled = { done: false, body: '' }
-    const finish = (value) => {
-      if (settled.done) return
-      settled.done = true
-      resolve(value)
-    }
-    const timer = setTimeout(
-      () => finish({ ok: false, timeout: true, error: 'the environment did not answer in time' }),
-      timeoutMs,
-    )
-    try {
-      const sent = hub.request(envId, {
-        method: request.method,
-        path: request.path,
-        headers: { ...request.headers, 'x-dsh-federation': request.token ?? '' },
-        body: request.body === undefined ? undefined : JSON.stringify(request.body),
-      }, {
-        onBody(chunk) {
-          settled.body += chunk.toString('utf8')
-        },
-        onEnd() {
-          clearTimeout(timer)
-          try {
-            finish(JSON.parse(settled.body === '' ? '{}' : settled.body))
-          } catch {
-            finish({ ok: false, error: 'the environment answered something that is not JSON' })
-          }
-        },
-        onError(error) {
-          clearTimeout(timer)
-          finish({ ok: false, error: String(error?.message ?? error) })
-        },
-      })
-      // A refused send never reaches any handler, so waiting for the timeout would turn
-      // "this tunnel is already gone" into a 30-second wait for nothing.
-      if (sent === false) {
-        clearTimeout(timer)
-        finish({ ok: false, error: `environment "${envId}" is not connected` })
-      }
-    } catch (error) {
-      clearTimeout(timer)
-      finish({ ok: false, error: String(error?.message ?? error) })
-    }
-  })
-}
 
 function json(res, status, value, headers = {}) {
   const body = JSON.stringify(value)

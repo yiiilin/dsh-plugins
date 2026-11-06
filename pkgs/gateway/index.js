@@ -756,6 +756,8 @@ export function apply(ctx, config) {
      * human's behalf. The token is short-lived and only meaningful to this node's harness,
      * which is why the node that owns it produces it rather than a caller guessing.
      */
+    // A function, not the object: `createAdmin` is built before `peer` exists.
+    getPeer: () => peer,
     harnessUrl: () => {
       const connection = ctx.get('connection')
       if (connection === undefined || typeof connection.authenticatedUrl !== 'function') return undefined
