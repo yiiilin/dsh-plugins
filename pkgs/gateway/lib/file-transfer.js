@@ -192,11 +192,12 @@ export async function beginTransfer({ path, overwrite = false, totalChunks }) {
 }
 
 /**
- * Append one base64 piece.
+ * Append one piece to a staged upload.
  *
  * @param transferId - id from {@link beginTransfer}.
- * @param data - the piece, base64.
- * @returns `{ ok: true, received }` or `{ ok: false, error }`.
+ * @param data - the piece's bytes, as they came off the wire.
+ * @param encoding - how those bytes are encoded; `raw` means they are the content.
+ * @returns `{ ok: true, received, bytes }` or `{ ok: false, error }`.
  */
 export async function appendTransfer(transferId, data, encoding = ENCODING.raw) {
   const stage = transfers.get(String(transferId ?? ''))

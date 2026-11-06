@@ -231,6 +231,67 @@ Three missed pings is the timeout on purpose. One dropped packet is not a dead
 machine, and a shorter timeout turns every transient stall on a real network into a
 reconnect storm.
 
+## Talking to another environment's agents
+
+Five tools let a model reach past its own machine. All of them address a target by
+`envId` — from `agent_list_envs` — and omit it to mean *this* node.
+
+| Tool | What it does |
+| --- | --- |
+| `agent_list_envs` | The environments reachable from here, with live online state. `self` is this node. |
+| `agent_send` | Deliver a message into one session: `sessionId` + `text`. |
+| `agent_workspaces` | A peer's workspace table: id, title, path, session count. |
+| `agent_sessions` | The sessions in one workspace: id, cwd, createdAt, parent, `live`, `persisted`. |
+| `agent_get_file` | Pull a file from a peer into this machine. |
+
+**A message arrives as a user message.** `sessionController.prompt` hardcodes
+`{ kind: 'user' }`, so there is no envelope that says "another agent sent this". The
+body carries a `[agent-message] from=<envId> session=<sender>` prefix instead, composed
+by the *receiving* node — a sender that could write its own prefix could claim to be any
+environment. Delivery is asynchronous: `agent_send` returns once the message is in the
+target inbox, not when the agent there answers, which is what dsh-bot does too.
+
+**Files are pulled, never pushed.** A push writes into a machine the sender does not own,
+where a wrong path or an unexpected overwrite is somebody else's problem and nobody is
+watching. A pull writes only here, and the caller already has the right to run code on
+this node. The admin file route is therefore read-only: a peer can be read from, never
+written to.
+
+An edge cannot reach another edge directly. Three paths cover it: the main node relays
+between edges, an edge asks the main node, and `fromEnvId` is filled by the hub from the
+connection it arrived on — never from the payload — so no environment can claim to be
+another. A relayed request may only address `/admin/` paths; reaching the harness would
+hand one edge a signed-in view of another's UI.
+
+### Files: bytes, compressed only when it helps
+
+Chunks travel as raw bytes. Base64 was pure overhead once the file stopped living inside
+a JSON field — it inflated every transfer by 33% to protect bytes a frame carries
+natively. Each chunk is its own zstd frame when compression pays.
+
+The decision is measured, not assumed: the sender probes the first chunk and keeps
+whichever form is smaller. Measured on this machine, 1 MiB of text compresses to 162
+bytes while 1 MiB of random bytes compresses to 1,048,609 — one byte *larger* than the
+input. Compressing blindly would slow down already-compressed files and make them
+slightly bigger.
+
+The tunnel caps one frame at 8 MiB, so a file is sent in 512 KiB pieces, one round trip
+each. A pull describes first (`describe` returns size and encoding without content), then
+fetches chunk by chunk; the local write stages beside the destination and renames into
+place, so a partial transfer never appears under the final name. An existing local file is
+refused unless `overwrite` is true, and a truncated upload is refused rather than
+committed short.
+
+### The file write does not go through the `fs` service
+
+That service's write entry takes text, and a file being copied may be binary — silently
+mangling it is the kind of failure nobody notices until much later. The transfer uses
+`node:fs` with two narrow rules: the path must be absolute, and an existing destination
+must be opted into. **It is therefore not fenced by the sandbox policy**, unlike an
+agent's own `write`/`edit`. The exposure is bounded by the pull-only direction — nothing
+is ever written on the source machine — but if the sandbox must cover this, it needs a
+different design.
+
 ## Why a profile cannot share a process
 
 `fs`, `subprocess` and `sandbox` are process-wide services. One `ctx.fs` means one

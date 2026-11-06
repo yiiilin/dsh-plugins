@@ -84,8 +84,8 @@ const GET_FILE_DESCRIPTION = [
   'Pull one file from another DSH environment (or from this one) into this machine.',
   'Give the absolute source path and, to keep it, a local toPath — it is written here,',
   'staged and renamed so a partial transfer never appears as a file; an existing local',
-  'file is refused unless overwrite is true. Omit toPath to receive the content as base64',
-  'chunks instead. Nothing is ever written on the source machine. Limit 32 MiB.',
+  'file is refused unless overwrite is true. Omit toPath to receive the content here in',
+  'memory instead of writing it. Nothing is ever written on the source machine. Limit 32 MiB.',
 ].join(' ')
 
 /**
