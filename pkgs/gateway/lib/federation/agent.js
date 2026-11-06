@@ -431,7 +431,7 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
    * @param encoding - how the chunk was encoded.
    * @returns `{ ok: true, data, encoding, index, eof }` or `{ ok: false, error }`.
    */
-  function readRemoteChunk(toEnvId, path, index, encoding) {
+  function readRemoteChunk(toEnvId, path, index, encoding, extra = {}) {
     return new Promise((resolve) => {
       if (socket === undefined || socket.readyState !== WebSocket.OPEN) {
         resolve({ ok: false, error: 'this edge is not connected to the main node' })
@@ -476,7 +476,7 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
         method: 'POST',
         path: '/admin/file',
         binary: true,
-        body: JSON.stringify({ action: 'chunk', path, index, encoding }),
+        body: JSON.stringify({ action: 'chunk', path, index, encoding, ...extra }),
       }))
     })
   }

@@ -269,7 +269,7 @@ export function createAdmin({
       const body = await readJson(req)
       const action = typeof body.action === 'string' ? body.action : ''
       if (action === 'describe') {
-        json(res, 200, await describeTransfer(body.path))
+        json(res, 200, await describeTransfer(body.path, { offset: body.offset, length: body.length }))
         return true
       }
       if (action === 'chunk') {
@@ -278,6 +278,8 @@ export function createAdmin({
           index: body.index,
           chunkBytes: body.chunkBytes,
           encoding: body.encoding,
+          offset: body.offset,
+          length: body.length,
         })
         if (piece.ok !== true) {
           json(res, 400, { ok: false, error: piece.error })

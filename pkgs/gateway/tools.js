@@ -230,11 +230,24 @@ export function agentMessageTools({ listEnvironments, send, listWorkspaces, list
         },
         toPath: {
           type: 'string',
-          description: 'Absolute path to write here. Omit to keep the file in memory and return it as chunks.',
+          description: 'Absolute path to write here. Omit to receive the bytes in memory instead of writing them.',
+        },
+        toOffset: {
+          type: 'integer',
+          description: 'Write at this byte offset in toPath instead of from the start. Continues or patches an '
+            + 'existing file, and is how a large pull is resumed; the file must already exist.',
+        },
+        offset: {
+          type: 'integer',
+          description: 'First byte to read on the source. Omit for the start of the file.',
+        },
+        length: {
+          type: 'integer',
+          description: 'How many bytes to read from offset. Omit for the rest of the file.',
         },
         overwrite: {
           type: 'boolean',
-          description: 'Replace an existing local file at toPath. Defaults to refusing.',
+          description: 'Replace an existing local file at toPath when writing from offset 0. Defaults to refusing.',
         },
       },
       output: {
@@ -246,6 +259,9 @@ export function agentMessageTools({ listEnvironments, send, listWorkspaces, list
             name: { type: 'string' },
             size: { type: 'integer' },
             path: { type: 'string' },
+            offset: { type: 'integer' },
+            length: { type: 'integer' },
+            encoding: { type: 'string' },
             chunks: { type: 'array', items: { type: 'string' } },
             error: { type: 'string' },
           },
@@ -253,10 +269,17 @@ export function agentMessageTools({ listEnvironments, send, listWorkspaces, list
         render: jsonRender,
       },
       async execute(args) {
+        // Omitted stays omitted (the defaults depend on it); a supplied value must be a
+        // real integer, so a string or a NaN is rejected by the schema rather than
+        // silently becoming the default and reading the wrong window.
+        const num = (value) => (value === undefined || value === null ? undefined : Number(value))
         return await getFile({
           path: String(args?.path ?? '').trim(),
           envId: String(args?.envId ?? '').trim(),
           toPath: String(args?.toPath ?? '').trim(),
+          toOffset: num(args?.toOffset),
+          offset: num(args?.offset),
+          length: num(args?.length),
           overwrite: args?.overwrite === true,
         })
       },

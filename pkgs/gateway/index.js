@@ -837,24 +837,34 @@ export function apply(ctx, config) {
   const getFile = async (request) => {
     const source = String(request.envId ?? '').trim()
     const remote = source !== '' && source !== 'self'
+    const window = {
+      ...(request.offset === undefined ? {} : { offset: request.offset }),
+      ...(request.length === undefined ? {} : { length: request.length }),
+    }
 
     // Metadata is JSON; the bytes are not. Keeping them apart is what lets a chunk
     // travel as itself instead of as a base64 string.
     const describe = async () => {
-      if (!remote) return await describeTransfer(request.path)
-      if (config.role !== 'main') return await agent.readRemote(source, 'POST', '/admin/file', { action: 'describe', path: request.path })
-      return await requestOverTunnel(source, 'POST', '/admin/file', { action: 'describe', path: request.path })
+      if (!remote) return await describeTransfer(request.path, window)
+      const body = { action: 'describe', path: request.path, ...window }
+      if (config.role !== 'main') return await agent.readRemote(source, 'POST', '/admin/file', body)
+      return await requestOverTunnel(source, 'POST', '/admin/file', body)
     }
 
-    /** One chunk, as bytes. */
-    const chunk = async (index, encoding) => {
-      if (!remote) return await readTransferChunk({ path: request.path, index, encoding })
-      if (config.role !== 'main') return await agent.readRemoteChunk(source, request.path, index, encoding)
-      const answer = await hub.relayBinaryOverTunnel(source, {
-        method: 'POST',
-        path: '/admin/file',
-        body: { action: 'chunk', path: request.path, index, encoding },
-      })
+    /** One chunk of the window, as bytes. */
+    const chunk = async (index, encoding, described) => {
+      if (!remote) {
+        return await readTransferChunk({
+          path: request.path, index, encoding,
+          offset: described.offset, length: described.length,
+        })
+      }
+      const body = {
+        action: 'chunk', path: request.path, index, encoding,
+        offset: described.offset, length: described.length,
+      }
+      if (config.role !== 'main') return await agent.readRemoteChunk(source, request.path, index, encoding, body)
+      const answer = await hub.relayBinaryOverTunnel(source, { method: 'POST', path: '/admin/file', body })
       if (answer.ok !== true) return { ok: false, error: answer.error }
       return {
         ok: true,
@@ -868,16 +878,19 @@ export function apply(ctx, config) {
     const described = await describe()
     if (described.ok !== true) return { ok: false, error: described.error ?? 'could not describe the file' }
 
-    // Every chunk arrives encoded the same way, so the writer is opened before the first
-    // one and told which encoding to expect.
     const began = request.toPath === ''
       ? { ok: true, transferId: undefined }
-      : await beginTransfer({ path: request.toPath, overwrite: request.overwrite === true, totalChunks: described.chunks })
+      : await beginTransfer({
+        path: request.toPath,
+        overwrite: request.overwrite === true,
+        totalChunks: described.chunks,
+        toOffset: request.toOffset ?? 0,
+      })
     if (began.ok !== true) return began
 
     const kept = []
     for (let index = 0; index < described.chunks; index += 1) {
-      const piece = await chunk(index, described.encoding)
+      const piece = await chunk(index, described.encoding, described)
       if (piece.ok !== true) {
         if (began.transferId !== undefined) await abortTransfer(began.transferId)
         return { ok: false, error: piece.error ?? `could not read chunk ${index}` }
@@ -899,9 +912,21 @@ export function apply(ctx, config) {
 
     if (began.transferId === undefined) {
       // No destination named: hand back the encoded chunks rather than guessing a path.
-      return { ok: true, name: described.name, size: described.size, encoding: described.encoding, chunks: kept }
+      return {
+        ok: true,
+        name: described.name,
+        size: described.size,
+        offset: described.offset,
+        length: described.length,
+        encoding: described.encoding,
+        chunks: kept,
+      }
     }
-    return await commitTransfer(began.transferId)
+    const committed = await commitTransfer(began.transferId)
+    if (committed.ok !== true) return committed
+    // Report the window that was written, not just the file it landed in: a resumed
+    // caller needs to know how far it got to compute the next offset.
+    return { ...committed, offset: described.offset, length: described.length, size: described.size }
   }
 
   if (typeof ctx.inject === 'function') {

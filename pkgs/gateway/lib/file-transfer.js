@@ -22,11 +22,37 @@ import { basename, dirname, isAbsolute, resolve } from 'node:path'
 import { chooseEncoding, decodeChunk, ENCODING, encodeChunk } from './transfer-codec.js'
 import { MAX_FRAME_BYTES } from './federation/frames.js'
 
-/** Largest file one call may move. Chunked, so this is a policy cap, not a frame cap. */
-export const MAX_FILE_BYTES = 32 * 1024 * 1024
+/** Largest window one call may move. Chunked, so this is a policy cap, not a frame cap. */
+export const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
 
 /** Bytes per chunk. Well under the 8 MiB frame cap, leaving room for the frame header. */
 export const CHUNK_BYTES = 512 * 1024
+
+/**
+ * Resolve an optional window against a file's size.
+ *
+ * Both bounds are optional and mean what they usually mean: no offset is the start, no
+ * length is "to the end". The pair is validated here rather than at the call site so a
+ * negative offset or an out-of-range window fails the same way everywhere.
+ *
+ * @param size - the file's size in bytes.
+ * @param offset - first byte to read; defaults to 0.
+ * @param length - bytes to read; defaults to the rest of the file.
+ * @returns `{ ok: true, offset, length }` or `{ ok: false, error }`.
+ */
+export function resolveWindow(size, offset, length) {
+  const start = offset === undefined || offset === null || offset === '' ? 0 : Number(offset)
+  if (!Number.isSafeInteger(start) || start < 0) return { ok: false, error: 'offset must be a non-negative integer' }
+  if (start > size) return { ok: false, error: `offset ${start} is past the end of the file (${size} bytes)` }
+  const available = size - start
+  const wanted = length === undefined || length === null || length === '' ? available : Number(length)
+  if (!Number.isSafeInteger(wanted) || wanted < 0) return { ok: false, error: 'length must be a non-negative integer' }
+  if (wanted > MAX_FILE_BYTES) {
+    return { ok: false, error: `length ${wanted} exceeds the ${MAX_FILE_BYTES} byte window limit` }
+  }
+  const span = Math.min(wanted, available)
+  return { ok: true, offset: start, length: span }
+}
 
 /**
  * Validate a destination path before anything is written.
@@ -57,26 +83,29 @@ export function validateDestination(path) {
  * @param path - absolute path to inspect.
  * @returns `{ ok: true, name, size, chunkBytes, chunks, encoding }` or `{ ok: false, error }`.
  */
-export async function describeTransfer(path) {
+export async function describeTransfer(path, { offset, length } = {}) {
   const checked = validateDestination(path)
   if (checked.ok !== true) return checked
   let handle
   try {
     const info = await stat(checked.path)
     if (!info.isFile()) return { ok: false, error: `not a regular file: "${checked.path}"` }
-    if (info.size > MAX_FILE_BYTES) {
-      return { ok: false, error: `file is ${info.size} bytes; the limit is ${MAX_FILE_BYTES}` }
-    }
+    // The cap is on the *window* this call moves, not on the file. A 2 GiB log has to be
+    // readable a slice at a time, which is the whole point of an offset.
+    const window = resolveWindow(info.size, offset, length)
+    if (window.ok !== true) return window
     handle = await open(checked.path, 'r')
-    const probe = Buffer.alloc(Math.min(CHUNK_BYTES, Math.max(1, info.size)))
-    const { bytesRead } = await handle.read(probe, 0, probe.length, 0)
+    const probe = Buffer.alloc(Math.min(CHUNK_BYTES, Math.max(1, window.length)))
+    const { bytesRead } = await handle.read(probe, 0, probe.length, window.offset)
     const chosen = chooseEncoding(probe.subarray(0, bytesRead))
     return {
       ok: true,
       name: basename(checked.path),
       size: info.size,
+      offset: window.offset,
+      length: window.length,
       chunkBytes: CHUNK_BYTES,
-      chunks: Math.max(1, Math.ceil(info.size / CHUNK_BYTES)),
+      chunks: Math.max(1, Math.ceil(window.length / CHUNK_BYTES)),
       encoding: chosen.encoding,
     }
   } catch (error) {
@@ -95,17 +124,28 @@ export async function describeTransfer(path) {
  * @param request - `{ path, index, chunkBytes, encoding }`.
  * @returns `{ ok: true, index, data, eof }` or `{ ok: false, error }`; `data` is a Buffer.
  */
-export async function readTransferChunk({ path, index, chunkBytes = CHUNK_BYTES, encoding = ENCODING.raw }) {
+export async function readTransferChunk({ path, index, chunkBytes = CHUNK_BYTES, encoding = ENCODING.raw, offset = 0, length }) {
   const checked = validateDestination(path)
   if (checked.ok !== true) return checked
   const at = Number(index)
   if (!Number.isInteger(at) || at < 0) return { ok: false, error: 'index must be a non-negative integer' }
   const span = Math.min(Math.max(1, Number(chunkBytes) || CHUNK_BYTES), CHUNK_BYTES)
+  const start = Number(offset) || 0
+  if (!Number.isSafeInteger(start) || start < 0) return { ok: false, error: 'offset must be a non-negative integer' }
   let handle
   try {
+    // Positioned read: the window's offset is absolute in the file, and the chunk index
+    // walks forward inside it, so a caller can resume at any chunk without replaying.
+    const position = start + at * span
+    let want = span
+    if (length !== undefined && length !== null && length !== '') {
+      const remaining = Number(length) - at * span
+      if (remaining <= 0) return { ok: true, index: at, data: Buffer.alloc(0), encoding, eof: true }
+      want = Math.min(span, remaining)
+    }
     handle = await open(checked.path, 'r')
-    const buffer = Buffer.alloc(span)
-    const { bytesRead } = await handle.read(buffer, 0, span, at * span)
+    const buffer = Buffer.alloc(want)
+    const { bytesRead } = await handle.read(buffer, 0, want, position)
     if (bytesRead === 0 && at > 0) {
       // Past the end: the file shrank between the description and this read.
       return { ok: false, error: `"${checked.path}" is shorter than expected` }
@@ -115,7 +155,7 @@ export async function readTransferChunk({ path, index, chunkBytes = CHUNK_BYTES,
     if (data.length > MAX_FRAME_BYTES) {
       return { ok: false, error: `chunk ${at} is ${data.length} bytes, over the frame limit` }
     }
-    const more = await handle.read(Buffer.alloc(1), 0, 1, (at + 1) * span)
+    const more = await handle.read(Buffer.alloc(1), 0, 1, position + bytesRead)
     return { ok: true, index: at, data, encoding, eof: more.bytesRead === 0 }
   } catch (error) {
     return { ok: false, error: `could not read "${checked.path}": ${error?.message ?? error}` }
@@ -150,14 +190,30 @@ const transfers = new Map()
  *   truncated upload is refused rather than committed short.
  * @returns `{ ok: true, transferId }` or `{ ok: false, error }`.
  */
-export async function beginTransfer({ path, overwrite = false, totalChunks }) {
+export async function beginTransfer({ path, overwrite = false, totalChunks, toOffset = 0 }) {
   const checked = validateDestination(path)
   if (checked.ok !== true) return checked
   if (transfers.size >= MAX_OPEN_TRANSFERS) {
     return { ok: false, error: `too many uploads in flight (${MAX_OPEN_TRANSFERS}); finish one first` }
   }
+  const start = Number(toOffset) || 0
+  if (!Number.isSafeInteger(start) || start < 0) {
+    return { ok: false, error: 'toOffset must be a non-negative integer' }
+  }
   const target = checked.path
-  if (overwrite !== true) {
+
+  // A positioned window is a *resume or a patch*: it writes into the existing file at an
+  // offset and must not replace what is already there. That inverts the overwrite rule —
+  // continuation requires the file, so it is refused when the file is missing instead of
+  // when it exists.
+  const positioned = start > 0
+  if (positioned) {
+    try {
+      await stat(target)
+    } catch {
+      return { ok: false, error: `"${target}" does not exist; a toOffset write continues an existing file` }
+    }
+  } else if (overwrite !== true) {
     try {
       await stat(target)
       return { ok: false, error: `"${target}" already exists; pass overwrite to replace it` }
@@ -165,13 +221,16 @@ export async function beginTransfer({ path, overwrite = false, totalChunks }) {
       // Absent is the expected case.
     }
   }
-  const staged = `${target}.dsh-transfer-${randomUUID().slice(0, 8)}`
+
+  // A positioned write goes to the destination itself: staging it elsewhere and renaming
+  // would publish only the window and discard the rest of the file.
+  const staged = positioned ? target : `${target}.dsh-transfer-${randomUUID().slice(0, 8)}`
   try {
     await mkdir(dirname(target), { recursive: true })
   } catch (error) {
     return { ok: false, error: `could not create the directory for "${target}": ${error?.message ?? error}` }
   }
-  const handle = createWriteStream(staged, { flags: 'w' })
+  const handle = createWriteStream(staged, { flags: positioned ? 'r+' : 'w', start: positioned ? start : undefined })
   const opened = await new Promise((done) => {
     handle.once('open', () => done(undefined))
     handle.once('error', (error) => done(error))
@@ -182,6 +241,7 @@ export async function beginTransfer({ path, overwrite = false, totalChunks }) {
   transfers.set(transferId, {
     target,
     staged,
+    positioned,
     overwrite: overwrite === true,
     expected: Number.isInteger(totalChunks) ? totalChunks : undefined,
     received: 0,
@@ -247,6 +307,11 @@ export async function commitTransfer(transferId) {
     await new Promise((done, fail) => {
       stage.handle.end((error) => (error === undefined || error === null ? done() : fail(error)))
     })
+    if (stage.positioned === true) {
+      // Already written into the destination at its offset; there is nothing to rename.
+      transfers.delete(key)
+      return { ok: true, path: stage.target, bytes: stage.bytes }
+    }
     if (stage.overwrite !== true) {
       try {
         await stat(stage.target)

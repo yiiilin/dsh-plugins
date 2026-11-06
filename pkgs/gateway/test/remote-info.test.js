@@ -22,6 +22,7 @@ import {
   MAX_FILE_BYTES,
   openTransfers,
   readTransferChunk,
+  resolveWindow,
   validateDestination,
 } from '../lib/file-transfer.js'
 import { decompress } from '../lib/transfer-codec.js'
@@ -312,4 +313,108 @@ test('a missing source is reported, never invented', async () => {
   const described = await describeTransfer('/nonexistent-dsh-pull/file.txt')
   assert.equal(described.ok, false)
   assert.match(described.error, /could not read/u)
+})
+
+// --- windows and resuming -----------------------------------------------------
+
+test('a window reads only its own bytes', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'gw-win-'))
+  try {
+    const source = join(home, 'f.bin')
+    await writeFile(source, Buffer.from(Array.from({ length: 100 }, (_, i) => i)))
+    const described = await describeTransfer(source, { offset: 10, length: 20 })
+    assert.equal(described.offset, 10)
+    assert.equal(described.length, 20)
+    assert.equal(described.size, 100, 'the file size is still reported whole')
+
+    const piece = await readTransferChunk({ path: source, index: 0, encoding: described.encoding, offset: 10, length: 20 })
+    const got = piece.encoding === 'zstd' ? decompress(piece.data) : piece.data
+    assert.deepEqual([...got], Array.from({ length: 20 }, (_, i) => i + 10))
+    assert.equal(piece.eof, false, 'byte 30 is not the end of the file')
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test('an offset with no length runs to the end', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'gw-win-'))
+  try {
+    const source = join(home, 'f.txt')
+    await writeFile(source, '0123456789')
+    const described = await describeTransfer(source, { offset: 7 })
+    assert.equal(described.offset, 7)
+    assert.equal(described.length, 3)
+    assert.equal(described.chunks, 1)
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test('a window past the end is refused rather than clipped to nothing', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'gw-win-'))
+  try {
+    const source = join(home, 'f.txt')
+    await writeFile(source, 'abc')
+    const described = await describeTransfer(source, { offset: 50 })
+    assert.equal(described.ok, false)
+    assert.match(described.error, /past the end/u)
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test('a length beyond the window cap is refused', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'gw-win-'))
+  try {
+    const source = join(home, 'f.txt')
+    await writeFile(source, 'abc')
+    const described = await describeTransfer(source, { length: MAX_FILE_BYTES + 1 })
+    assert.equal(described.ok, false)
+    assert.match(described.error, /window limit/u)
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test('resolveWindow treats both bounds as optional and validates the rest', () => {
+  assert.deepEqual(resolveWindow(100, undefined, undefined), { ok: true, offset: 0, length: 100 })
+  assert.deepEqual(resolveWindow(100, 40, undefined), { ok: true, offset: 40, length: 60 })
+  assert.deepEqual(resolveWindow(100, undefined, 25), { ok: true, offset: 0, length: 25 })
+  // A window that runs past the end is clipped to what exists, not refused: the caller
+  // asked from offset N, which is valid.
+  assert.deepEqual(resolveWindow(100, 90, 50), { ok: true, offset: 90, length: 10 })
+  assert.equal(resolveWindow(100, -1, 10).ok, false)
+  assert.equal(resolveWindow(100, 0, -5).ok, false)
+})
+
+test('a toOffset write continues an existing file instead of replacing it', async () => {
+  // The resume case: write bytes 0..4, then bytes 4..8 at an offset, and expect all 8.
+  const home = await mkdtemp(join(tmpdir(), 'gw-resume-'))
+  try {
+    const target = join(home, 'big.bin')
+    const first = await upload(target, Buffer.from('abcd'))
+    assert.equal(first.ok, true)
+
+    const began = await beginTransfer({ path: target, toOffset: 4, totalChunks: 1 })
+    assert.equal(began.ok, true)
+    await appendTransfer(began.transferId, Buffer.from('efgh'))
+    const done = await commitTransfer(began.transferId)
+    assert.equal(done.ok, true)
+    assert.equal(await readFile(target, 'utf8'), 'abcdefgh', 'the earlier bytes must survive')
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test('a toOffset write to a missing file is refused', async () => {
+  // Continuing something that is not there means the caller lost its place; guessing
+  // would publish a file with a hole at the front.
+  const home = await mkdtemp(join(tmpdir(), 'gw-resume-'))
+  try {
+    const began = await beginTransfer({ path: join(home, 'absent.bin'), toOffset: 100, totalChunks: 1 })
+    assert.equal(began.ok, false)
+    assert.match(began.error, /does not exist/u)
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
 })
