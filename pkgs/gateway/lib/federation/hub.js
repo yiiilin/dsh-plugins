@@ -594,7 +594,10 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       return Promise.resolve({ ok: false, error: `environment "${envId}" is offline` })
     }
     return new Promise((resolve) => {
-      const settled = { done: false, body: Buffer.alloc(0), head: undefined }
+      // Collect fragments and join once. Concatenating per fragment re-copies everything
+      // received so far, which is quadratic in the number of fragments and was measurable
+      // on a 512 KiB chunk that arrives in a handful of pieces.
+      const settled = { done: false, parts: [], head: undefined }
       const finish = (value) => {
         if (settled.done) return
         settled.done = true
@@ -610,7 +613,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
           : (outbound.body === undefined ? undefined : JSON.stringify(outbound.body)),
       }, {
         onHead(head) { settled.head = head },
-        onBody(chunk) { settled.body = Buffer.concat([settled.body, chunk]) },
+        onBody(chunk) { settled.parts.push(chunk) },
         onEnd() {
           clearTimeout(timer)
           const status = settled.head?.status ?? 200
@@ -618,7 +621,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
             finish({ ok: false, error: settled.body.toString('utf8').slice(0, 300) || `status ${status}` })
             return
           }
-          finish({ ok: true, status, headers: settled.head?.headers ?? {}, body: settled.body })
+          finish({ ok: true, status, headers: settled.head?.headers ?? {}, body: Buffer.concat(settled.parts) })
         },
         onError(error) {
           clearTimeout(timer)

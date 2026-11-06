@@ -119,6 +119,8 @@ export async function describeTransfer(path, { offset, length } = {}) {
   } catch (error) {
     return { ok: false, error: `could not read "${checked.path}": ${error?.message ?? error}` }
   } finally {
+    // `describe` is called once per pull and must not hold a descriptor: the chunk reader
+    // keeps its own cached handle.
     await handle?.close().catch(() => {})
   }
 }
@@ -132,6 +134,52 @@ export async function describeTransfer(path, { offset, length } = {}) {
  * @param request - `{ path, index, chunkBytes, encoding }`.
  * @returns `{ ok: true, index, data, eof }` or `{ ok: false, error }`; `data` is a Buffer.
  */
+/**
+ * Open file handles, keyed by path.
+ *
+ * A pull requests chunk after chunk from the same file; opening and closing it every time
+ * is pure syscall overhead on the hot path. The handle is dropped on commit/abort and
+ * bounded, so a long-lived process cannot accumulate descriptors.
+ */
+const readHandles = new Map()
+
+/** Close every cached read handle. */
+export async function closeReadHandles() {
+  const entries = [...readHandles.values()]
+  readHandles.clear()
+  await Promise.all(entries.map((entry) => entry.handle.close().catch(() => {})))
+}
+
+/**
+ * A cached handle for `path`, opening one when absent or when the file was replaced.
+ *
+ * The identity check matters: a cached descriptor keeps reading the *old* inode after the
+ * path is rewritten or deleted, so a reused path would serve stale bytes — a test caught
+ * exactly that, having written a new file over the previous one's name. `dev` and `ino`
+ * change on replacement and `mtimeMs` on an in-place edit, so any of them differing
+ * invalidates the entry.
+ *
+ * @returns a handle and the file's identity at the time it was checked.
+ */
+async function handleFor(path) {
+  const info = await stat(path)
+  const identity = `${info.dev}:${info.ino}:${info.mtimeMs}:${info.size}`
+  const cached = readHandles.get(path)
+  if (cached !== undefined && cached.identity === identity) return cached.handle
+  if (cached !== undefined) {
+    readHandles.delete(path)
+    await cached.handle.close().catch(() => {})
+  }
+  if (readHandles.size >= MAX_OPEN_TRANSFERS * 2) {
+    const [oldest, entry] = readHandles.entries().next().value
+    readHandles.delete(oldest)
+    await entry.handle.close().catch(() => {})
+  }
+  const handle = await open(path, 'r')
+  readHandles.set(path, { handle, identity })
+  return handle
+}
+
 export async function readTransferChunk({ path, index, chunkBytes = CHUNK_BYTES, encoding = ENCODING.raw, offset = 0, length }) {
   const checked = validateDestination(path)
   if (checked.ok !== true) return checked
@@ -151,7 +199,7 @@ export async function readTransferChunk({ path, index, chunkBytes = CHUNK_BYTES,
       if (remaining <= 0) return { ok: true, index: at, data: Buffer.alloc(0), encoding, eof: true }
       want = Math.min(span, remaining)
     }
-    handle = await open(checked.path, 'r')
+    handle = await handleFor(checked.path)
     const buffer = Buffer.alloc(want)
     const { bytesRead } = await handle.read(buffer, 0, want, position)
     if (bytesRead === 0 && at > 0) {
@@ -167,9 +215,9 @@ export async function readTransferChunk({ path, index, chunkBytes = CHUNK_BYTES,
     return { ok: true, index: at, data, encoding, eof: more.bytesRead === 0 }
   } catch (error) {
     return { ok: false, error: `could not read "${checked.path}": ${error?.message ?? error}` }
-  } finally {
-    await handle?.close().catch(() => {})
   }
+  // The handle belongs to the cache, not to this call: closing it here made the next
+  // chunk of the same pull fail with "file closed".
 }
 
 // --- staged uploads -----------------------------------------------------------
