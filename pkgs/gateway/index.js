@@ -55,12 +55,36 @@ export const Config = z.object({
   host: z.string().default('0.0.0.0'),
   port: z.natural().max(65535).default(3080),
 
-  /** `main` accepts tunnels; `edge` dials out. Same install either way. */
-  role: z.union([z.const('main'), z.const('edge')]).default('main'),
+  /**
+   * Whether this node accepts incoming tunnels.
+   *
+   * Independent of whether it dials out: a node may be someone's upstream and someone
+   * else's downstream at once. `role` encoded both questions in one value, which made
+   * that shape unrepresentable.
+   */
+  accept: z.boolean().default(true),
 
-  /** Base URL of the main node. Required when `role` is `edge`. */
+  /**
+   * The nodes this one dials out to.
+   *
+   * An array because the topology is a graph rather than a two-level star: a node can
+   * report to several upstreams, and has to keep working when one is unreachable. Each
+   * entry carries its own token, because the identity is per link, not per node.
+   */
+  upstreams: z.array(z.object({
+    url: z.string().description('Base URL of the upstream node'),
+    token: z.string().description('This node\'s token on that link'),
+    label: z.string().default('').description('Shown in the panel; defaults to the URL'),
+  })).default([]),
+
+  /**
+   * Retired single-upstream model, still read so an existing profile boots.
+   *
+   * Reported at mount so the operator learns these no longer decide anything instead of
+   * believing an old key is still in force.
+   */
+  role: z.union([z.const('main'), z.const('edge')]).default('main'),
   mainUrl: z.string().default(''),
-  /** This environment's token. Required when `role` is `edge`. */
   token: z.string().default(''),
 
   registryPath: z.string().default(''),
