@@ -407,3 +407,88 @@ export async function abortTransfer(transferId) {
 export function openTransfers() {
   return transfers.size
 }
+
+// --- streaming sink -----------------------------------------------------------
+
+/**
+ * Open a destination for a streamed write.
+ *
+ * The chunk protocol is gone for pulling — a file is one HTTP response now — so what the
+ * receiver needs is a sink, not a chunk appender. The same two rules survive: an existing
+ * file is refused unless `overwrite`, and a `toOffset` continues an existing file at that
+ * byte instead of replacing it.
+ *
+ * @param request - `{ path, overwrite, toOffset }`.
+ * @returns `{ ok: true, sink, finish }` or `{ ok: false, error }`; `finish` resolves after
+ *   the stream closed cleanly and the file is in place.
+ */
+export async function openStreamSink({ path, overwrite = false, toOffset = 0 }) {
+  const checked = validateDestination(path)
+  if (checked.ok !== true) return checked
+  const start = Number(toOffset) || 0
+  if (!Number.isSafeInteger(start) || start < 0) {
+    return { ok: false, error: 'toOffset must be a non-negative integer' }
+  }
+  const target = checked.path
+  const positioned = start > 0
+
+  if (positioned) {
+    try {
+      await stat(target)
+    } catch {
+      return { ok: false, error: `"${target}" does not exist; a toOffset write continues an existing file` }
+    }
+  } else if (overwrite !== true) {
+    try {
+      await stat(target)
+      return { ok: false, error: `"${target}" already exists; pass overwrite to replace it` }
+    } catch {
+      // Absent is the expected case.
+    }
+  }
+
+  const staged = positioned ? target : `${target}.dsh-stream-${randomUUID().slice(0, 8)}`
+  try {
+    await mkdir(dirname(target), { recursive: true })
+  } catch (error) {
+    return { ok: false, error: `could not create the directory for "${target}": ${error?.message ?? error}` }
+  }
+
+  const handle = createWriteStream(staged, { flags: positioned ? 'r+' : 'w', start: positioned ? start : undefined })
+  const failed = new Promise((_, reject) => handle.once('error', reject))
+  let bytes = 0
+
+  return {
+    ok: true,
+    /** Accept one piece of the file; counts what went in. */
+    write(piece) {
+      bytes += piece.length
+      handle.write(piece)
+    },
+    /** Resolves once the stream closed cleanly and the file is in place. */
+    finish: async () => {
+      try {
+        await Promise.race([
+          new Promise((done, fail) => handle.end((error) => (error ? fail(error) : done()))),
+          failed,
+        ])
+        if (!positioned) {
+          if (overwrite !== true) {
+            try {
+              await stat(target)
+              await rm(staged, { force: true })
+              return { ok: false, error: `"${target}" appeared during the transfer; not replaced` }
+            } catch {
+              // Still absent.
+            }
+          }
+          await rename(staged, target)
+        }
+        return { ok: true, path: target, bytes }
+      } catch (error) {
+        await rm(staged, { force: true }).catch(() => {})
+        return { ok: false, error: `could not finish "${target}": ${error?.message ?? error}` }
+      }
+    },
+  }
+}

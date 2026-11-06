@@ -20,7 +20,8 @@
  */
 
 import { spawn } from 'node:child_process'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import { createAdmin } from './lib/admin.js'
@@ -32,7 +33,11 @@ import { createTunnelAgent } from './lib/federation/agent.js'
 import { createTunnelHub, createTunnelServer, tokenOf, TUNNEL_PATH } from './lib/federation/hub.js'
 import { deliverToSession } from './lib/agent-message.js'
 import { listSessions, listWorkspaces } from './lib/remote-info.js'
-import { abortTransfer, appendTransfer, beginTransfer, commitTransfer, describeTransfer, readTransferChunk } from './lib/file-transfer.js'
+import { serveFileRoute } from './lib/file-route.js'
+import {
+  abortTransfer, appendTransfer, beginTransfer, commitTransfer, describeTransfer,
+  openStreamSink, readTransferChunk, validateDestination,
+} from './lib/file-transfer.js'
 import { agentMessageTools } from './tools.js'
 import { defaultSkillsRoot, readInventory } from './lib/inventory.js'
 import { installUnit, renderUnit, underSystemd, unitNameFor } from './lib/systemd.js'
@@ -354,6 +359,10 @@ export function apply(ctx, config) {
     if (proof !== undefined && config.token !== '' && proof === config.token) {
       const path = url.split('?')[0]
       if (path === '/admin' || path.startsWith('/admin/')) return await admin(req, res, url)
+      // The byte surface. Answered before the session gate for the same reason as
+      // `/admin`: a peer node authenticated with this node's token, and it has no
+      // browser session to present.
+      if (path === '/file' || path.startsWith('/file/')) return await serveFileRoute(req, res, url)
     }
     // The auth layer matches its endpoints as exact strings, and the login page
     // posts from inside the mount, so the mount is stripped before it is asked.
@@ -821,6 +830,50 @@ export function apply(ctx, config) {
    * @returns `{ ok, path?, bytes?, error? }`.
    */
   /**
+   * Read a local file into the sink, honouring the same `Range` shape as the route.
+   *
+   * @param path - absolute path.
+   * @param write - receives each piece.
+   * @param headers - `{ range }` when only a window is wanted.
+   * @returns `{ ok, size?, error? }`.
+   */
+  const streamLocalFile = async (path, write, headers) => {
+    const checked = validateDestination(path)
+    if (checked.ok !== true) return { ok: false, error: checked.error }
+    const info = await stat(checked.path).catch((error) => ({ error }))
+    if (info?.error !== undefined) return { ok: false, error: `could not read "${checked.path}": ${info.error.message}` }
+    if (!info.isFile()) return { ok: false, error: `not a regular file: "${checked.path}"` }
+    let start = 0
+    let end = info.size - 1
+    const range = headers.range
+    if (typeof range === 'string') {
+      const m = /^bytes=(\d+)-(\d*)$/u.exec(range)
+      if (m !== null) {
+        start = Number(m[1])
+        if (m[2] !== '') end = Math.min(Number(m[2]), info.size - 1)
+      }
+    }
+    if (start > end) return { ok: false, error: `range ${range} is outside "${checked.path}"` }
+    await new Promise((done, fail) => {
+      createReadStream(checked.path, { start, end })
+        .on('data', (piece) => write(piece))
+        .on('error', fail)
+        .on('end', done)
+    }).catch((error) => ({ error }))
+    return { ok: true, size: info.size }
+  }
+
+  /** Split collected pieces into the base64 chunks the tool's no-destination form returns. */
+  const byteChunks = (pieces) => {
+    const bytes = Buffer.concat(pieces)
+    const out = []
+    for (let at = 0; at < bytes.length; at += 512 * 1024) {
+      out.push(bytes.subarray(at, at + 512 * 1024).toString('base64'))
+    }
+    return out
+  }
+
+  /**
    * Pull a file from one environment into this machine.
    *
    * The direction is deliberate. Pushing writes into a machine the sender does not own,
@@ -834,99 +887,68 @@ export function apply(ctx, config) {
    * @param request - `{ path, envId, toPath, overwrite }`.
    * @returns `{ ok, name?, size?, path?, chunks?, error? }`.
    */
+  /**
+   * Pull a file from one environment into this machine.
+   *
+   * One HTTP request, one streamed response. The chunk protocol this replaced existed
+   * because a frame is capped at 8 MiB; but the tunnel already streams body pieces, so
+   * slicing the file and paying a round trip per slice was self-inflicted — measured at
+   * roughly 12 ms per 512 KiB chunk end to end.
+   *
+   * @param request - `{ path, envId, toPath, toOffset, offset, length, overwrite }`.
+   * @returns `{ ok, name?, size?, path?, bytes?, error? }`.
+   */
   const getFile = async (request) => {
     const source = String(request.envId ?? '').trim()
     const remote = source !== '' && source !== 'self'
-    const window = {
-      ...(request.offset === undefined ? {} : { offset: request.offset }),
-      ...(request.length === undefined ? {} : { length: request.length }),
+
+    // `Range` is the same mechanism every HTTP client uses, so an offset needs no
+    // custom framing.
+    const range = request.offset === undefined && request.length === undefined
+      ? undefined
+      : `bytes=${request.offset ?? 0}-${request.length === undefined
+        ? ''
+        : String((request.offset ?? 0) + request.length - 1)}`
+
+    const sink = request.toPath === ''
+      ? undefined
+      : await openStreamSink({ path: request.toPath, overwrite: request.overwrite === true, toOffset: request.toOffset ?? 0 })
+    if (sink !== undefined && sink.ok !== true) return sink
+
+    const collect = []
+    let bytes = 0
+    const sinkWrite = sink === undefined || sink.ok !== true
+      ? (piece) => { bytes += piece.length; collect.push(piece) }
+      : (piece) => { bytes += piece.length; sink.write(piece) }
+    const write = sinkWrite
+
+    let answer
+    if (!remote) {
+      // Local: read the file here, no tunnel involved.
+      const headers = range === undefined ? {} : { range }
+      answer = await streamLocalFile(request.path, write, headers)
+    } else if (config.role === 'main') {
+      answer = await hub.streamFileFromTunnel(source, request.path, write, { range })
+    } else {
+      answer = await agent.streamFileFromPeer(source, request.path, write, range)
     }
 
-    // Metadata is JSON; the bytes are not. Keeping them apart is what lets a chunk
-    // travel as itself instead of as a base64 string.
-    const describe = async () => {
-      if (!remote) return await describeTransfer(request.path, window)
-      const body = { action: 'describe', path: request.path, ...window }
-      if (config.role !== 'main') return await agent.readRemote(source, 'POST', '/admin/file', body)
-      return await requestOverTunnel(source, 'POST', '/admin/file', body)
+    if (answer.ok !== true) {
+      if (sink !== undefined && sink.ok === true) await sink.finish().catch(() => {})
+      return { ok: false, error: answer.error }
     }
 
-    /** One chunk of the window, as bytes. */
-    const chunk = async (index, encoding, described) => {
-      if (!remote) {
-        return await readTransferChunk({
-          path: request.path, index, encoding,
-          offset: described.offset, length: described.length,
-        })
-      }
-      const body = {
-        action: 'chunk', path: request.path, index, encoding,
-        offset: described.offset, length: described.length,
-      }
-      if (config.role !== 'main') return await agent.readRemoteChunk(source, request.path, index, encoding, body)
-      const answer = await hub.relayBinaryOverTunnel(source, { method: 'POST', path: '/admin/file', body })
-      if (answer.ok !== true) return { ok: false, error: answer.error }
+    if (sink === undefined) {
       return {
         ok: true,
-        data: answer.body,
-        encoding: answer.headers['x-dsh-chunk-encoding'] ?? encoding,
-        index,
-        eof: answer.headers['x-dsh-chunk-eof'] === '1',
+        size: answer.size ?? bytes,
+        offset: request.offset ?? 0,
+        length: bytes,
+        chunks: byteChunks(collect),
       }
     }
-
-    const described = await describe()
-    if (described.ok !== true) return { ok: false, error: described.error ?? 'could not describe the file' }
-
-    const began = request.toPath === ''
-      ? { ok: true, transferId: undefined }
-      : await beginTransfer({
-        path: request.toPath,
-        overwrite: request.overwrite === true,
-        totalChunks: described.chunks,
-        toOffset: request.toOffset ?? 0,
-      })
-    if (began.ok !== true) return began
-
-    const kept = []
-    for (let index = 0; index < described.chunks; index += 1) {
-      const piece = await chunk(index, described.encoding, described)
-      if (piece.ok !== true) {
-        if (began.transferId !== undefined) await abortTransfer(began.transferId)
-        return { ok: false, error: piece.error ?? `could not read chunk ${index}` }
-      }
-      // The transfer's encoding is the one `describe` chose, not whatever a path
-      // happened to report: a remote answer that lost its header would otherwise be
-      // written as raw bytes, producing a short, corrupt file instead of an error.
-      const encoding = piece.encoding ?? described.encoding
-      if (began.transferId === undefined) kept.push(piece.data)
-      else {
-        const step = await appendTransfer(began.transferId, piece.data, encoding)
-        if (step.ok !== true) {
-          await abortTransfer(began.transferId)
-          return step
-        }
-      }
-      if (piece.eof === true) break
-    }
-
-    if (began.transferId === undefined) {
-      // No destination named: hand back the encoded chunks rather than guessing a path.
-      return {
-        ok: true,
-        name: described.name,
-        size: described.size,
-        offset: described.offset,
-        length: described.length,
-        encoding: described.encoding,
-        chunks: kept,
-      }
-    }
-    const committed = await commitTransfer(began.transferId)
-    if (committed.ok !== true) return committed
-    // Report the window that was written, not just the file it landed in: a resumed
-    // caller needs to know how far it got to compute the next offset.
-    return { ...committed, offset: described.offset, length: described.length, size: described.size }
+    const finished = await sink.finish()
+    return finished
   }
 
   if (typeof ctx.inject === 'function') {

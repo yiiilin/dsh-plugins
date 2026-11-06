@@ -94,7 +94,9 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
         socket.close()
         return
       }
-      logger.info(`federation: received ${frames.length} frame(s)`)
+      // Not per message: a file stream is hundreds of pieces, and a log line for each
+      // one is pure overhead on the hot path. Only unusual counts are worth naming.
+      if (frames.length > 1_000) logger.warn(`federation: received ${frames.length} frames in one message`)
       for (const frame of frames) handle(frame)
     })
 
@@ -205,7 +207,12 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
 
     const prepared = await rewriteHeaders(head.headers)
     let response
-      const daemonOwned = head.path === '/admin' || head.path.startsWith('/admin/')
+      // `/admin` is the daemon's JSON surface; `/file` is its byte surface. Both belong
+      // to the daemon rather than the harness behind it, and both are answered only for
+      // a request that carried this node's federation token.
+      const pathname = head.path.split('?')[0]
+      const daemonOwned = pathname === '/admin' || pathname.startsWith('/admin/')
+        || pathname === '/file' || pathname.startsWith('/file/')
       const check = httpRequest({
         host: '127.0.0.1',
         port: daemonOwned ? daemonPort() : harnessPort(),
@@ -482,6 +489,63 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
   }
 
   /**
+   * Stream one file from a peer into a local writer, through the main node.
+   *
+   * One request, one streamed response: the main node relays body pieces as they arrive
+   * rather than buffering the file, which is what makes slicing unnecessary.
+   *
+   * @param toEnvId - peer environment id.
+   * @param filePath - absolute path on the peer.
+   * @param sink - `(piece) => void`.
+   * @param range - optional `Range` header value.
+   * @returns `{ ok, size?, error? }`.
+   */
+  function streamFileFromPeer(toEnvId, filePath, sink, range) {
+    return new Promise((resolve) => {
+      if (socket === undefined || socket.readyState !== WebSocket.OPEN) {
+        resolve({ ok: false, error: 'this edge is not connected to the main node' })
+        return
+      }
+      let settled = false
+      let head
+      let bytes = 0
+      const finish = (value) => {
+        if (settled) return
+        settled = true
+        resolve(value)
+      }
+      const timer = setTimeout(() => finish({ ok: false, error: 'the main node did not answer in time' }), 300_000)
+      const id = newRequestId()
+      const key = id.toString('hex')
+      inFlight.set(key, {
+        onResponseHead(value) { head = value },
+        onRequestBody(payload) {
+          bytes += payload.length
+          if (head !== undefined && (head.status === 200 || head.status === 206)) sink(payload)
+        },
+        onRequestEnd() {
+          clearTimeout(timer)
+          if (head !== undefined && head.status !== 200 && head.status !== 206) {
+            finish({ ok: false, error: `the peer answered ${head.status}` })
+            return
+          }
+          finish({ ok: true, size: Number(head?.headers?.['x-dsh-file-size'] ?? bytes) })
+        },
+        close() {
+          clearTimeout(timer)
+          finish({ ok: false, error: 'the tunnel closed before the peer finished' })
+        },
+      })
+      sendOrClose(encodeJsonFrame(FRAME.agentMessage, id, {
+        kind: 'stream-file',
+        toEnvId,
+        path: filePath,
+        range,
+      }))
+    })
+  }
+
+  /**
    * Ask the main node which environments exist, and which are online.
    *
    * An edge's own registry is empty by design — environments are the main node's to
@@ -587,6 +651,7 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
     listEnvironments,
     readRemote,
     readRemoteChunk,
+    streamFileFromPeer,
     connected: () => socket?.readyState === WebSocket.OPEN,
   }
 }

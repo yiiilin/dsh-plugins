@@ -328,6 +328,66 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
   }
 
   /**
+   * Relay one peer's file stream to the edge that asked for it.
+   *
+   * Headers are forwarded first so the asking edge knows the status and size, then each
+   * body piece is forwarded as it arrives, then the end. Nothing is buffered.
+   *
+   * @param record - the edge that asked.
+   * @param frame - its request frame.
+   * @param payload - `{ toEnvId, path, range }`.
+   */
+  async function streamRelay(record, frame, payload) {
+    const toEnvId = typeof payload.toEnvId === 'string' ? payload.toEnvId.trim() : ''
+    const path = typeof payload.path === 'string' ? payload.path : ''
+    if (toEnvId === '' || path === '') {
+      sendAgentAnswer(record, frame, { ok: false, error: 'stream-file needs toEnvId and path' })
+      return
+    }
+    if (toEnvId === record.envId) {
+      sendAgentAnswer(record, frame, { ok: false, error: `an environment cannot stream to itself (${toEnvId})` })
+      return
+    }
+    if (!connections.has(toEnvId)) {
+      sendAgentAnswer(record, frame, { ok: false, error: `environment "${toEnvId}" is offline` })
+      return
+    }
+    const range = typeof payload.range === 'string' ? payload.range : undefined
+    let replied = false
+    const sendHead = (head) => {
+      replied = true
+      record.socket.send(encodeJsonFrame(FRAME.responseHead, frame.id, {
+        status: head.status,
+        statusText: head.statusText,
+        headers: head.headers ?? {},
+      }))
+    }
+    const sent = request(toEnvId, {
+      method: 'GET',
+      path: `/file?path=${encodeURIComponent(path)}`,
+      headers: range === undefined ? {} : { range },
+    }, {
+      onHead(head) { sendHead(head) },
+      onBody(piece) {
+        if (!replied) return
+        record.socket.send(encodeFrame(FRAME.responseBody, frame.id, piece))
+      },
+      onEnd() {
+        if (!replied) {
+          sendAgentAnswer(record, frame, { ok: false, error: `environment "${toEnvId}" answered nothing` })
+          return
+        }
+        record.socket.send(encodeFrame(FRAME.responseEnd, frame.id))
+      },
+      onError(error) {
+        if (!replied) sendAgentAnswer(record, frame, { ok: false, error: String(error?.message ?? error) })
+        else record.socket.send(encodeFrame(FRAME.responseEnd, frame.id))
+      },
+    })
+    if (sent === false) sendAgentAnswer(record, frame, { ok: false, error: `environment "${toEnvId}" is offline` })
+  }
+
+  /**
    * Carry one edge's request to another environment.
    *
    * @param record - the edge that asked.
@@ -388,6 +448,13 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
         // JSON body, relayed back on this same request id.
         answer = await relayToPeer(record, payload)
         sendAgentAnswer(record, frame, answer)
+        return
+      }
+      if (payload?.kind === 'stream-file') {
+        // An edge asking for a peer's file. The main node relays the peer's response
+        // pieces straight back on this request id, so the file streams end to end
+        // without ever being buffered whole.
+        await streamRelay(record, frame, payload)
         return
       }
       if (payload?.kind === 'list-environments') {
@@ -635,6 +702,69 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     })
   }
 
+  /**
+   * Stream one file from an edge straight into a local stream.
+   *
+   * The tunnel already relays body pieces as they arrive (`proxy` does exactly this for
+   * the browser), so a file does not need to be sliced: one request, one response, and
+   * the bytes flow through. This is the whole reason the chunk protocol could go away.
+   *
+   * @param envId - target environment.
+   * @param filePath - absolute path on that environment.
+   * @param sink - `(piece) => void`, called for each body piece as it arrives.
+   * @param options - `{ range, timeoutMs }`; a range asks for part of the file.
+   * @returns `{ ok: true, status, headers, bytes }` or `{ ok: false, error }`.
+   */
+  function streamFileFromTunnel(envId, filePath, sink, { range, timeoutMs = 300_000 } = {}) {
+    if (!connections.has(envId)) {
+      return Promise.resolve({ ok: false, error: `environment "${envId}" is offline` })
+    }
+    return new Promise((resolve) => {
+      const settled = { done: false, head: undefined, bytes: 0 }
+      const finish = (value) => {
+        if (settled.done) return
+        settled.done = true
+        resolve(value)
+      }
+      const timer = setTimeout(() => finish({ ok: false, error: `environment "${envId}" did not answer in time` }), timeoutMs)
+      const headers = range === undefined ? {} : { range }
+      const sent = request(envId, {
+        method: 'GET',
+        path: `/file?path=${encodeURIComponent(filePath)}`,
+        headers,
+      }, {
+        onHead(head) {
+          settled.head = head
+          if (head.status !== 200 && head.status !== 206) {
+            // Refusals are small JSON bodies; let the caller read the reason.
+            settled.head = head
+          }
+        },
+        onBody(piece) {
+          settled.bytes += piece.length
+          if (settled.head === undefined || (settled.head.status !== 200 && settled.head.status !== 206)) return
+          sink(piece)
+        },
+        onEnd() {
+          clearTimeout(timer)
+          if (settled.head !== undefined && settled.head.status !== 200 && settled.head.status !== 206) {
+            finish({ ok: false, error: `environment "${envId}" answered ${settled.head.status}` })
+            return
+          }
+          finish({ ok: true, status: settled.head?.status ?? 200, headers: settled.head?.headers ?? {}, bytes: settled.bytes })
+        },
+        onError(error) {
+          clearTimeout(timer)
+          finish({ ok: false, error: String(error?.message ?? error) })
+        },
+      })
+      if (sent === false) {
+        clearTimeout(timer)
+        finish({ ok: false, error: `environment "${envId}" is offline` })
+      }
+    })
+  }
+
   /** The environment table an edge asks for; empty when this hub was given no source. */
   function listKnownEnvironments() {
     return listEnvironments?.() ?? []
@@ -649,6 +779,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     sendAgentMessage,
     relayOverTunnel,
     relayBinaryOverTunnel,
+    streamFileFromTunnel,
     listEnvironments: listKnownEnvironments,
     isOnline,
     ids,
