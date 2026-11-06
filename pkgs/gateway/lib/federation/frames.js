@@ -1,13 +1,21 @@
 /**
  * Wire format for the federation tunnel.
  *
- * One WebSocket carries every request between a main node and an edge: HTTP calls to
- * the edge's harness, WebSocket upgrades, and management commands. They are told apart
- * by a request id and a small type tag, so several can be in flight at once without
- * waiting for each other.
+ * The tunnel is a **byte pipe**. It moves streams from one environment to another and
+ * understands nothing about what travels through them — no method, no path, no status.
+ * That separation is the point: an HTTP request, a gRPC call and a WebSocket handshake
+ * are all just bytes here, and a protocol the tunnel has never heard of works the same
+ * as the one it was written for.
+ *
+ * An earlier version did understand HTTP: it encoded `method`/`path`/`headers` per
+ * request and had dedicated frames for upgrades and file streaming. Every new need grew
+ * another variant (`relay`, `stream-file`, `binary`), and one of them was already
+ * unused. Routing lives in `open`; everything else is opaque.
  *
  * ```
- * [4 byte length][1 byte type][16 byte request id][payload]
+ * open:  [4 length][1 type][16 streamId][JSON { toEnvId, port? }]
+ * data:  [4 length][1 type][16 streamId][raw bytes]
+ * end:   [4 length][1 type][16 streamId][empty]
  * ```
  *
  * The length prefix means a receiver never has to guess where a frame ends — the same
@@ -17,43 +25,27 @@
  * @module @yiln-dsh/dsh-gateway/federation/frames
  */
 
-/** Request/response lifecycle tags. */
 import { randomBytes } from 'node:crypto'
 
 /**
  * Frame tags.
  *
- * 1–8 are the request/response family: the main node asks and an edge answers. 9 is the
- * one frame an edge is allowed to originate, and it exists because an edge has no other
- * way to reach the main node — its `/admin` rejects a bare edge (the main node sets no
- * `token`, so the federation gate is false there), and opening that gate would mean a
- * second credential or an unauthenticated admin surface.
+ * Three, and no direction bit: which side of a stream a frame belongs to follows from
+ * whether its `streamId` is in the receiver's table, so the wire does not carry it.
  */
 export const FRAME = {
-  /** JSON head of an HTTP request: method, path, headers. */
-  requestHead: 1,
-  /** Raw bytes of a request body. */
-  requestBody: 2,
-  /** Request body finished; no more body frames follow. */
-  requestEnd: 3,
-  /** JSON head of a response: status, headers. */
-  responseHead: 4,
-  /** Raw bytes of a response body. */
-  responseBody: 5,
-  /** Response finished. */
-  responseEnd: 6,
-  /** The caller went away; stop work and drop resources. */
-  cancel: 7,
-  /** Keeps a quiet connection from being reaped by intermediaries. */
-  heartbeat: 8,
+  /** JSON `{ toEnvId, port? }`: open a stream toward one environment. */
+  open: 1,
+  /** Raw bytes belonging to an open stream. Never parsed by the tunnel. */
+  data: 2,
+  /** The stream is finished in this direction. */
+  end: 3,
   /**
-   * Edge → main node: deliver one message into a session, here or on another edge.
-   *
-   * The payload is JSON `{ toEnvId, sessionId, text }`. The sender's identity is *not*
-   * in it — the hub fills that in from the connection it arrived on, so a frame can
-   * never claim to come from another environment.
+   * A topology snapshot from the main node. Not a stream: there is no data or end, and
+   * its id is unused. It lives in this frame space rather than a parallel channel so a
+   * node needs only one socket to learn the shape of the federation.
    */
-  agentMessage: 9,
+  topology: 4,
 }
 
 const HEADER_BYTES = 4
@@ -68,12 +60,12 @@ export const MAX_FRAME_BYTES = 8 * 1024 * 1024
  * Encode one frame.
  *
  * @param type - one of {@link FRAME}.
- * @param id - 16-byte request identifier.
+ * @param id - 16-byte stream identifier.
  * @param payload - frame body, empty for terminators.
  * @returns the framed bytes.
  */
 export function encodeFrame(type, id, payload = Buffer.alloc(0)) {
-  if (id.length !== ID_BYTES) throw new Error(`federation: request id must be ${ID_BYTES} bytes, got ${id.length}`)
+  if (id.length !== ID_BYTES) throw new Error(`federation: stream id must be ${ID_BYTES} bytes, got ${id.length}`)
   if (type < 1 || type > 255) throw new Error(`federation: frame type out of range: ${type}`)
   const body = Buffer.isBuffer(payload) ? payload : Buffer.from(payload)
   if (body.length > MAX_FRAME_BYTES) throw new Error(`federation: frame payload too large: ${body.length}`)
@@ -85,21 +77,55 @@ export function encodeFrame(type, id, payload = Buffer.alloc(0)) {
   return out
 }
 
-/** Convenience: encode a frame whose payload is JSON. */
+/**
+ * Encode one frame whose payload is JSON.
+ *
+ * @param type - one of {@link FRAME}.
+ * @param id - 16-byte stream identifier.
+ * @param value - the JSON body.
+ * @returns the framed bytes.
+ */
 export function encodeJsonFrame(type, id, value) {
   return encodeFrame(type, id, Buffer.from(JSON.stringify(value), 'utf8'))
 }
 
 /**
- * Incremental frame reader.
+ * Reassemble frames from a byte stream.
  *
- * WebSocket delivers whatever arrived, not what the protocol wants, so frames are
- * reassembled across messages. A frame larger than {@link MAX_FRAME_BYTES} is rejected
- * rather than buffered: a corrupt length prefix must not be allowed to exhaust memory.
+ * The receiver gets whatever the socket hands it — one frame, part of a frame, or
+ * several frames at once — so frames are taken out of a growing buffer whenever their
+ * length prefix says they are complete.
+ *
+ * Completed frames are copied out on extraction. `subarray` alone would alias the
+ * receive buffer, and the next chunk concatenated onto it would silently rewrite the
+ * payloads of frames the caller still holds.
  */
 export class FrameReader {
-  /** Bytes received but not yet consumed into a complete frame. */
-  buffer = Buffer.alloc(0)
+  /**
+   * Unparsed bytes, as a list of pieces.
+   *
+   * One source of truth. An earlier draft kept a separate "leftover buffer" and a "new
+   * pieces" list; the length prefix was then read from one while the frame started in the
+   * other, and a frame spanning two calls never parsed. Two places for the same bytes is
+   * the bug; pieces are joined only when a whole frame is known to be present.
+   */
+  #pieces = []
+
+  /** Total bytes across `#pieces`, counted rather than re-summed per call. */
+  #held = 0
+
+  /** Bytes currently held, awaiting a complete frame; for tests and diagnostics. */
+  get buffered() {
+    return this.#held
+  }
+
+  /** The held bytes, joined. Only called once enough bytes are present to be worth it. */
+  #joined() {
+    if (this.#pieces.length === 1) return this.#pieces[0]
+    const joined = Buffer.concat(this.#pieces)
+    this.#pieces = [joined]
+    return joined
+  }
 
   /**
    * Feed received bytes and take out every complete frame.
@@ -108,27 +134,48 @@ export class FrameReader {
    * @returns complete frames, in arrival order.
    */
   push(chunk) {
-    this.buffer = this.buffer.length === 0 ? chunk : Buffer.concat([this.buffer, chunk])
+    if (chunk.length > 0) {
+      this.#pieces.push(chunk)
+      this.#held += chunk.length
+    }
     const frames = []
     for (;;) {
-      if (this.buffer.length < HEADER_BYTES) break
-      const length = this.buffer.readUInt32BE(0)
+      if (this.#held < PREFIX_BYTES) break
+      // Peek the length off the head piece instead of joining on every arrival — the
+      // prefix is the first four bytes of the stream, present as soon as that piece is.
+      // Joining first is what made this quadratic.
+      const first = this.#pieces[0]
+      const head = first.length >= PREFIX_BYTES ? first : this.#joined()
+      const length = head.readUInt32BE(0)
       if (length > MAX_FRAME_BYTES) {
         throw new Error(`federation: frame length ${length} exceeds the ${MAX_FRAME_BYTES} byte limit`)
       }
-      if (this.buffer.length < PREFIX_BYTES + length) break
-      const type = this.buffer.readUInt8(HEADER_BYTES)
-      const id = this.buffer.subarray(HEADER_BYTES + TYPE_BYTES, PREFIX_BYTES)
-      const payload = this.buffer.subarray(PREFIX_BYTES, PREFIX_BYTES + length)
-      // `subarray` aliases the receive buffer, which the next `concat` may drop.
-      frames.push({ type, id: Buffer.from(id), payload: Buffer.from(payload) })
-      this.buffer = this.buffer.subarray(PREFIX_BYTES + length)
+      // Join only when the whole frame is present.
+      if (this.#held < PREFIX_BYTES + length) break
+      const whole = this.#joined()
+
+      const type = whole.readUInt8(HEADER_BYTES)
+      const start = HEADER_BYTES + TYPE_BYTES
+      const id = Buffer.from(whole.subarray(start, start + ID_BYTES))
+      const payload = Buffer.from(whole.subarray(PREFIX_BYTES, PREFIX_BYTES + length))
+      frames.push({ type, id, payload })
+
+      const consumed = PREFIX_BYTES + length
+      this.#held = whole.length - consumed
+      this.#pieces = this.#held > 0 ? [Buffer.from(whole.subarray(consumed))] : []
     }
     return frames
   }
 }
 
-/** A fresh request id. */
+/**
+ * Mint one stream identifier.
+ *
+ * 16 random bytes: two nodes picking the same value is not reachable in practice, which
+ * is what lets the tunnel leave `streamId` alone as a stream crosses hops.
+ *
+ * @returns the identifier bytes.
+ */
 export function newRequestId() {
   return randomBytes(16)
 }

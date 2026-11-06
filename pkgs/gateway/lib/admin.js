@@ -44,6 +44,7 @@ export function createAdmin({
   registry, hub, config, profileSelf, inventory, readModel, readModelRows, writeModel, sessions,
   changeCredential, logger, relayTimeoutMs = RELAY_TIMEOUT_MS, deliverMessage,
   remoteInfo = {},
+  topologyChanged,
 }) {
   /** id -> `{ at, value }` for the last known connection state. */
   const statusCache = new Map()
@@ -347,6 +348,8 @@ export function createAdmin({
           enabled: body.enabled === undefined ? true : body.enabled === true,
         })
       await registry.add(environment)
+      // A new environment is a new edge in every peer's table.
+      topologyChanged?.()
       logger.info(`daemon: created environment "${id}"`)
       // The token is shown exactly once: it is the edge's credential and the file that
       // holds it is not meant to be read by hand.
@@ -383,11 +386,13 @@ export function createAdmin({
           return true
         }
         const updated = await registry.update(id, patch)
+        topologyChanged?.()
         json(res, 200, { ok: true, environment: describe(updated) })
         return true
       }
       if (method === 'DELETE') {
         await registry.remove(id)
+        topologyChanged?.()
         statusCache.delete(id)
         logger.info(`daemon: removed environment "${id}"`)
         json(res, 200, { ok: true })
@@ -462,6 +467,7 @@ export function createAdmin({
       }
       const token = freshToken()
       await registry.update(id, { token })
+      // Rotating a token does not change the shape; nothing to broadcast.
       logger.info(`daemon: rotated the token for "${id}"`)
       json(res, 200, { ok: true, token })
       return true

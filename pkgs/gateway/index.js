@@ -226,6 +226,25 @@ export function apply(ctx, config) {
     verifyToken: (token) => registry.byToken(token),
     deliver: deliverMessage,
     forward: forwardMessage,
+    /**
+     * The node table the main node broadcasts.
+     *
+     * The main node is the authority: it is the only node holding every tunnel, so it is
+     * the only one whose answer is complete. This node appears as `self`.
+     */
+    listNodes: config.role !== 'main'
+      ? undefined
+      : () => [
+        { envId: 'self', label: 'this node (main)', kind: 'self', online: true },
+        ...registry.list().map((environment) => ({
+          envId: environment.id,
+          label: environment.label,
+          kind: environment.kind,
+          hostname: environment.hostname ?? '',
+          lastSeen: environment.lastSeen ?? 0,
+          online: hub.isOnline(environment.id),
+        })),
+      ],
     // What an edge asks for: this node's environment table, with live state.
     listEnvironments: () => [
       { envId: 'self', label: 'this node (main)', online: true },
@@ -648,6 +667,7 @@ export function apply(ctx, config) {
     hub,
     deliverMessage,
     remoteInfo,
+    topologyChanged: () => hub.broadcastTopology(),
     config: { ...config, cacheDir },
     profileSelf: selfInfo,
     inventory,

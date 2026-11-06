@@ -17,6 +17,7 @@
 import { WebSocketServer } from 'ws'
 import { FRAME, FrameReader, encodeFrame, encodeJsonFrame, newRequestId } from './frames.js'
 import { keepAlive } from './keepalive.js'
+import { edgeRow, nodeRow, snapshot, TOPOLOGY_FRAME } from './topology.js'
 
 /** Path the edges connect to. */
 export const TUNNEL_PATH = '/_tunnel'
@@ -43,7 +44,7 @@ export const SELF_ENV_ID = 'self'
  * @returns the hub: `accept`, `proxy`, `proxyUpgrade`, `request`, `sendAgentMessage`,
  *   `isOnline`, `ids`, `close`.
  */
-export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnvironments }) {
+export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnvironments, listNodes }) {
   /** envId -> connection record. */
   const connections = new Map()
 
@@ -52,6 +53,88 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    *
    * @returns the connection record, or undefined when the token was rejected.
    */
+  /** Monotonic per sender, so a receiver can discard a late snapshot. */
+  let topologySeq = 0
+
+  /** Set while a broadcast loop is running, so a re-entrant call cannot interleave. */
+  let broadcasting = false
+
+  /** Set when the table changed during a broadcast, so the loop repeats with it. */
+  let topologyDirty = false
+
+  /**
+   * Build the snapshot this node would tell others about.
+   *
+   * The main node is the only node holding every tunnel, so it is the authority; a leaf
+   * would broadcast a table that omits everything it cannot see.
+   *
+   * @returns the snapshot, or undefined when this hub was given no source.
+   */
+  function buildSnapshot() {
+    if (listNodes === undefined) return undefined
+    const nodes = listNodes().map((row) => nodeRow(row, { online: row.online, selfId: row.envId }))
+    // Star today: every environment is one hop away, so `via` is empty. The field is
+    // carried anyway so a tree does not need a different message shape.
+    const edges = nodes
+      .filter((row) => row.kind !== 'self')
+      .map((row) => edgeRow(row.envId))
+    // No seq here: it belongs to the message that is about to be sent, not to the act of
+    // reading the table. Incrementing while building meant a re-entrant broadcast could
+    // hand out two different sequences for one state, and a send that fails part-way
+    // could still burn one.
+    return { nodes, edges }
+  }
+
+  /**
+   * Push the current shape to every connected edge.
+   *
+   * Called on every change — an edge arriving or leaving, and an environment being added,
+   * enabled or removed. A topology that changes without this leaves peers routing into a
+   * machine that is gone, which is exactly the class of bug the pushed table exists to
+   * prevent.
+   *
+   * @returns how many edges were told.
+   */
+  function broadcastTopology() {
+    // One snapshot per burst, and one sequence number for it.
+    //
+    // A send can synchronously trigger a `close` on another socket, which calls back into
+    // this function. Without coalescing, that inner call would build from the *newer*
+    // table, take a higher sequence, and be followed by the outer loop finishing the
+    // older snapshot under a lower one — peers would then hold a stale table believing it
+    // current. So a re-entrant call only marks the burst dirty; the outer call goes round
+    // again with the newest table and a single new sequence.
+    if (broadcasting) {
+      topologyDirty = true
+      return 0
+    }
+    broadcasting = true
+    let sent = 0
+    try {
+      do {
+        topologyDirty = false
+        const table = buildSnapshot()
+        if (table === undefined) break
+        topologySeq += 1
+        const seq = topologySeq
+        for (const [, record] of connections) {
+          try {
+            // Each edge is told which environment it *is*: a leaf knows only its token,
+            // and without its own id `routeTo` cannot tell "the destination is me" from
+            // "the destination is a peer".
+            record.socket.send(encodeJsonFrame(TOPOLOGY_FRAME, Buffer.alloc(16), { ...table, seq, selfEnvId: record.envId }))
+            sent += 1
+          } catch (error) {
+            logger.warn(`federation: could not send the topology to ${record.envId}: ${error.message}`)
+          }
+        }
+      } while (topologyDirty)
+    } finally {
+      broadcasting = false
+    }
+    return sent
+  }
+
   function register(environment, socket) {
     const record = {
       envId: environment.id,
@@ -84,7 +167,12 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       // response that can never arrive.
       for (const [, entry] of record.pending) entry.onClose?.()
       record.pending.clear()
-      if (connections.get(record.envId) === record) connections.delete(record.envId)
+      if (connections.get(record.envId) === record) {
+        connections.delete(record.envId)
+        // Everyone still connected must learn this node is gone, or they will keep
+        // routing streams into a machine that can no longer answer.
+        broadcastTopology()
+      }
       logger.info(`federation: ${record.envId} disconnected`)
     })
 
@@ -104,6 +192,9 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     }
     connections.set(record.envId, record)
     logger.info(`federation: ${record.envId} connected`)
+    // The arriving edge needs the table before it can route anything, and everyone else
+    // needs to know it is now online.
+    broadcastTopology()
     return record
   }
 
@@ -777,6 +868,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     proxyUpgrade,
     request,
     sendAgentMessage,
+    broadcastTopology,
     relayOverTunnel,
     relayBinaryOverTunnel,
     streamFileFromTunnel,

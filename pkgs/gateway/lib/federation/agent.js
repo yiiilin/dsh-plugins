@@ -16,6 +16,7 @@ import { request as httpRequest } from 'node:http'
 import WebSocket from 'ws'
 import { FRAME, FrameReader, encodeFrame, encodeJsonFrame, newRequestId } from './frames.js'
 import { keepAlive } from './keepalive.js'
+import { createTopologyView, TOPOLOGY_FRAME } from './topology.js'
 
 /** Reconnect delays, then the ceiling. Network blips are normal; giving up is not. */
 const BACKOFF_MS = [1000, 2000, 5000, 10_000, 20_000, 30_000, 60_000]
@@ -43,6 +44,14 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
   let timer
   /** requestId(hex) -> cleanup for an in-flight request. */
   const inFlight = new Map()
+
+  /**
+   * The federation's shape as the main node last described it.
+   *
+   * Pushed, never asked for: a node that had to poll would be blind until its first poll,
+   * and would disagree with the authority between polls.
+   */
+  const topology = createTopologyView({ selfId: process.env.DSH_ENV_ID ?? 'self' })
 
   function target() {
     const base = mainUrl.replace(/\/+$/u, '')
@@ -114,7 +123,22 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
 
   function handle(frame) {
     const key = frame.id.toString('hex')
-    if (frame.type === FRAME.heartbeat) return
+    // Not a stream: no data, no end, no pending entry. Handled before the in-flight
+    // lookup, which would otherwise count it as an orphan frame for an unknown request.
+    if (frame.type === TOPOLOGY_FRAME) {
+      try {
+        const table = JSON.parse(frame.payload.toString('utf8'))
+        // The main node says which environment this edge is; a leaf knows only its token.
+        if (typeof table?.selfEnvId === 'string' && table.selfEnvId !== '') {
+          topology.setSelfId(table.selfEnvId)
+        }
+        const adopted = topology.apply(table)
+        logger.info(`federation: topology ${adopted ? 'updated' : 'ignored stale'} (seq ${table?.seq}, ${table?.nodes?.length ?? 0} node(s))`)
+      } catch (error) {
+        logger.warn(`federation: could not read the topology: ${error.message}`)
+      }
+      return
+    }
     if (frame.type === FRAME.cancel) {
       const entry = inFlight.get(key)
       inFlight.delete(key)
@@ -647,6 +671,7 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
     start,
     stop,
     sendAgentMessage,
+    topology,
     listEnvironments,
     readRemote,
     readRemoteChunk,
