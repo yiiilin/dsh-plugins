@@ -705,7 +705,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    * @param options.timeoutMs - how long to wait for the first byte.
    * @returns `{ ok: true, send, end }` or `{ ok: false, error }`.
    */
-  function openStream(toEnvId, { sink, onEnd, onError, port, timeoutMs = 300_000 } = {}) {
+  function openStream(toEnvId, { sink, onEnd, onError, target, timeoutMs = 300_000 } = {}) {
     // The direct peer, or whoever this node can reach the destination through.
     const resolved = resolveTarget({ envId: selfName() }, { toEnvId })
     logger.info(`federation: openStream to "${toEnvId}" resolved ${JSON.stringify(resolved)}`)
@@ -744,7 +744,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     // absence means that node's daemon.
     // The frame names the *destination*, not the next hop: an intermediate node resolves
     // its own next hop from the same field, so a chain relays without extra state.
-    record.socket.send(encodeJsonFrame(FRAME.open, id, port === undefined ? { toEnvId } : { toEnvId, port }))
+    record.socket.send(encodeJsonFrame(FRAME.open, id, target === undefined ? { toEnvId } : { toEnvId, target }))
     return {
       ok: true,
       id,

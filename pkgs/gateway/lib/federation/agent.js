@@ -202,7 +202,7 @@ function createUpstream({ url, token, selfName, logger, onTopology, onFrame, onC
      *
      * @returns `{ ok: true, send, end, id }` or `{ ok: false, error }`.
      */
-    openStream(toEnvId, { sink, onEnd, onError, port, timeoutMs = 300_000 }) {
+    openStream(toEnvId, { sink, onEnd, onError, target, timeoutMs = 300_000 }) {
       if (socket === undefined || socket.readyState !== WebSocket.OPEN) {
         return { ok: false, error: `upstream ${url} is not connected` }
       }
@@ -218,7 +218,7 @@ function createUpstream({ url, token, selfName, logger, onTopology, onFrame, onC
         }, timeoutMs),
       })
       // The far side is told where to attach; absent means that node's daemon.
-      socket.send(encodeJsonFrame(FRAME.open, id, port === undefined ? { toEnvId } : { toEnvId, port }))
+      socket.send(encodeJsonFrame(FRAME.open, id, target === undefined ? { toEnvId } : { toEnvId, target }))
       return {
         ok: true,
         id,
@@ -391,10 +391,18 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, log
    */
   function attachLocalStream(id, payload, owner) {
     const key = id.toString('hex')
-    // `port` names the local listener; absent means the daemon itself, which is where
-    // `/admin` lives.
+    // Where to attach is the *far* node's decision, because only it knows its own ports.
+    // A caller names what it wants — `harness` for the profile's own web UI, nothing for
+    // the daemon — and this node resolves that to a port. Sending a number instead could
+    // not work: the caller has no way to learn a peer's port numbers, and the first
+    // version's silent fallback to the daemon made every proxied upgrade land on the
+    // admin surface and come back as a login page.
+    const wantsHarness = payload?.target === 'harness'
     const requested = Number(payload?.port)
-    const port = Number.isInteger(requested) && requested > 0 ? requested : daemonPort()
+    const resolved = Number.isInteger(requested) && requested > 0
+      ? requested
+      : (wantsHarness ? harnessPort() : daemonPort())
+    const port = resolved
     if (port === 0) {
       logger.warn('federation: a stream arrived before the local listener existed')
       return

@@ -178,15 +178,7 @@ export function startEntry({ host, port, listEnvironments, local, root, tunnel, 
       }
     }
     if (routed !== undefined && tunnel !== undefined) {
-      // An upgraded connection is a two-way byte stream with no request/response framing,
-      // which the tunnel carries — but the browser half needs the same treatment the HTTP
-      // path got, and that is not wired yet. Saying so is better than a stack trace in the
-      // log: the failure is a missing feature, not a broken environment.
-      if (typeof tunnel.hub.openStream !== 'function') {
-        socket.end('HTTP/1.1 503 Service Unavailable\r\nconnection: close\r\n\r\n')
-        return
-      }
-      socket.end('HTTP/1.1 503 Service Unavailable\r\nconnection: close\r\n\r\n')
+      proxyUpgradeOverTunnel(tunnel.hub, routed.id, req, socket, head, routed.path)
       return
     }
     // The root profile's client opens its mux socket against `document.baseURI`,
@@ -533,6 +525,73 @@ function proxyRequest({ req, res, port, path, prefix, cookie, refresh }) {
  * The handshake is replayed byte-for-byte so the profile sees the same headers
  * it would have seen directly, except for the loopback `Host`/`Origin` pair.
  */
+/**
+ * Carry an upgraded connection to a remote environment through the tunnel.
+ *
+ * An upgrade is a two-way byte stream once the handshake is done, which is exactly what
+ * the tunnel moves — so the local half is a TCP socket and the remote half is a stream,
+ * and the two are piped together. The handshake itself is replayed to the far side with
+ * the authority rewritten, because the remote daemon fences on `Host` and `Origin` and
+ * would reject the browser's.
+ *
+ * The cookie is *not* rewritten: only the remote process can mint a session its own
+ * harness accepts. It forwards the browser's cookie unchanged, and the remote daemon
+ * decides — which is the same trust model the HTTP proxy follows.
+ *
+ * @param hub - the tunnel hub.
+ * @param envId - destination environment.
+ * @param req - the upgrade request.
+ * @param socket - the browser's socket.
+ * @param head - bytes already read past the request head.
+ * @param path - path as the environment should see it.
+ */
+function proxyUpgradeOverTunnel(hub, envId, req, socket, head, path) {
+  if (hub.isReachable(envId) !== true) {
+    socket.end('HTTP/1.1 503 Service Unavailable\r\nconnection: close\r\n\r\n')
+    return
+  }
+
+  const lines = [`GET ${path} HTTP/1.1`]
+  for (let index = 0; index < req.rawHeaders.length; index += 2) {
+    const name = req.rawHeaders[index]
+    const value = req.rawHeaders[index + 1]
+    const lower = name.toLowerCase()
+    // Hop-by-hop headers describe *this* connection; the far side makes its own.
+    if (lower === 'connection' || lower === 'upgrade' || lower === 'keep-alive') continue
+    lines.push(`${name}: ${value}`)
+  }
+  // Both are required for the far daemon to accept the upgrade, and both describe the
+  // connection the tunnel provides.
+  lines.push('Connection: Upgrade')
+  lines.push(`Upgrade: ${req.headers.upgrade ?? 'websocket'}`)
+
+  const opened = hub.openStream(envId, {
+    // The profile's own web UI lives behind the far node's harness listener, which this
+    // side cannot name — so it asks for "harness" and the far node resolves it.
+    target: 'harness',
+    sink(piece) {
+      if (!socket.destroyed) socket.write(piece)
+    },
+    onEnd() {
+      socket.end()
+    },
+    onError() {
+      socket.destroy()
+    },
+  })
+  if (opened.ok !== true) {
+    socket.end('HTTP/1.1 503 Service Unavailable\r\nconnection: close\r\n\r\n')
+    return
+  }
+
+  opened.send(Buffer.from(`${lines.join('\r\n')}\r\n\r\n`, 'utf8'))
+  if (head.length > 0) opened.send(head)
+  socket.on('data', (piece) => opened.send(piece))
+  socket.on('end', () => opened.end())
+  socket.on('close', () => opened.end())
+  socket.on('error', () => opened.end())
+}
+
 function proxyUpgrade({ req, socket, head, port, path, cookie }) {
   const authority = `127.0.0.1:${port}`
   const target = connect(port, '127.0.0.1', () => {
