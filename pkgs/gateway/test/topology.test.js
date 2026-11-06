@@ -34,6 +34,8 @@ test('a node row carries the metadata a peer needs, and no token', () => {
   const row = nodeRow(edgeA, { online: true })
   assert.deepEqual(row, {
     envId: 'n95c', label: '6.13', kind: 'remote', hostname: 'six13', online: true, lastSeen: 100,
+    // The port a peer's own UI answers on: not derivable, so it travels with the table.
+    harnessPort: 0,
   })
   assert.equal('token' in row, false, 'a secret has no business in a broadcast')
 })

@@ -207,6 +207,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
         hostname: row.hostname ?? '',
         online: row.online !== false,
         lastSeen: typeof row.lastSeen === 'number' ? row.lastSeen : 0,
+        harnessPort: Number(row.harnessPort) || 0,
       })
       edges.push(edgeRow(row.envId, { hops: row.hops ?? 1 }))
     }
@@ -775,6 +776,21 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     }
   }
 
+  /**
+   * The loopback authority a peer's own UI answers on, as `host:port`.
+   *
+   * Learned from the peer's report, because a port number cannot be derived and no other
+   * side knows it. Empty when the peer has not said.
+   *
+   * @param envId - the environment.
+   * @returns `127.0.0.1:<port>`, or an empty string when unknown.
+   */
+  function harnessAuthorityOf(envId) {
+    const row = reported.get(envId)
+    const port = Number(row?.harnessPort)
+    return Number.isInteger(port) && port > 0 ? `127.0.0.1:${port}` : ''
+  }
+
   /** Whether the hub has a live tunnel to this environment. */
   function isOnline(envId) {
     return connections.has(envId)
@@ -878,6 +894,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     openStream,
     isOnline,
     isReachable,
+    harnessAuthorityOf,
     knownNodes,
     ids,
     listKnownEnvironments,

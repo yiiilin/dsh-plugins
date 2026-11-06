@@ -383,7 +383,12 @@ async function handleHttp({ req, res, url, listEnvironments, local, root, tunnel
     // straight to `res` makes the browser read them as the *body* of a response whose
     // head it already has, so the head has to be parsed off the front here.
     const relay = createResponseSplitter(res)
+    // `/admin` belongs to the daemon and everything else is the profile's own UI, which
+    // lives behind its harness listener. Sending page requests to the daemon returned its
+    // login page — the reason a proxied environment never showed its own interface.
+    const administered = upstreamPath === '/admin' || upstreamPath.startsWith('/admin/')
     const opened = hub.openStream(envId, {
+      target: administered ? undefined : 'harness',
       sink(piece) {
         relay.push(piece)
       },
@@ -551,6 +556,7 @@ function proxyUpgradeOverTunnel(hub, envId, req, socket, head, path) {
     return
   }
 
+  const authority = hub.harnessAuthorityOf?.(envId) ?? ''
   const lines = [`GET ${path} HTTP/1.1`]
   for (let index = 0; index < req.rawHeaders.length; index += 2) {
     const name = req.rawHeaders[index]
@@ -558,6 +564,19 @@ function proxyUpgradeOverTunnel(hub, envId, req, socket, head, path) {
     const lower = name.toLowerCase()
     // Hop-by-hop headers describe *this* connection; the far side makes its own.
     if (lower === 'connection' || lower === 'upgrade' || lower === 'keep-alive') continue
+    // `Host` and `Origin` are rewritten to the far side's own loopback authority, which is
+    // what its `/api` browser-trust fence accepts. Forwarding the browser's authority makes
+    // that fence reject the upgrade, and the fence cannot be relaxed here — it exists so a
+    // *page* cannot open the socket. The port comes from the peer's own report, because a
+    // port number cannot be derived.
+    if (lower === 'host' && authority !== '') {
+      lines.push(`${name}: ${authority}`)
+      continue
+    }
+    if (lower === 'origin' && authority !== '') {
+      lines.push(`${name}: http://${authority}`)
+      continue
+    }
     lines.push(`${name}: ${value}`)
   }
   // Both are required for the far daemon to accept the upgrade, and both describe the

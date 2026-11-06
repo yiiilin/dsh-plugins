@@ -48,6 +48,8 @@ export function nodeRow(environment, { online = false, selfId = '' } = {}) {
     kind: environment.kind ?? 'self',
     hostname: environment.hostname ?? '',
     online: envId === selfId ? true : online === true,
+    // A peer needs this to address the mux socket, and cannot derive it.
+    harnessPort: Number(environment.harnessPort) || 0,
     lastSeen: typeof environment.lastSeen === 'number' ? environment.lastSeen : 0,
   }
 }

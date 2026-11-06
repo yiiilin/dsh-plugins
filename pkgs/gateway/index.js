@@ -295,7 +295,14 @@ export function apply(ctx, config) {
         // A stable id other nodes can use to tell this sender from another. Without it
         // every node calls itself `self` on the wire, two upstreams become
         // indistinguishable, and their sequence counters cannot be ordered per source.
-        { envId: selfEnvId(), label: config.name === '' ? 'this node' : config.name, kind: 'self', online: true },
+        {
+          envId: selfEnvId(),
+          label: config.name === '' ? 'this node' : config.name,
+          kind: 'self',
+          online: true,
+          // Published so a peer can address this node's own UI.
+          harnessPort: embeddedRoot.portOrZero(),
+        },
         ...registry.list().map((environment) => ({
           envId: environment.id,
           label: environment.label,
@@ -330,6 +337,10 @@ export function apply(ctx, config) {
       role: config.role,
       host: config.host,
       port: config.port,
+      // The listener this node's own UI answers on. A peer needs it to address the mux
+      // socket, and cannot discover it any other way — port numbers are not derivable, and
+      // asking the node is the only reliable source.
+      harnessPort: embeddedRoot.portOrZero(),
       // Where this node's own UI is mounted, so a switcher can mark it as current.
       rootPrefix: config.rootPrefix,
       plugins,
