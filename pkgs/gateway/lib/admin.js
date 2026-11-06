@@ -18,6 +18,8 @@
 
 import { PAIRING_CREDENTIAL_MIN_LENGTH } from './auth/pairing-credential.js'
 import { validateMessageRequest } from './agent-message.js'
+import { listSessions, listWorkspaces } from './remote-info.js'
+import { MAX_FILE_BYTES, abortTransfer, appendTransfer, beginTransfer, commitTransfer, readForTransfer } from './file-transfer.js'
 import { deriveId, freshToken, normalizeEnvironment } from './registry.js'
 
 /** How long a tunnel status stays cached, so a panel refresh is not a probe storm. */
@@ -42,6 +44,7 @@ const SELF_NODE_ID = 'self'
 export function createAdmin({
   registry, hub, config, profileSelf, inventory, readModel, readModelRows, writeModel, sessions,
   changeCredential, logger, relayTimeoutMs = RELAY_TIMEOUT_MS, deliverMessage,
+  remoteInfo = {},
 }) {
   /** id -> `{ at, value }` for the last known connection state. */
   const statusCache = new Map()
@@ -225,6 +228,67 @@ export function createAdmin({
         text: checked.value.text,
       })
       json(res, result.ok === true ? 200 : 502, result)
+      return true
+    }
+
+    if (pathname === '/admin/workspaces') {
+      // Read-only, and reachable only from a peer node (`local()` answers an `/admin`
+      // request carrying this node's federation token before the browser gate).
+      if (method !== 'GET') {
+        json(res, 405, { ok: false, error: `${method} is not supported on ${pathname}` }, { allow: 'GET' })
+        return true
+      }
+      json(res, 200, listWorkspaces({ workspaces: remoteInfo.workspaces }))
+      return true
+    }
+
+    if (pathname === '/admin/remote-sessions') {
+      if (method !== 'GET') {
+        json(res, 405, { ok: false, error: `${method} is not supported on ${pathname}` }, { allow: 'GET' })
+        return true
+      }
+      const workspaceId = new URL(`http://x${url}`).searchParams.get('workspaceId') ?? ''
+      json(res, 200, await listSessions(remoteInfo, workspaceId))
+      return true
+    }
+
+    if (pathname === '/admin/file') {
+      if (method !== 'POST') {
+        json(res, 405, { ok: false, error: `${method} is not supported on ${pathname}` }, { allow: 'POST' })
+        return true
+      }
+      // Base64 inflates the file by a third, and the whole thing arrives in one body.
+      const body = await readJson(req, Math.ceil(MAX_FILE_BYTES * 4 / 3) + 8192)
+      const action = typeof body.action === 'string' ? body.action : ''
+      if (action === 'read') {
+        json(res, 200, await readForTransfer(body.path))
+        return true
+      }
+      if (action === 'begin') {
+        // A file may be larger than one frame, so it arrives in pieces: `begin` opens a
+        // staged file, each `chunk` appends, and `commit` renames it into place. An
+        // abandoned upload leaves only its staged file, which `abort` (or the sender
+        // dying) removes.
+        json(res, 200, await beginTransfer({
+          path: body.path,
+          overwrite: body.overwrite === true,
+          totalChunks: body.totalChunks,
+        }))
+        return true
+      }
+      if (action === 'chunk') {
+        json(res, 200, await appendTransfer(body.transferId, body.data))
+        return true
+      }
+      if (action === 'commit') {
+        json(res, 200, await commitTransfer(body.transferId))
+        return true
+      }
+      if (action === 'abort') {
+        json(res, 200, await abortTransfer(body.transferId))
+        return true
+      }
+      json(res, 400, { ok: false, error: 'action must be "read", "begin", "chunk", "commit" or "abort"' })
       return true
     }
 
@@ -536,14 +600,22 @@ function json(res, status, value, headers = {}) {
   res.end(body)
 }
 
-function readJson(req) {
+/**
+ * Read one JSON body.
+ *
+ * @param req - the request.
+ * @param limitBytes - largest body accepted. Control payloads are small; a file transfer
+ *   legitimately carries megabytes, so the file route raises this rather than sharing a
+ *   limit that is right for neither.
+ * @returns the parsed body.
+ */
+function readJson(req, limitBytes = 256 * 1024) {
   return new Promise((done, fail) => {
     const chunks = []
     let size = 0
     req.on('data', (chunk) => {
       size += chunk.length
-      // A control payload is small; anything large is a mistake or an attack.
-      if (size > 256 * 1024) {
+      if (size > limitBytes) {
         fail(new Error('daemon: request body too large'))
         req.destroy()
         return

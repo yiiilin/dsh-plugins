@@ -68,7 +68,37 @@ const ENV_SCHEMA = {
  * @param options.send - `(message) => Promise<{ ok, accepted?, error? }>`.
  * @returns the tool definitions.
  */
-export function agentMessageTools({ listEnvironments, send }) {
+const WORKSPACES_DESCRIPTION = [
+  'List the workspaces of a DSH environment, with each workspace id, title, absolute path',
+  'and how many sessions it holds. Use it to learn a workspaceId for agent_sessions, or to',
+  'see where another machine keeps its work. Read-only.',
+].join(' ')
+
+const SESSIONS_DESCRIPTION = [
+  'List the sessions inside one workspace of a DSH environment (or across all of them when',
+  'workspaceId is omitted). Each row carries the session id to pass to agent_send, its cwd,',
+  'creation time, parent, and whether it is live and persisted on that node. Read-only.',
+].join(' ')
+
+const PUT_FILE_DESCRIPTION = [
+  'Copy one file to another DSH environment. Give an absolute destination path on the',
+  'target, and either a sourcePath to read here or base64 chunks as the content. Files are',
+  'staged next to the destination and renamed into place, so a partial transfer never',
+  'appears as a file. An existing destination is refused unless overwrite is true.',
+  'The limit is 32 MiB per call.',
+].join(' ')
+
+/**
+ * Build the tool definitions.
+ *
+ * @param options.listEnvironments - `() => { envId, label, online }[]`.
+ * @param options.send - `(message) => Promise<{ ok, accepted?, error? }>`.
+ * @param options.listWorkspaces - `(envId) => Promise<{ ok, workspaces?, error? }>`.
+ * @param options.listSessions - `(envId, workspaceId) => Promise<{ ok, sessions?, error? }>`.
+ * @param options.putFile - `(request) => Promise<{ ok, path?, bytes?, error? }>`.
+ * @returns the tool definitions.
+ */
+export function agentMessageTools({ listEnvironments, send, listWorkspaces, listSessions, putFile }) {
   return [
     defineTool({
       name: 'agent_list_envs',
@@ -125,6 +155,113 @@ export function agentMessageTools({ listEnvironments, send }) {
           sessionId: checked.value.sessionId,
           text: checked.value.text,
           fromSessionId,
+        })
+      },
+    }),
+    defineTool({
+      name: 'agent_workspaces',
+      description: WORKSPACES_DESCRIPTION,
+      parameters: {
+        envId: {
+          type: 'string',
+          description: 'Environment to ask, from agent_list_envs. Omit to read this node.',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+            ok: { type: 'boolean', required: true },
+            workspaces: { type: 'array', items: { type: 'object', additionalProperties: true } },
+            error: { type: 'string' },
+          },
+        },
+        render: jsonRender,
+      },
+      async execute(args) {
+        return await listWorkspaces(String(args?.envId ?? '').trim())
+      },
+    }),
+    defineTool({
+      name: 'agent_sessions',
+      description: SESSIONS_DESCRIPTION,
+      parameters: {
+        workspaceId: {
+          type: 'string',
+          description: 'Workspace id from agent_workspaces. Omit to list sessions across every workspace.',
+        },
+        envId: {
+          type: 'string',
+          description: 'Environment to ask, from agent_list_envs. Omit to read this node.',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+            ok: { type: 'boolean', required: true },
+            sessions: { type: 'array', items: { type: 'object', additionalProperties: true } },
+            error: { type: 'string' },
+          },
+        },
+        render: jsonRender,
+      },
+      async execute(args) {
+        return await listSessions(
+          String(args?.envId ?? '').trim(),
+          String(args?.workspaceId ?? '').trim(),
+        )
+      },
+    }),
+    defineTool({
+      name: 'agent_put_file',
+      description: PUT_FILE_DESCRIPTION,
+      parameters: {
+        path: {
+          type: 'string',
+          description: 'Absolute destination path on the target environment.',
+          required: true,
+        },
+        envId: {
+          type: 'string',
+          description: 'Destination environment from agent_list_envs. Omit to write on this node.',
+        },
+        sourcePath: {
+          type: 'string',
+          description: 'Absolute path to read here and copy over. Omit when passing base64 chunks.',
+        },
+        chunks: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Base64 file content, split across entries. Use instead of sourcePath.',
+        },
+        overwrite: {
+          type: 'boolean',
+          description: 'Replace an existing destination file. Defaults to refusing.',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+            ok: { type: 'boolean', required: true },
+            path: { type: 'string' },
+            bytes: { type: 'integer' },
+            error: { type: 'string' },
+          },
+        },
+        render: jsonRender,
+      },
+      async execute(args) {
+        return await putFile({
+          path: String(args?.path ?? '').trim(),
+          envId: String(args?.envId ?? '').trim(),
+          sourcePath: String(args?.sourcePath ?? '').trim(),
+          chunks: Array.isArray(args?.chunks) ? args.chunks : undefined,
+          overwrite: args?.overwrite === true,
         })
       },
     }),

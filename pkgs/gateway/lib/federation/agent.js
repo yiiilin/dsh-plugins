@@ -460,11 +460,65 @@ export function createTunnelAgent({ mainUrl, token, harnessPort, daemonPort, har
     })
   }
 
+  /**
+   * Send one JSON request to a peer through the main node.
+   *
+   * An edge has no tunnel to another edge; the main node relays. The frame carries the
+   * request rather than the edge holding a second connection, which is why `toEnvId` is
+   * part of the payload and not of the connection.
+   *
+   * @param toEnvId - peer environment id.
+   * @param method - HTTP method the peer should use.
+   * @param path - peer path, e.g. `/admin/workspaces`.
+   * @param body - optional JSON body.
+   * @returns the peer's parsed answer, or `{ ok: false, error }`.
+   */
+  function readRemote(toEnvId, method, path, body) {
+    return new Promise((resolve) => {
+      if (socket === undefined || socket.readyState !== WebSocket.OPEN) {
+        resolve({ ok: false, error: 'this edge is not connected to the main node' })
+        return
+      }
+      const settled = { done: false, body: '' }
+      const finish = (value) => {
+        if (settled.done) return
+        settled.done = true
+        resolve(value)
+      }
+      const timer = setTimeout(() => finish({ ok: false, error: 'the main node did not answer in time' }), 60_000)
+      const id = newRequestId()
+      const key = id.toString('hex')
+      inFlight.set(key, {
+        onRequestBody(payload) { settled.body += payload.toString('utf8') },
+        onRequestEnd() {
+          clearTimeout(timer)
+          try {
+            finish(JSON.parse(settled.body))
+          } catch {
+            finish({ ok: false, error: 'the peer answered something that is not JSON' })
+          }
+        },
+        close() {
+          clearTimeout(timer)
+          finish({ ok: false, error: 'the tunnel closed before the peer answered' })
+        },
+      })
+      sendOrClose(encodeJsonFrame(FRAME.agentMessage, id, {
+        kind: 'relay',
+        toEnvId,
+        method,
+        path,
+        body: body === undefined ? undefined : JSON.stringify(body),
+      }))
+    })
+  }
+
   return {
     start,
     stop,
     sendAgentMessage,
     listEnvironments,
+    readRemote,
     connected: () => socket?.readyState === WebSocket.OPEN,
   }
 }

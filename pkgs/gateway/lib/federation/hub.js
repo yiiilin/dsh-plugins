@@ -323,6 +323,32 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
   }
 
   /**
+   * Carry one edge's request to another environment.
+   *
+   * @param record - the edge that asked.
+   * @param payload - `{ toEnvId, method, path, body }`.
+   * @returns the peer's parsed answer, or a refusal naming why it could not be sent.
+   */
+  async function relayToPeer(record, payload) {
+    const toEnvId = typeof payload.toEnvId === 'string' ? payload.toEnvId.trim() : ''
+    if (toEnvId === '') return { ok: false, error: 'relay needs a toEnvId' }
+    if (toEnvId === record.envId) return { ok: false, error: `an environment cannot relay to itself (${toEnvId})` }
+    if (toEnvId === SELF_ENV_ID) {
+      // The main node answering for itself would hand an edge its private surface.
+      return { ok: false, error: 'relay targets another environment, not the main node itself' }
+    }
+    if (!connections.has(toEnvId)) return { ok: false, error: `environment "${toEnvId}" is offline` }
+    const method = typeof payload.method === 'string' ? payload.method : 'GET'
+    const path = typeof payload.path === 'string' ? payload.path : ''
+    if (!path.startsWith('/admin/')) {
+      // A relayed request may only address the peer's daemon-owned routes. Letting it
+      // reach the harness would hand one edge a signed-in view of another's UI.
+      return { ok: false, error: 'relay may only address /admin/ paths' }
+    }
+    return await relayOverTunnel(toEnvId, { method, path, body: payload.body })
+  }
+
+  /**
    * Answer one edge's `agentMessage` frame.
    *
    * The sender is `record.envId` — taken from the connection, never from the payload —
@@ -337,6 +363,14 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     let answer
     try {
       const payload = JSON.parse(frame.payload.toString('utf8'))
+      if (payload?.kind === 'relay') {
+        // One edge asking the main node to carry a request to a peer. The main node holds
+        // both tunnels, so it is the only node that can. The answer is the peer's own
+        // JSON body, relayed back on this same request id.
+        answer = await relayToPeer(record, payload)
+        sendAgentAnswer(record, frame, answer)
+        return
+      }
       if (payload?.kind === 'list-environments') {
         // The main node is the only one that knows the environment table, which is why
         // an edge asks rather than reading its own empty registry.
@@ -465,6 +499,57 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     return token === '' ? undefined : verifyToken(token)
   }
 
+  /**
+   * Send one HTTP request into an edge and return its parsed JSON answer.
+   *
+   * @param envId - target environment.
+   * @param request - `{ method, path, body }`; a string body is sent as-is.
+   * @param options.timeoutMs - how long to wait.
+   * @returns the parsed answer, or `{ ok: false, error }`.
+   */
+  function relayOverTunnel(envId, outbound, { timeoutMs = 60_000 } = {}) {
+    // Refuse before waiting: an offline peer would otherwise cost the full timeout for
+    // an answer that can never arrive.
+    if (!connections.has(envId)) {
+      return Promise.resolve({ ok: false, error: `environment "${envId}" is offline` })
+    }
+    return new Promise((resolve) => {
+      const settled = { done: false, body: '' }
+      const finish = (value) => {
+        if (settled.done) return
+        settled.done = true
+        resolve(value)
+      }
+      const timer = setTimeout(() => finish({ ok: false, error: `environment "${envId}" did not answer in time` }), timeoutMs)
+      const sent = request(envId, {
+        method: outbound.method,
+        path: outbound.path,
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+        body: typeof outbound.body === 'string'
+          ? outbound.body
+          : (outbound.body === undefined ? undefined : JSON.stringify(outbound.body)),
+      }, {
+        onBody(chunk) { settled.body += chunk.toString('utf8') },
+        onEnd() {
+          clearTimeout(timer)
+          try {
+            finish(JSON.parse(settled.body === '' ? '{}' : settled.body))
+          } catch {
+            finish({ ok: false, error: `environment "${envId}" answered something that is not JSON` })
+          }
+        },
+        onError(error) {
+          clearTimeout(timer)
+          finish({ ok: false, error: String(error?.message ?? error) })
+        },
+      })
+      if (sent === false) {
+        clearTimeout(timer)
+        finish({ ok: false, error: `environment "${envId}" is offline` })
+      }
+    })
+  }
+
   /** The environment table an edge asks for; empty when this hub was given no source. */
   function listKnownEnvironments() {
     return listEnvironments?.() ?? []
@@ -477,6 +562,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     proxyUpgrade,
     request,
     sendAgentMessage,
+    relayOverTunnel,
     listEnvironments: listKnownEnvironments,
     isOnline,
     ids,

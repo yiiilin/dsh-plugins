@@ -31,6 +31,8 @@ import { createProfileProcesses } from './lib/profile-process.js'
 import { createTunnelAgent } from './lib/federation/agent.js'
 import { createTunnelHub, createTunnelServer, tokenOf, TUNNEL_PATH } from './lib/federation/hub.js'
 import { deliverToSession } from './lib/agent-message.js'
+import { listSessions, listWorkspaces } from './lib/remote-info.js'
+import { abortTransfer, appendTransfer, beginTransfer, commitTransfer, readForTransfer } from './lib/file-transfer.js'
 import { agentMessageTools } from './tools.js'
 import { defaultSkillsRoot, readInventory } from './lib/inventory.js'
 import { installUnit, renderUnit, underSystemd, unitNameFor } from './lib/systemd.js'
@@ -186,10 +188,18 @@ export function apply(ctx, config) {
    * one. dsh-bot reaches it the same way.
    */
   const sessionController = { current: undefined }
+  /** What a peer may read: the workspace table and the session corpus behind it. */
+  const remoteInfo = { workspaces: undefined, sessions: undefined }
   if (typeof ctx.inject === 'function') {
-    ctx.inject(['sessionController'], (injected) => {
+    ctx.inject(['sessionController', 'workspaceRegistry', 'sessionQuery'], (injected) => {
       sessionController.current = injected.sessionController
-      return () => { sessionController.current = undefined }
+      remoteInfo.workspaces = injected.workspaceRegistry
+      remoteInfo.sessions = injected.sessionQuery
+      return () => {
+        sessionController.current = undefined
+        remoteInfo.workspaces = undefined
+        remoteInfo.sessions = undefined
+      }
     })
   }
 
@@ -631,6 +641,7 @@ export function apply(ctx, config) {
     registry,
     hub,
     deliverMessage,
+    remoteInfo,
     config: { ...config, cacheDir },
     profileSelf: selfInfo,
     inventory,
@@ -750,9 +761,116 @@ export function apply(ctx, config) {
     return rows
   }
 
+  /**
+   * One JSON request into a peer's daemon-owned routes, from the main node.
+   *
+   * The main node holds every edge's tunnel; `hub.relayOverTunnel` is the same writer the
+   * agent-message path uses.
+   */
+  const requestOverTunnel = (envId, method, path, body) => hub.relayOverTunnel(envId, { method, path, body })
+
+  /**
+   * Ask one environment for its workspace table.
+   *
+   * Local reads answer from this node's own services; a peer is asked over its tunnel
+   * through the same `/admin` surface every other cross-node call uses.
+   *
+   * @param envId - target environment; empty means this node.
+   * @returns `{ ok, workspaces?, error? }`.
+   */
+  const readWorkspacesOf = async (envId) => {
+    if (envId === '' || envId === 'self') {
+      return listWorkspaces({ workspaces: remoteInfo.workspaces })
+    }
+    if (config.role !== 'main') return await agent.readRemote(envId, 'GET', '/admin/workspaces')
+    return await requestOverTunnel(envId, 'GET', '/admin/workspaces')
+  }
+
+  /**
+   * Ask one environment for the sessions in one workspace.
+   *
+   * @param envId - target environment; empty means this node.
+   * @param workspaceId - workspace to narrow to; empty means every workspace.
+   * @returns `{ ok, sessions?, error? }`.
+   */
+  const readSessionsOf = async (envId, workspaceId) => {
+    const suffix = workspaceId === '' ? '' : `?workspaceId=${encodeURIComponent(workspaceId)}`
+    if (envId === '' || envId === 'self') {
+      return await listSessions({ workspaces: remoteInfo.workspaces, sessions: remoteInfo.sessions }, workspaceId)
+    }
+    if (config.role !== 'main') return await agent.readRemote(envId, 'GET', `/admin/remote-sessions${suffix}`)
+    return await requestOverTunnel(envId, 'GET', `/admin/remote-sessions${suffix}`)
+  }
+
+  /**
+   * Copy one file to an environment.
+   *
+   * Local writes go straight to disk; a peer receives the chunks on its own admin route
+   * and writes them there. The 32 MiB policy cap is checked on both sides.
+   *
+   * @param request - `{ path, envId, sourcePath, chunks, overwrite }`.
+   * @returns `{ ok, path?, bytes?, error? }`.
+   */
+  const putFile = async (request) => {
+    const target = String(request.envId ?? '').trim()
+    let chunks = request.chunks
+    if (chunks === undefined) {
+      if (request.sourcePath === '') {
+        return { ok: false, error: 'give sourcePath to read here, or chunks as the content' }
+      }
+      const read = await readForTransfer(request.sourcePath)
+      if (read.ok !== true) return { ok: false, error: read.error }
+      chunks = read.chunks
+    }
+    if (!Array.isArray(chunks) || chunks.length === 0) return { ok: false, error: 'nothing to send' }
+
+    // A file can exceed one frame, so it goes over as pieces: begin, one chunk per call,
+    // then commit. Each call is a separate tunnel round trip, which is what keeps any
+    // single payload well under the frame cap.
+    const send = async (path, body) => {
+      if (target === '' || target === 'self') {
+        // Local: the same staged protocol, so both paths behave identically.
+        const began = await beginTransfer({ path: body.path, overwrite: body.overwrite, totalChunks: body.totalChunks })
+        if (began.ok !== true) return began
+        for (const piece of body.chunks) {
+          const step = await appendTransfer(began.transferId, piece)
+          if (step.ok !== true) return step
+        }
+        return await commitTransfer(began.transferId)
+      }
+      const call = async (payload) => {
+        if (config.role !== 'main') return await agent.readRemote(target, 'POST', '/admin/file', payload)
+        return await requestOverTunnel(target, 'POST', '/admin/file', payload)
+      }
+      const began = await call({ action: 'begin', path: body.path, overwrite: body.overwrite, totalChunks: body.totalChunks })
+      if (began.ok !== true || began.transferId === undefined) return began
+      for (const piece of body.chunks) {
+        const step = await call({ action: 'chunk', transferId: began.transferId, data: piece })
+        if (step.ok !== true) {
+          await call({ action: 'abort', transferId: began.transferId })
+          return step
+        }
+      }
+      return await call({ action: 'commit', transferId: began.transferId })
+    }
+
+    return await send(request.path, {
+      path: request.path,
+      chunks,
+      totalChunks: chunks.length,
+      overwrite: request.overwrite === true,
+    })
+  }
+
   if (typeof ctx.inject === 'function') {
     ctx.inject(['tools'], (toolCtx) => {
-      for (const definition of agentMessageTools({ listEnvironments: listReachable, send: sendAgentMessage })) {
+      for (const definition of agentMessageTools({
+        listEnvironments: listReachable,
+        send: sendAgentMessage,
+        listWorkspaces: readWorkspacesOf,
+        listSessions: readSessionsOf,
+        putFile,
+      })) {
         toolCtx.tools.register(definition)
       }
     })

@@ -18,6 +18,13 @@ import { createTunnelHub, SELF_ENV_ID, TUNNEL_PATH, tokenOf } from '../lib/feder
 import { composeBody, deliverToSession, MAX_MESSAGE_CHARS, PREFIX, validateMessageRequest } from '../lib/agent-message.js'
 import { agentMessageTools } from '../tools.js'
 
+/** Stand-ins for the read/write callbacks a deployment supplies. */
+const inert = {
+  listWorkspaces: async () => ({ ok: true, workspaces: [] }),
+  listSessions: async () => ({ ok: true, sessions: [] }),
+  putFile: async () => ({ ok: true }),
+}
+
 const quiet = { info() {}, warn() {} }
 const SESSION = '99144949-9e4e-4d5b-b002-17abc33fa325'
 
@@ -231,6 +238,7 @@ test('agent_send takes its sender from the execution, not from its arguments', a
   const tools = agentMessageTools({
     listEnvironments: () => [{ envId: 'self', label: 'here', online: true }],
     send: async (message) => { sent.push(message); return { ok: true, accepted: true } },
+    ...inert,
   })
   const send = tools.find((tool) => tool.name === 'agent_send')
   const result = await send.execute(
@@ -246,6 +254,7 @@ test('agent_send rejects a malformed id before anything is sent', async () => {
   const tools = agentMessageTools({
     listEnvironments: () => [],
     send: async () => { throw new Error('must not be called') },
+    ...inert,
   })
   const send = tools.find((tool) => tool.name === 'agent_send')
   const result = await send.execute({ sessionId: 'nope', text: 'x' }, { agent: { id: 's' } })
@@ -255,7 +264,7 @@ test('agent_send rejects a malformed id before anything is sent', async () => {
 
 test('agent_list_envs reports the reachable environments', async () => {
   const rows = [{ envId: 'self', label: 'this node', online: true }, { envId: 'edge1', label: '6.13', online: false }]
-  const tools = agentMessageTools({ listEnvironments: () => rows, send: async () => ({ ok: true }) })
+  const tools = agentMessageTools({ listEnvironments: () => rows, send: async () => ({ ok: true }), ...inert })
   const list = tools.find((tool) => tool.name === 'agent_list_envs')
   assert.deepEqual(await list.execute({}, {}), rows)
 })
@@ -323,5 +332,79 @@ test('an edge asks the main node for the environment list', async () => {
   })
   assert.deepEqual(hub.listEnvironments().map((r) => r.envId), ['self', 'edgea', 'edgeb'])
   assert.equal(asked.length, 1)
+  hub.close()
+})
+
+// --- the whole tool surface ---------------------------------------------------
+
+test('the five tools are registered with the arguments each one needs', () => {
+  const tools = agentMessageTools({
+    listEnvironments: () => [],
+    send: async () => ({ ok: true }),
+    ...inert,
+  })
+  const names = tools.map((tool) => tool.name).sort()
+  assert.deepEqual(names, ['agent_list_envs', 'agent_put_file', 'agent_send', 'agent_sessions', 'agent_workspaces'])
+
+  // `defineTool` compiles the declaration into JSON Schema, so required fields land in
+  // the top-level list rather than on each property.
+  const put = tools.find((tool) => tool.name === 'agent_put_file')
+  assert.deepEqual(put.parameters.required, ['path'])
+  // Content comes from sourcePath or chunks, so neither may be required on its own.
+  assert.ok(!put.parameters.required.includes('sourcePath'))
+  assert.ok(!put.parameters.required.includes('chunks'))
+
+  const sessions = tools.find((tool) => tool.name === 'agent_sessions')
+  assert.equal(sessions.parameters.required, undefined, 'both filters are optional')
+})
+
+test('agent_workspaces and agent_sessions forward the envId they were given', async () => {
+  const asked = []
+  const tools = agentMessageTools({
+    listEnvironments: () => [],
+    send: async () => ({ ok: true }),
+    ...inert,
+    listWorkspaces: async (envId) => { asked.push(['workspaces', envId]); return { ok: true, workspaces: [] } },
+    listSessions: async (envId, workspaceId) => { asked.push(['sessions', envId, workspaceId]); return { ok: true, sessions: [] } },
+    putFile: async () => ({ ok: true }),
+  })
+  await tools.find((t) => t.name === 'agent_workspaces').execute({ envId: 'edgeb' })
+  await tools.find((t) => t.name === 'agent_sessions').execute({ envId: 'edgeb', workspaceId: 'ws-1' })
+  assert.deepEqual(asked, [['workspaces', 'edgeb'], ['sessions', 'edgeb', 'ws-1']])
+})
+
+test('agent_put_file will not read a truthy string as consent to overwrite', async () => {
+  const seen = []
+  const tools = agentMessageTools({
+    listEnvironments: () => [],
+    send: async () => ({ ok: true }),
+    ...inert,
+    putFile: async (request) => { seen.push(request); return { ok: true } },
+  })
+  const put = tools.find((t) => t.name === 'agent_put_file')
+  // The schema rejects it before the tool runs — the stronger guarantee, since a model
+  // cannot talk its way past it.
+  await assert.rejects(() => put.execute({ path: '/tmp/x', sourcePath: '/h', overwrite: 'yes' }))
+  assert.equal(seen.length, 0, 'nothing may reach the writer')
+  // Omission is the normal case and must arrive as a real boolean.
+  await put.execute({ path: '/tmp/x', sourcePath: '/h' })
+  assert.equal(seen[0].overwrite, false)
+  await put.execute({ path: '/tmp/x', sourcePath: '/h', overwrite: true })
+  assert.equal(seen[1].overwrite, true)
+})
+
+// --- relaying a peer request --------------------------------------------------
+
+test('a relay to an unknown peer is refused with a reason', async () => {
+  const { createTunnelHub: makeHub } = await import('../lib/federation/hub.js')
+  const hub = makeHub({
+    logger: quiet,
+    verifyToken: () => undefined,
+    deliver: async () => ({ ok: true }),
+    forward: async () => ({ ok: true }),
+  })
+  const answer = await hub.relayOverTunnel('nobody', { method: 'GET', path: '/admin/workspaces' })
+  assert.equal(answer.ok, false)
+  assert.match(answer.error, /offline/u)
   hub.close()
 })
