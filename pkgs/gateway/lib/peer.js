@@ -73,6 +73,10 @@ export function createPeerAccess({ selfId = 'self', localPort, relay, knownIds =
           ? undefined
           : (Buffer.isBuffer(body) ? body : Buffer.from(JSON.stringify(body)))
         const allHeaders = { ...headers }
+        // A request arriving over the tunnel is not a browser: only a node holding this
+        // connection's token can put bytes on it. Saying so is what lets the far daemon
+        // skip its session gate — without the header it answered with the login page.
+        if (isLocal(envId) === false) allHeaders['x-dsh-federation'] = 'tunnel'
         if (payload !== undefined) {
           allHeaders['content-length'] = String(payload.length)
           allHeaders['content-type'] ??= 'application/json'

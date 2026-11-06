@@ -66,6 +66,78 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
   const routes = new Map()
 
   /**
+   * streamId(hex) -> the two ends this stream joins.
+   *
+   * One table for every stream the hub carries, whatever the direction or how many hops
+   * away the far end is. `routes`, `upstreamStreams` and `relayed` were three tables for
+   * the same fact, and a stream crossing a relay node had to be right in all of them —
+   * which is why request paths kept completing while answer paths silently broke.
+   */
+  const flows = new Map()
+
+  /** Reader for bytes the hub hands to itself; the local end of a stream. */
+  const localReader = new FrameReader()
+
+  /**
+   * Record a relayed stream between the link it arrived on and the link it leaves by.
+   *
+   * The arriving side is an agent link, which has `send` but is not a connection record.
+   * Wrapping it keeps one shape for `flows` instead of a union the forwarding loop has to
+   * probe at every frame.
+   */
+  function holdStream(key, arrivalLink, departureRecord) {
+    logger.info(`federation: hold ${key.slice(0, 8)} arrival=${arrivalLink.envId} departure=${departureRecord.envId}`)
+    const arrival = {
+      envId: arrivalLink.envId,
+      socket: { send: (bytes) => arrivalLink.send(bytes) },
+    }
+    flows.set(key, { fromRecord: arrival, toRecord: departureRecord })
+  }
+
+  /**
+   * Put one frame on a connection.
+   *
+   * The frame arrives decoded — the reader returns `{ type, id, payload }` — so it is
+   * encoded again for the next hop.
+   */
+  function forwardFrame(record, frame) {
+    try {
+      record.socket.send(encodeFrame(frame.type, frame.id, frame.payload))
+      return true
+    } catch (error) {
+      logger.warn(`federation: could not forward a frame to ${record.envId}: ${error.message}`)
+      return false
+    }
+  }
+
+  /**
+   * Feed bytes that were "sent" to the local end of a stream.
+   *
+   * The local end has no socket, so `forwardFrame` cannot put bytes on a wire for it.
+   * Reusing the reader keeps one frame format for both ends instead of a second
+   * in-process shape that could drift from the real one.
+   */
+  function receiveLocalAnswerBytes(bytes, key) {
+    let frames
+    try {
+      frames = localReader.push(bytes)
+    } catch (error) {
+      logger.warn(`federation: a local stream received something unreadable: ${error.message}`)
+      return
+    }
+    for (const frame of frames) receiveLocalAnswer(frame, key)
+  }
+
+  /**
+   * streamId(hex) -> the upstream link a relayed stream arrived on.
+   *
+   * A relayed stream's answer comes back on this node's own downstream socket, so it has
+   * to be returned up the link the request originally arrived on.
+   */
+  const upstreamStreams = new Map()
+
+
+  /**
    * What this node's children have reported, folded together.
    *
    * A parent sees only its own tunnels; without this it believes a cascade is exactly as
@@ -73,9 +145,6 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    * exists. Children report what they know and the authority merges it.
    */
   const reported = createTopologyView({})
-
-  /** Everything this node knows, for reporting uphill; children's reports fold in here. */
-  const ownView = createTopologyView({})
 
   /** Monotonic per sender, so a receiver can discard a late snapshot. */
   let topologySeq = 0
@@ -298,17 +367,44 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
   /** Find the envId a stream should go to, following the open frame's target. */
   function resolveTarget(record, payload) {
     const toEnvId = typeof payload?.toEnvId === 'string' ? payload.toEnvId.trim() : ''
-    if (toEnvId === '' || toEnvId === SELF_ENV_ID) return { local: true }
+    // `self` is a caller's shorthand for "the node I am talking to", meaningful only when
+    // the caller is the origin. An intermediate node sees a real destination here, and
+    // treating `self` as local there delivered every relayed stream to the middle of the
+    // chain instead of its destination.
+    const origin = record.envId === SELF_ENV_ID
+    if (toEnvId === '') return { local: true }
+    if (toEnvId === SELF_ENV_ID) {
+      return origin ? { local: true } : { error: 'a relayed stream must name its destination' }
+    }
     if (toEnvId === record.envId) {
-      return { error: `an environment cannot stream to itself (${toEnvId})` }
+      return origin ? { next: toEnvId } : { local: true }
     }
     if (connections.has(toEnvId)) return { next: toEnvId }
+
+    // Not a direct peer: it may still be reachable through one. A node that both accepts
+    // and dials is the middle of a chain, and without this it answered "unreachable" for
+    // anything more than one hop away — which is every node below its own children.
+    const route = reported.routeTo(toEnvId)
+    if (route === undefined) {
+      return { error: `environment "${toEnvId}" is unreachable` }
+    }
+    if (route.done === true) return { local: true }
+    // `next` names the peer to hand the stream to. An empty value means a direct tunnel,
+    // which the check above already covered.
+    if (route.next !== '' && connections.has(route.next)) return { next: route.next }
+    // No route is better than a guessed one. An earlier version picked any connected peer
+    // here, "whichever reported it", and that peer was frequently the one the request had
+    // just come from — so the stream ping-ponged between two nodes instead of travelling
+    // to its destination. Saying so is what lets the caller report a real failure.
     return { error: `environment "${toEnvId}" is unreachable` }
   }
 
   /** Handle one frame from an edge. */
   function dispatch(record, frame) {
     const key = frame.id.toString('hex')
+    if (frame.type !== TOPOLOGY_FRAME) {
+      logger.info(`federation: ${record.envId} -> type ${frame.type} ${key.slice(0, 8)} local=${localStreams.has(key)} route=${routes.has(key)} up=${upstreamStreams.has(key)}`) 
+    }
 
     if (frame.type === TOPOLOGY_FRAME) {
       // A child reporting what it knows. Merged into the authority's view so a node deeper
@@ -333,6 +429,14 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     }
 
     if (frame.type === FRAME.open) {
+      // A stream already in flight is continued, not re-routed: resolving it again from
+      // the topology would send it back the way it came, which is a ping-pong rather than
+      // a relay.
+      const known = flows.get(key)
+      if (known !== undefined) {
+        forwardFrame(known.fromRecord === record ? known.toRecord : known.fromRecord, frame)
+        return
+      }
       let payload
       try {
         payload = JSON.parse(frame.payload.toString('utf8'))
@@ -351,6 +455,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
         return
       }
       const target = resolveTarget(record, payload)
+      logger.info(`federation: open from ${record.envId} for "${payload?.toEnvId}" -> ${JSON.stringify(target)}`)
       if (target.error !== undefined) {
         sendStreamRefusal(record, frame.id, target.error)
         return
@@ -361,17 +466,33 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
         return
       }
       const next = connections.get(target.next)
-      routes.set(key, { from: record.envId, to: target.next })
       record.streams.add(key)
       next.streams.add(key)
-      relay(record, next, key, frame)
+      // Both ends recorded together: the whole state a relay hop needs.
+      flows.set(key, { fromRecord: record, toRecord: next })
+      forwardFrame(next, frame)
       return
     }
 
-    // A stream this node opened to *that* edge: the answer comes back here, because the
-    // far end is the one that answered.
-    if (localStreams.has(key) && routes.get(key)?.to === record.envId) {
+    // One table, one rule. A stream records the two ends it joins: the link the request
+    // arrived on and the link it was sent out on. A frame is always destined for the end
+    // it did *not* arrive on, so direction follows from the arrival rather than from a
+    // guess about roles — which is what produced a loop instead of an answer.
+    // A stream this node itself opened: the answer belongs to the local caller, whatever
+    // route carried it. Checked before the relay table because this node's own streams are
+    // in both, and the local end is the one that must receive.
+    if (localStreams.has(key)) {
       receiveLocalAnswer(frame, key)
+      return
+    }
+
+    const flow = flows.get(key)
+    if (flow !== undefined) {
+      const out = flow.fromRecord === record ? flow.toRecord : flow.fromRecord
+      logger.info(`federation: flow ${key.slice(0, 8)} on ${record.envId} type ${frame.type} -> ${out?.envId ?? '?'} (from=${flow.fromRecord?.envId} to=${flow.toRecord?.envId})`)
+      if (out === undefined) return
+      forwardFrame(out, frame)
+      if (frame.type === FRAME.end) flows.delete(key)
       return
     }
 
@@ -396,6 +517,68 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       routes.delete(key)
       record.streams.delete(key)
       peer.streams.delete(key)
+    }
+  }
+
+  /**
+   * Decide what to do with a stream that arrived from an upstream.
+   *
+   * The agent half receives it, but only the hub knows the routing table. `forward` means
+   * the destination is elsewhere in the federation and the hub should relay; otherwise the
+   * agent attaches it to a local port.
+   *
+   * @param toEnvId - the destination named in the open frame.
+   * @param owner - the link the stream arrived on.
+   * @returns `{ forward: boolean, handle? }`.
+   */
+  function routeArrived(toEnvId, owner) {
+    logger.info(`federation: arrived stream for "${toEnvId}" from ${owner?.url ?? 'unknown'}`)
+    if (typeof toEnvId !== 'string' || toEnvId === '') return { forward: false }
+    if (toEnvId === SELF_ENV_ID || toEnvId === selfName()) return { forward: false }
+    const resolved = resolveTarget({ envId: selfName() }, { toEnvId })
+    if (resolved.error !== undefined) return { forward: false }
+    if (resolved.local === true) return { forward: false }
+    const next = connections.get(resolved.next)
+    if (next === undefined) return { forward: false }
+    const key = () => undefined
+    void key
+
+    // Every frame of the stream is carried on, in order, with the link it came from
+    // remembered so the answer goes back the same way.
+    logger.info(`federation: forwarding "${toEnvId}" via ${resolved.next}`)
+    // The stream is recorded as a flow between the link it arrived on and the link it
+    // leaves by. Every frame is then forwarded to the far end, and direction follows from
+    // arrival — there is no second mechanism to disagree with this one.
+    const handle = (frame, fromLink) => {
+      const id = frame.id.toString('hex')
+      if (frame.type === FRAME.open) {
+        holdStream(id, fromLink, next)
+      }
+      const out = flows.get(id)
+      if (out === undefined) return
+      // `handle` only ever sees frames arriving from the upstream, so the answer always
+      // goes the other way. Comparing identities here was wrong: the arrival end is a
+      // wrapper, not the link object, so the comparison never matched and every frame was
+      // sent back the way it came — the ping-pong that made a relayed request answer with
+      // its own bytes.
+      forwardFrame(out.toRecord, frame)
+      if (frame.type === FRAME.end) flows.delete(id)
+    }
+    return { forward: true, handle }
+  }
+
+  /**
+   * Send one frame to a connection, re-encoded.
+   *
+   * The frame arrives decoded — the reader hands back `{ type, id, payload }` — so it has
+   * to be encoded again for the next hop. Sending the object itself fails inside `ws`
+   * with a type error, which is what a first version did.
+   */
+  function relayToLink(record, frame) {
+    try {
+      record.socket.send(encodeFrame(frame.type, frame.id, frame.payload))
+    } catch (error) {
+      logger.warn(`federation: could not forward a frame to ${record.envId}: ${error.message}`)
     }
   }
 
@@ -517,14 +700,29 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    * @returns `{ ok: true, send, end }` or `{ ok: false, error }`.
    */
   function openStream(toEnvId, { sink, onEnd, onError, port, timeoutMs = 300_000 } = {}) {
-    if (!connections.has(toEnvId)) {
-      return { ok: false, error: `environment "${toEnvId}" is offline` }
+    // The direct peer, or whoever this node can reach the destination through.
+    const resolved = resolveTarget({ envId: selfName() }, { toEnvId })
+    logger.info(`federation: openStream to "${toEnvId}" resolved ${JSON.stringify(resolved)}`)
+    if (resolved.error !== undefined) {
+      return { ok: false, error: resolved.error }
     }
-    const record = connections.get(toEnvId)
+    const nextId = resolved.local === true ? toEnvId : resolved.next
+    if (!connections.has(nextId)) {
+      return { ok: false, error: `environment "${toEnvId}" is unreachable` }
+    }
+    const record = connections.get(nextId)
     const id = newRequestId()
     const key = id.toString('hex')
-    routes.set(key, { from: SELF_ENV_ID, to: toEnvId })
     record.streams.add(key)
+    // The near end of this stream is this process, not a socket: it has a `send` so the
+    // flow loop can treat both ends the same way.
+    // `forwardFrame` sends bytes; for the local end those bytes are handed straight to
+    // the answering callback, so both ends speak the same interface without a decode step.
+    const local = {
+      envId: selfName(),
+      socket: { send: (bytes) => receiveLocalAnswerBytes(bytes, key) },
+    }
+    flows.set(key, { fromRecord: local, toRecord: record })
     localStreams.set(key, {
       from: SELF_ENV_ID,
       onData: sink,
@@ -532,12 +730,14 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       onError,
       timer: setTimeout(() => {
         localStreams.delete(key)
-        routes.delete(key)
+        flows.delete(key)
         onError?.(`environment "${toEnvId}" did not answer in time`)
       }, timeoutMs),
     })
     // Tell the far side where to attach: a port names a local listener there, and its
     // absence means that node's daemon.
+    // The frame names the *destination*, not the next hop: an intermediate node resolves
+    // its own next hop from the same field, so a chain relays without extra state.
     record.socket.send(encodeJsonFrame(FRAME.open, id, port === undefined ? { toEnvId } : { toEnvId, port }))
     return {
       ok: true,
@@ -555,6 +755,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
   /** Answer a data/end frame for a stream this node opened itself. */
   function receiveLocalAnswer(frame, key) {
     const entry = localStreams.get(key)
+    logger.info(`federation: local answer ${key.slice(0, 8)} type ${frame.type}: ${entry === undefined ? 'no local stream' : 'delivered'}`)
     if (entry === undefined) return
     if (frame.type === FRAME.data) {
       entry.onData?.(frame.payload)
@@ -644,8 +845,10 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     setUplinkNotifier(handler) {
       notifyUplinks = handler
     },
+    /** Whether a stream that arrived here is for this node or beyond it. */
+    routeArrived,
     /** Everything this node has heard, children included. */
-    ownView,
+    ownView: reported,
     /** Called by `dispatch` for a data/end frame on a stream this node opened. */
     receiveLocalAnswer,
     /**

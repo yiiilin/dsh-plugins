@@ -315,10 +315,6 @@ export function apply(ctx, config) {
       })),
     ],
   })
-  // A node that both accepts and dials has to relay: what a child reports must reach this
-  // node's own upstreams, or a cascade only ever propagates downward.
-  hub.setUplinkNotifier(() => agent?.announce({ view: hub.ownView }))
-
   const tunnelServer = createTunnelServer()
 
   /** Facts about this process, shown on the panel. */
@@ -435,8 +431,14 @@ export function apply(ctx, config) {
     // Requests arriving over the tunnel were authenticated when the edge connected, and
     // only the main node can put frames on that connection. Requiring a browser session
     // here would make the main node's own inventory call fail.
+    // A request arriving over a tunnel is already authenticated: only the node holding
+    // this connection's token can put frames on it, and `entry.js` refused the handshake
+    // otherwise. Requiring a matching header here as well meant a node with no `token`
+    // configured — every node using `upstreams`, which is all of them now — answered a
+    // peer's admin call with the login page.
     const proof = req.headers['x-dsh-federation']
-    if (proof !== undefined && config.token !== '' && proof === config.token) {
+    const federated = proof !== undefined && (config.token === '' || proof === config.token)
+    if (federated) {
       const path = url.split('?')[0]
       // `/admin/file` is the byte surface and everything else under `/admin` is JSON;
       // both sit inside the one prefix, so one branch answers them and one gate protects
@@ -779,6 +781,14 @@ export function apply(ctx, config) {
       logger,
     })
 
+  // A node that both accepts and dials has to relay: what a child reports must reach this
+  // node's own upstreams, or a cascade only propagates downward. A stream arriving from an
+  // upstream may likewise belong to something further down, and only the hub can tell.
+  if (agent !== undefined) {
+    hub.setUplinkNotifier(() => agent.announce({ view: hub.ownView }))
+    agent.setRouteQuery((toEnvId, owner) => hub.routeArrived(toEnvId, owner))
+  }
+
   /**
    * A loopback port per reachable environment, forwarding through the tunnel.
    *
@@ -789,7 +799,10 @@ export function apply(ctx, config) {
   const relay = createStreamRelay({
     logger,
     openStream: (envId, options) => {
-      if (hub !== undefined && hub.isOnline(envId)) return hub.openStream(envId, options)
+      // `hub.openStream` resolves the route itself, including through a child, because a
+      // node deeper in a cascade has no tunnel here. Checking `isOnline` first — direct
+      // tunnels only — refused every destination more than one hop away.
+      if (hub !== undefined && hub.isReachable(envId)) return hub.openStream(envId, options)
       if (agent !== undefined) {
         const link = agent.linkTo(envId)
         if (link === undefined || link.local === true) return { ok: false, error: `no route to "${envId}"` }

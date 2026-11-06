@@ -52,6 +52,9 @@ function createUpstream({ url, token, selfName, logger, onTopology, onFrame, onC
 
   const clock = createClockSync()
 
+  /** The environment this link reaches, once the topology says so. */
+  let peerEnvId = ''
+
   function target() {
     const base = url.replace(/\/+$/u, '')
     const scheme = base.startsWith('https:') ? 'wss:' : 'ws:'
@@ -145,6 +148,20 @@ function createUpstream({ url, token, selfName, logger, onTopology, onFrame, onC
   /** The handle `onFrame` receives, so a stream is answered on the link it came from. */
   const api = {
     url,
+    /**
+     * The environment on the other end of this link.
+     *
+     * Learned from the topology push, because a leaf knows only its token. The hub needs
+     * it to name the peer a relayed stream came from; a route keyed by URL found nothing
+     * when the answer arrived.
+     */
+    get envId() {
+      return peerEnvId
+    },
+    /** Remember which environment this link reaches. */
+    adoptPeer(envId) {
+      peerEnvId = envId
+    },
     clock,
     start() {
       stopped = false
@@ -258,6 +275,16 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, log
   /** streamId(hex) -> the local socket a stream aimed at this node is delivered to. */
   const localStreams = new Map()
 
+  /** streamId(hex) -> the hub handler forwarding a stream aimed past this node. */
+  const relayed = new Map()
+
+  /**
+   * Asked before a stream is attached locally: is it for this node, or beyond it?
+   *
+   * Supplied by the gateway, which owns the routing table.
+   */
+  let routeQuery
+
   const topology = createTopologyView({})
   const claimedName = selfName === '' ? (process.env.HOSTNAME ?? '') : selfName
 
@@ -267,6 +294,9 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, log
     selfName: claimedName,
     logger,
     onTopology(table, owner) {
+      if (owner !== undefined && typeof table?.from === 'string' && table.from !== '') {
+        owner.adoptPeer(table.from)
+      }
       // The upstream says which environment this edge is; a leaf knows only its token.
       if (typeof table?.selfEnvId === 'string' && table.selfEnvId !== '') {
         topology.setSelfId(table.selfEnvId)
@@ -288,14 +318,40 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, log
           logger.warn(`federation: an upstream opened a stream with invalid JSON: ${error.message}`)
           return
         }
+        // A node that both accepts and dials is the middle of a chain. An `open` arriving
+        // here may be for this node or beyond it, and the hub is the half that knows:
+        // without asking, every relayed stream was delivered to the middle of the chain.
+        const verdict = routeQuery?.(payload?.toEnvId, owner)
+        if (verdict?.forward === true) {
+          if (verdict.handle === undefined) {
+            logger.warn(`federation: no route for a stream to "${payload?.toEnvId}"`)
+            return
+          }
+          relayed.set(frame.id.toString('hex'), verdict.handle)
+          verdict.handle(frame, owner)
+          return
+        }
         attachLocalStream(frame.id, payload, owner)
         return
       }
       if (frame.type === FRAME.data) {
+        const relay = relayed.get(frame.id.toString('hex'))
+        if (relay !== undefined) {
+          relay(frame, owner)
+          return
+        }
         writeLocal(frame.id, frame.payload)
         return
       }
-      if (frame.type === FRAME.end) endLocal(frame.id)
+      if (frame.type === FRAME.end) {
+        const relay = relayed.get(frame.id.toString('hex'))
+        if (relay !== undefined) {
+          relayed.delete(frame.id.toString('hex'))
+          relay(frame, owner)
+          return
+        }
+        endLocal(frame.id)
+      }
     },
     onLinkUp() {
       // A fresh link needs the current view, and the parent must hear about this subtree
@@ -351,6 +407,7 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, log
     // be first: with several upstreams, replying on the wrong one would deliver the
     // answer to a node that never asked.
     client.on('data', (piece) => {
+      logger.info(`federation: local stream ${key.slice(0, 8)} answered ${piece.length} byte(s)`)
       owner.send(encodeFrame(FRAME.data, id, piece))
     })
     client.on('end', () => {
@@ -432,6 +489,14 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, log
     },
     writeLocal,
     endLocal,
+    /**
+     * How this node decides whether an arrived stream is for it or beyond it.
+     *
+     * @param handler - `(toEnvId, owner) => { forward: boolean, handle? }`.
+     */
+    setRouteQuery(handler) {
+      routeQuery = handler
+    },
     /** How many locally-attached streams are open; for tests and shutdown checks. */
     get localStreamCount() {
       return localStreams.size

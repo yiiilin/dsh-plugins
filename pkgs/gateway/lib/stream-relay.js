@@ -52,14 +52,19 @@ export function createStreamRelay({ logger, openStream, sinkPort }) {
   function listenFor(envId) {
     return new Promise((resolve) => {
       const server = createServer((client) => {
+        logger.info(`federation: relay accepted a connection for "${envId}"`)
         clients.add(client)
         client.on('close', () => clients.delete(client))
+        logger.info(`federation: relay opening a stream for "${envId}"`)
         const opened = openStream(envId, {
           sink(piece) {
             // The far end's answer comes back as bytes; hand them to the local caller.
+            logger.info(`federation: relay to "${envId}" got ${piece.length} byte(s), client destroyed=${client.destroyed} writable=${client.writable}`)
+            logger.info(`federation: relay bytes: ${JSON.stringify(piece.subarray(0, 60).toString('latin1'))}`)
             if (!client.destroyed) client.write(piece)
           },
           onEnd() {
+            logger.info(`federation: relay to "${envId}" finished`)
             client.end()
           },
           onError(error) {
@@ -74,10 +79,23 @@ export function createStreamRelay({ logger, openStream, sinkPort }) {
         }
         // The request travels the other way, as bytes.
         client.on('data', (piece) => opened.send(piece))
-        client.on('end', () => opened.end())
+        // Half-close only. The local caller finishing its request says nothing about the
+        // answer: an HTTP client sends the whole request and then waits, so closing the
+        // stream here ended it before a single response byte could come back. That is why
+        // every relayed request timed out while the far side answered correctly.
+        let requestDone = false
+        const finishRequest = () => {
+          if (requestDone) return
+          requestDone = true
+          opened.end()
+        }
+        client.on('end', finishRequest)
         client.on('error', () => opened.end())
-        // A caller that gives up must not leave the far side working on a dead stream.
-        client.on('close', () => opened.end())
+        // A caller that goes away entirely must not leave the far side working for nobody.
+        client.on('close', () => {
+          clients.delete(client)
+          if (!requestDone) opened.end()
+        })
       })
       // Settled at most once, whichever comes first. A `listen` that neither succeeds nor
       // errors would otherwise leave every caller waiting forever — and a promise that

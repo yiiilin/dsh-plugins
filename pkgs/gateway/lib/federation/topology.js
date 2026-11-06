@@ -154,7 +154,16 @@ export function createTopologyView({ selfId = '' } = {}) {
       const hops = Number(row.hops ?? fromHops) + 1
       const held = edgeRoutes.get(row.to)
       if (held !== undefined && held.hops <= hops) continue
-      edgeRoutes.set(row.to, { to: row.to, via: row.via ?? source, hops })
+      // Two ways a route arrives, and they answer different questions.
+      //
+      // - Built locally, a row names its own `via`: the operator states the next hop.
+      // - Reported by a peer, the row's `via` describes *that* node's next hop and is
+      //   meaningless here; what matters is which of this node's links the report came on.
+      //
+      // Getting this backwards sent relayed streams to the wrong peer, so the distinction
+      // is explicit rather than a null-coalescing chain.
+      const via = incoming.from === undefined || incoming.from === '' ? (row.via ?? '') : (source ?? '')
+      edgeRoutes.set(row.to, { to: row.to, via, hops })
       changed = true
     }
     // This node is always reachable from itself, whatever anyone else says.
@@ -229,6 +238,10 @@ export function createTopologyView({ selfId = '' } = {}) {
         .filter((row) => row.envId !== exclude)
         .map(({ hops, ...row }) => row)
       if (nodes.length === 0) return undefined
+      // `via` is rewritten to the neighbour the *receiver* should hand the stream to, so
+      // a node one hop further out can build a route from a table it did not observe.
+      // Blanking it here left every receiver unable to answer "which peer do I use for
+      // that destination", which is why a cascade could be described but not routed.
       const edges = [...edgeRoutes.values()]
         .filter((row) => row.to !== exclude && row.via !== exclude)
         .map((row) => ({ to: row.to, via: '', hops: row.hops }))
