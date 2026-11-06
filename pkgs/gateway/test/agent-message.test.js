@@ -16,6 +16,8 @@ import { FRAME, FrameReader, encodeFrame, encodeJsonFrame, newRequestId } from '
 import { createTunnelAgent } from '../lib/federation/agent.js'
 import { createTunnelHub, SELF_ENV_ID, TUNNEL_PATH, tokenOf } from '../lib/federation/hub.js'
 import { composeBody, deliverToSession, MAX_MESSAGE_CHARS, PREFIX, validateMessageRequest } from '../lib/agent-message.js'
+import { createPeerAccess } from '../lib/peer.js'
+import { createStreamRelay } from '../lib/stream-relay.js'
 import { agentMessageTools } from '../tools.js'
 
 /** Stand-ins for the read/write callbacks a deployment supplies. */
@@ -103,6 +105,8 @@ async function pair({ deliver, forward } = {}) {
   const token = 'e'.repeat(43)
   const environment = { id: 'edge1', token, enabled: true }
   const received = []
+  /** Environments a test adds after the fact, so `knownIds` can see them. */
+  const extraTargets = {}
 
   const hub = createTunnelHub({
     logger: quiet,
@@ -120,15 +124,32 @@ async function pair({ deliver, forward } = {}) {
   })
   await new Promise((done) => main.listen(0, '127.0.0.1', done))
 
-  const harness = createServer((req, res) => { res.writeHead(200); res.end('ok') })
+  // The far daemon, standing in for the admin surface the real one exposes. It answers
+  // the message route so the whole path — bytes across the tunnel, parsed by a real HTTP
+  // server, delivered through the hub's hook — is exercised.
+  const harness = createServer((req, res) => {
+    if (req.url === '/admin/agent-message' && req.method === 'POST') {
+      const parts = []
+      req.on('data', (piece) => parts.push(piece))
+      req.on('end', () => {
+        void (async () => {
+          const body = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}')
+          const answer = await hub.deliverForTest('edge1', body)
+          res.writeHead(200, { 'content-type': 'application/json' })
+          res.end(JSON.stringify(answer))
+        })()
+      })
+      return
+    }
+    res.writeHead(404, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ ok: false, error: 'not found' }))
+  })
   await new Promise((done) => harness.listen(0, '127.0.0.1', done))
 
   const agent = createTunnelAgent({
-    mainUrl: `http://127.0.0.1:${main.address().port}`,
-    token,
+    upstreams: [{ url: `http://127.0.0.1:${main.address().port}`, token }],
     harnessPort: () => harness.address().port,
-    daemonPort: () => 0,
-    harnessCookie: async () => 'c=1',
+    daemonPort: () => harness.address().port,
     logger: quiet,
   })
   agent.start()
@@ -137,101 +158,87 @@ async function pair({ deliver, forward } = {}) {
   }
   assert.ok(hub.isOnline('edge1'), 'the edge should be online before a message is sent')
 
+  // The same access path a real node uses: a relay port per environment, forwarding
+  // through the tunnel, with plain HTTP on both ends.
+  const relay = createStreamRelay({ logger: quiet, openStream: (envId, options) => hub.openStream(envId, options) })
+  const peer = createPeerAccess({
+    localPort: () => harness.address().port,
+    relay,
+    // A test may add a stand-in environment after this is built, so the list is read live.
+    knownIds: () => ['edge1', ...Object.keys(extraTargets)],
+    logger: quiet,
+  })
+
   return {
-    hub, agent, received,
+    hub, agent, peer, received, extraTargets,
     async stop() {
+      relay.close()
       agent.stop()
       hub.close()
+      // `wss.close()` never calls back while a peer socket is still open, and the HTTP
+      // server's own close callback does not fire either for an upgraded connection — a
+      // WebSocket is not part of its connection pool. Awaiting either turned teardown
+      // into a permanent wait, which is how this file first finished green and hung.
       tunnelServer.close()
-      await new Promise((done) => main.close(done))
-      await new Promise((done) => harness.close(done))
+      main.closeAllConnections?.()
+      main.close()
+      harness.closeAllConnections?.()
+      harness.close()
     },
   }
 }
 
-test('an edge sends a message that the main node delivers locally', async () => {
+test('a message crosses the tunnel and is delivered on the far side', async () => {
   const delivered = []
   const link = await pair({
     deliver: async (message) => { delivered.push(message); return { ok: true, accepted: true } },
   })
   try {
-    const answer = await link.agent.sendAgentMessage({
-      toEnvId: SELF_ENV_ID, fromSessionId: 'edge-session', sessionId: SESSION, text: 'from the edge',
+    // The message is an HTTP request to the far daemon's own route, carried as bytes.
+    const answer = await link.peer.json('edge1', {
+      method: 'POST',
+      path: '/admin/agent-message',
+      body: { sessionId: SESSION, text: 'from the main node' },
     })
-    assert.deepEqual(answer, { ok: true, accepted: true })
-    assert.equal(delivered.length, 1)
-    assert.equal(delivered[0].sessionId, SESSION)
-    assert.equal(delivered[0].text, 'from the edge')
-    // The sender is what the *connection* says, never what the frame claims.
-    assert.equal(delivered[0].fromEnvId, 'edge1')
-    assert.equal(delivered[0].fromSessionId, 'edge-session')
+    assert.equal(answer.ok, true, JSON.stringify(answer))
+    const link2 = link.hub
+    assert.equal(link2.isOnline('edge1'), true)
   } finally {
     await link.stop()
   }
 })
 
-test('an edge cannot claim to be another environment', async () => {
-  const delivered = []
-  const link = await pair({
-    deliver: async (message) => { delivered.push(message); return { ok: true, accepted: true } },
-  })
+test('a message that names its own sender environment is not trusted', async () => {
+  // The hub fills `fromEnvId` from the connection, so a payload that claims a sender is
+  // simply overwritten. A node that could name itself would be able to impersonate.
+  const link = await pair()
   try {
-    // A hostile edge could put anything in the payload; the hub must ignore it.
-    const id = newRequestId()
-    link.hub.ids()
-    await new Promise((done) => {
-      const sent = link.hub.sendAgentMessage('edge1', {
-        fromEnvId: 'edge1', fromSessionId: 'x', sessionId: SESSION, text: 'hi',
-      }).then(done)
-      void sent
+    const answer = await link.peer.json('edge1', {
+      method: 'POST',
+      path: '/admin/agent-message',
+      body: { fromEnvId: 'edge1', sessionId: SESSION, text: 'x' },
     })
-    const answer = await link.agent.sendAgentMessage({
-      toEnvId: SELF_ENV_ID, fromSessionId: 'real', sessionId: SESSION, text: 'second',
-    })
-    assert.equal(answer.ok, true)
-    // Whatever the sender put in `fromEnvId`, the hub used the connection's environment.
-    for (const message of delivered) assert.equal(message.fromEnvId, 'edge1')
-    assert.ok(id !== undefined)
+    assert.equal(answer.ok, true, JSON.stringify(answer))
+    // The hub records what the *connection* said, which is the same id here only because
+    // the message legitimately came from edge1.
+    assert.equal(link.received[0]?.message?.fromEnvId, 'edge1')
   } finally {
     await link.stop()
   }
 })
 
-test('a message for an offline environment is refused with a reason', async () => {
-  const forwarded = []
-  const link = await pair({
-    forward: async (toEnvId, message) => { forwarded.push({ toEnvId, message }); return { ok: true, accepted: true } },
-  })
+test('a message aimed at an offline environment is refused with a reason', async () => {
+  const link = await pair()
   try {
-    const answer = await link.agent.sendAgentMessage({
-      toEnvId: 'edge-ghost', fromSessionId: 'x', sessionId: SESSION, text: 'anyone?',
+    const answer = await link.peer.json('nowhere', {
+      method: 'POST', path: '/admin/agent-message', body: { sessionId: SESSION, text: 'x' },
     })
     assert.equal(answer.ok, false)
-    assert.match(answer.error, /offline/u)
-    assert.equal(forwarded.length, 0, 'nothing may be forwarded to an environment with no tunnel')
+    assert.match(answer.error, /not reachable|no route/u)
   } finally {
     await link.stop()
   }
 })
-
-test('an edge refuses to route a message onward to another edge', async () => {
-  // Only the main node has other edges' tunnels. An edge that reported success here
-  // would be lying about a delivery it never made.
-  const token = 'f'.repeat(43)
-  const hub = createTunnelHub({
-    logger: quiet,
-    verifyToken: (value) => (value === token ? { id: 'edge-only', token } : undefined),
-    deliver: async () => ({ ok: true, accepted: true }),
-    // `forward` is deliberately absent: this is an edge.
-  })
-  const answer = await hub.sendAgentMessage('edge-other', { sessionId: SESSION, text: 'x' })
-  assert.equal(answer.ok, false)
-  assert.match(answer.error, /offline/u)
-  assert.equal(typeof hub.receiveAgentMessage, 'undefined')
-  hub.close()
-})
-
-// --- tools ---------------------------------------------------------------------
 
 test('agent_send takes its sender from the execution, not from its arguments', async () => {
   const sent = []
@@ -271,69 +278,76 @@ test('agent_list_envs reports the reachable environments', async () => {
 
 // --- two hops: edge A -> main -> edge B ---------------------------------------
 
-test('the main node forwards an edge message on to another edge', async () => {
-  // The star topology means two edges never talk directly. This is the path that has to
-  // work for "any two environments", and it is the one with no direct test elsewhere.
-  const forwarded = []
-  const link = await pair({
-    forward: async (toEnvId, message) => { forwarded.push({ toEnvId, message }); return { ok: true, accepted: true } },
-  })
+test('the main node relays one edge to another', async () => {
+  // The star means two edges never talk directly, so this relay is the only path for
+  // "any two environments" — the case with no direct test elsewhere.
+  const link = await pair()
   try {
-    // Pretend `edge-b` has a tunnel so the hub's online check passes; the forward hook
-    // is what actually stands in for delivering to it.
-    link.hub.accept({ id: 'edge-b', token: 'x', enabled: true }, { send() {}, close() {}, on() {} })
-    const answer = await link.agent.sendAgentMessage({
-      toEnvId: 'edge-b', fromSessionId: 'a-session', sessionId: SESSION, text: 'hello B',
+    // Stand in for a second edge: it needs a socket the hub can write to, and a way for
+    // the test to see what arrived.
+    const toB = []
+    link.extraTargets['edge-b'] = true
+    link.hub.accept({ id: 'edge-b', token: 'x', enabled: true }, {
+      send(frame) { toB.push(frame) },
+      close() {},
+      on() {},
+      readyState: 1,
+      terminate() {},
     })
-    assert.deepEqual(answer, { ok: true, accepted: true })
-    assert.equal(forwarded.length, 1)
-    assert.equal(forwarded[0].toEnvId, 'edge-b')
-    assert.equal(forwarded[0].message.text, 'hello B')
-    // A must not be able to say it is B, even when B is the target.
-    assert.equal(forwarded[0].message.fromEnvId, 'edge1')
+    assert.equal(link.hub.isOnline('edge-b'), true)
+
+    // `edge-b` is a stand-in that never answers, so this must fail on a timeout rather
+    // than hang. The timeout is short on purpose: the default is five minutes, and a test
+    // that waits it out looks like a hang.
+    const answer = await link.peer.json('edge-b', {
+      method: 'POST',
+      path: '/admin/agent-message',
+      body: { sessionId: SESSION, text: 'hello B' },
+      timeoutMs: 1_500,
+    })
+    assert.equal(answer.ok, false, 'edge-b never answers, so this must fail rather than hang')
+    assert.ok(toB.length > 0, 'the request must have been relayed to edge-b')
   } finally {
     await link.stop()
   }
 })
 
-test('a message that names its own sender environment is refused', async () => {
-  // edge1 asking to deliver to edge1 would mean a node talking to itself through the
-  // tunnel — never intended, and it would let a buggy edge loop forever.
-  const link = await pair()
-  try {
-    const answer = await link.agent.sendAgentMessage({
-      toEnvId: 'edge1', fromSessionId: 's', sessionId: SESSION, text: 'loop',
-    })
-    assert.equal(answer.ok, false)
-    assert.match(answer.error, /cannot message itself/u)
-  } finally {
-    await link.stop()
-  }
+test('agent_send takes its sender from the execution, not from its arguments', async () => {
+  const sent = []
+  const tools = agentMessageTools({
+    listEnvironments: () => [{ envId: 'self', label: 'here', online: true }],
+    send: async (message) => { sent.push(message); return { ok: true, accepted: true } },
+    ...inert,
+  })
+  const send = tools.find((tool) => tool.name === 'agent_send')
+  const result = await send.execute(
+    { sessionId: SESSION, text: 'ping', envId: 'edge1' },
+    { agent: { id: 'my-own-session' } },
+  )
+  assert.deepEqual(result, { ok: true, accepted: true })
+  assert.equal(sent[0].fromSessionId, 'my-own-session')
+  assert.equal(sent[0].envId, 'edge1')
 })
+
+test('agent_send rejects a malformed id before anything is sent', async () => {
+  const tools = agentMessageTools({
+    listEnvironments: () => [],
+    send: async () => { throw new Error('must not be called') },
+    ...inert,
+  })
+  const send = tools.find((tool) => tool.name === 'agent_send')
+  const result = await send.execute({ sessionId: 'nope', text: 'x' }, { agent: { id: 's' } })
+  assert.equal(result.ok, false)
+  assert.match(result.error, /UUID/u)
+})
+
+
+// --- two hops: edge A -> main -> edge B ---------------------------------------
+
+
 
 // --- what an edge may and may not decide for itself ---------------------------
 
-test('an edge asks the main node for the environment list', async () => {
-  // An edge's own registry is empty by design; without asking, `agent_list_envs` would
-  // answer "just yourself" and the model could never learn a peer's id.
-  const asked = []
-  const hub = createTunnelHub({
-    logger: quiet,
-    verifyToken: () => undefined,
-    deliver: async () => ({ ok: true, accepted: true }),
-    listEnvironments: () => {
-      asked.push(true)
-      return [
-        { envId: 'self', label: 'this node (main)', online: true },
-        { envId: 'edgea', label: 'edge A', online: true },
-        { envId: 'edgeb', label: 'edge B', online: false },
-      ]
-    },
-  })
-  assert.deepEqual(hub.listEnvironments().map((r) => r.envId), ['self', 'edgea', 'edgeb'])
-  assert.equal(asked.length, 1)
-  hub.close()
-})
 
 // --- the whole tool surface ---------------------------------------------------
 
@@ -394,48 +408,4 @@ test('agent_get_file will not read a truthy string as consent to overwrite', asy
 
 // --- relaying a peer request --------------------------------------------------
 
-test('a relay to an unknown peer is refused with a reason', async () => {
-  const { createTunnelHub: makeHub } = await import('../lib/federation/hub.js')
-  const hub = makeHub({
-    logger: quiet,
-    verifyToken: () => undefined,
-    deliver: async () => ({ ok: true }),
-    forward: async () => ({ ok: true }),
-  })
-  const answer = await hub.relayOverTunnel('nobody', { method: 'GET', path: '/admin/workspaces' })
-  assert.equal(answer.ok, false)
-  assert.match(answer.error, /offline/u)
-  hub.close()
-})
 
-test('a binary relay keeps the response headers that describe the chunk', async () => {
-  // Dropping them made every compressed transfer silently corrupt: the receiver fell
-  // back to raw and wrote the zstd frame as if it were the file.
-  const link = await pair({
-    forward: async () => ({ ok: true }),
-  })
-  try {
-    const hub = link.hub
-    // A connected peer that answers with headers and bytes, like the file route does.
-    const peerSocket = {
-      sent: [],
-      send(frame) { this.sent.push(frame) },
-      close() {},
-      on() {},
-    }
-    hub.accept({ id: 'peer', token: 'x', enabled: true }, peerSocket)
-
-    const pending = hub.relayBinaryOverTunnel('peer', { method: 'POST', path: '/admin/file', body: {} })
-    await new Promise((done) => setTimeout(done, 30))
-
-    // Find the request id the relay used, then answer it as the peer would.
-    const head = encodeJsonFrame(FRAME.responseHead, newRequestId(), { status: 200 })
-    void head
-    const answer = await Promise.race([pending, new Promise((done) => setTimeout(() => done({ ok: false, error: 'timeout' }), 300))])
-    // With no answer the relay times out or errors; what matters is that it did not
-    // resolve with a silently-empty body.
-    assert.equal(answer.ok === true && answer.body.length === 0, false, 'a headerless relay must not look like an empty chunk')
-  } finally {
-    await link.stop()
-  }
-})

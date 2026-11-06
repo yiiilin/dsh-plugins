@@ -34,6 +34,8 @@ import { createTunnelHub, createTunnelServer, tokenOf, TUNNEL_PATH } from './lib
 import { deliverToSession } from './lib/agent-message.js'
 import { listSessions, listWorkspaces } from './lib/remote-info.js'
 import { serveFileRoute } from './lib/file-route.js'
+import { createPeerAccess } from './lib/peer.js'
+import { createStreamRelay } from './lib/stream-relay.js'
 import { openStreamSink, validateDestination } from './lib/file-transfer.js'
 import { agentMessageTools } from './tools.js'
 import { defaultSkillsRoot, readInventory } from './lib/inventory.js'
@@ -751,6 +753,51 @@ export function apply(ctx, config) {
     : undefined
 
   /**
+   * A loopback port per reachable environment, forwarding through the tunnel.
+   *
+   * The adapter that keeps the tunnel a byte pipe: a caller opens an ordinary HTTP
+   * request against one of these ports, and the bytes come out of a TCP connection on the
+   * far side where that node's daemon answers them. Nothing here parses HTTP.
+   */
+  const relay = createStreamRelay({
+    logger,
+    openStream: (envId, options) => {
+      if (hub !== undefined && hub.isOnline(envId)) return hub.openStream(envId, options)
+      if (agent !== undefined) {
+        const link = agent.linkTo(envId)
+        if (link === undefined || link.local === true) return { ok: false, error: `no route to "${envId}"` }
+        return link.openStream(envId, options)
+      }
+      return { ok: false, error: `this node has no route to "${envId}"` }
+    },
+  })
+
+  /**
+   * The environments this node can reach, by id.
+   *
+   * A main node knows its registry; a leaf knows what its upstreams pushed. Both answer
+   * here so a caller never has to know which kind of node it is running on.
+   */
+  const reachableIds = () => {
+    if (config.role === 'main') return registry.list().filter((one) => one.enabled !== false).map((one) => one.id)
+    return agent?.topology?.nodes()?.filter((row) => row.envId !== 'self').map((row) => row.envId) ?? []
+  }
+
+  /**
+   * The one way this node reaches any environment, including itself.
+   *
+   * Every cross-node capability goes through here. The alternative — the three-way
+   * `self / role === 'main' / else` branch each capability used to carry — is what let an
+   * edge ask its own tunnel table about a peer and report every peer as offline.
+   */
+  const peer = createPeerAccess({
+    localPort: () => config.port,
+    relay,
+    knownIds: () => reachableIds(),
+    logger,
+  })
+
+  /**
    * The sending half of an agent message.
    *
    * A main node can reach any of its edges; an edge can reach only itself and, through
@@ -759,10 +806,9 @@ export function apply(ctx, config) {
    */
   const sendAgentMessage = async (request) => {
     const toEnvId = String(request.envId ?? '').trim()
-    if (toEnvId === '' || toEnvId === 'self') {
-      // Local delivery never crosses the tunnel; going out and back would need the main
-      // node to be reachable, and on an edge it might not be. The sender is this node,
-      // which is exactly what `self` means to a caller here — not a guess at its name.
+    if (peer.isLocal(toEnvId)) {
+      // Local delivery never crosses the tunnel; going out and back would need this node
+      // to be reachable as a destination, which it is not.
       return await deliverMessage({
         fromEnvId: 'self',
         fromSessionId: request.fromSessionId,
@@ -770,82 +816,57 @@ export function apply(ctx, config) {
         text: request.text,
       })
     }
-    if (config.role !== 'main') {
-      // An edge holds exactly one tunnel — to the main node — so it cannot know whether
-      // a *peer* edge is online; `hub.isOnline('edgeb')` is false on every edge by
-      // construction. The main node answers that question, and its answer comes back as
-      // the tool result. Checking locally first made every edge-to-edge message fail
-      // with "offline" no matter what.
-      return await agent.sendAgentMessage({
-        toEnvId,
+    // One call, whether this node holds the peer's tunnel directly or reaches it through
+    // an upstream. Before, each role had its own branch and one of them was wrong.
+    const answer = await peer.json(toEnvId, {
+      method: 'POST',
+      path: '/admin/agent-message',
+      body: {
+        fromEnvId: 'self',
         fromSessionId: request.fromSessionId,
         sessionId: request.sessionId,
         text: request.text,
-      })
-    }
-    if (!hub.isOnline(toEnvId)) {
-      return { ok: false, error: `environment "${toEnvId}" is offline; call agent_list_envs` }
-    }
-    // The main node holds every edge's tunnel, so it can send directly.
-    return await hub.sendAgentMessage(toEnvId, {
-      fromEnvId: 'self',
-      fromSessionId: request.fromSessionId,
-      sessionId: request.sessionId,
-      text: request.text,
+      },
     })
+    return answer.ok === true ? { ok: true, ...answer.body } : { ok: false, error: answer.error }
   }
 
   /** The environment list the agent sees: this node plus every tunnel it can use. */
   const listReachable = async () => {
-    const rows = [{
-      envId: 'self',
-      label: config.role === 'main' ? 'this node (main)' : 'this node (edge)',
-      online: true,
-    }]
+    // One source for both roles: the main node reads its registry, a leaf reads what its
+    // upstreams pushed. Asking the upstream on demand was the previous shape, and it left
+    // every leaf blind until its first call.
     if (config.role === 'main') {
-      for (const environment of registry.list()) {
-        rows.push({
+      return [
+        { envId: 'self', label: config.name === '' ? 'this node' : config.name, online: true },
+        ...registry.list().map((environment) => ({
           envId: environment.id,
           label: environment.label,
           online: hub.isOnline(environment.id),
-        })
-      }
-      return rows
+        })),
+      ]
     }
-    // An edge's own registry is empty: environments are the main node's to know, and an
-    // edge has no tunnel to any of them. Without asking, the tool would answer "just
-    // yourself" and the model could never learn a peer's id.
-    const answer = await agent.listEnvironments()
-    for (const row of answer?.environments ?? []) {
-      if (row.envId === 'self') continue
-      rows.push({ envId: row.envId, label: row.label, online: row.online })
-    }
-    return rows
+    return agent?.topology?.nodes()?.map((row) => ({
+      envId: row.envId,
+      label: row.label,
+      online: row.online,
+    })) ?? [{ envId: 'self', label: config.name === '' ? 'this node' : config.name, online: true }]
   }
-
-  /**
-   * One JSON request into a peer's daemon-owned routes, from the main node.
-   *
-   * The main node holds every edge's tunnel; `hub.relayOverTunnel` is the same writer the
-   * agent-message path uses.
-   */
-  const requestOverTunnel = (envId, method, path, body) => hub.relayOverTunnel(envId, { method, path, body })
 
   /**
    * Ask one environment for its workspace table.
    *
-   * Local reads answer from this node's own services; a peer is asked over its tunnel
-   * through the same `/admin` surface every other cross-node call uses.
+   * Local reads answer from this node's own services; a peer is asked over the same
+   * `/admin` surface every other cross-node call uses. The branch that used to choose
+   * between two different transports is gone — `peer` owns it.
    *
    * @param envId - target environment; empty means this node.
    * @returns `{ ok, workspaces?, error? }`.
    */
   const readWorkspacesOf = async (envId) => {
-    if (envId === '' || envId === 'self') {
-      return listWorkspaces({ workspaces: remoteInfo.workspaces })
-    }
-    if (config.role !== 'main') return await agent.readRemote(envId, 'GET', '/admin/workspaces')
-    return await requestOverTunnel(envId, 'GET', '/admin/workspaces')
+    if (peer.isLocal(envId)) return listWorkspaces({ workspaces: remoteInfo.workspaces })
+    const answer = await peer.json(envId, { method: 'GET', path: '/admin/workspaces' })
+    return answer.ok === true ? answer.body : { ok: false, error: answer.error }
   }
 
   /**
@@ -856,12 +877,12 @@ export function apply(ctx, config) {
    * @returns `{ ok, sessions?, error? }`.
    */
   const readSessionsOf = async (envId, workspaceId) => {
-    const suffix = workspaceId === '' ? '' : `?workspaceId=${encodeURIComponent(workspaceId)}`
-    if (envId === '' || envId === 'self') {
+    if (peer.isLocal(envId)) {
       return await listSessions({ workspaces: remoteInfo.workspaces, sessions: remoteInfo.sessions }, workspaceId)
     }
-    if (config.role !== 'main') return await agent.readRemote(envId, 'GET', `/admin/remote-sessions${suffix}`)
-    return await requestOverTunnel(envId, 'GET', `/admin/remote-sessions${suffix}`)
+    const suffix = workspaceId === '' ? '' : `?workspaceId=${encodeURIComponent(workspaceId)}`
+    const answer = await peer.json(envId, { method: 'GET', path: `/admin/remote-sessions${suffix}` })
+    return answer.ok === true ? answer.body : { ok: false, error: answer.error }
   }
 
   /**
@@ -873,50 +894,6 @@ export function apply(ctx, config) {
    * @param request - `{ path, envId, sourcePath, chunks, overwrite }`.
    * @returns `{ ok, path?, bytes?, error? }`.
    */
-  /**
-   * Read a local file into the sink, honouring the same `Range` shape as the route.
-   *
-   * @param path - absolute path.
-   * @param write - receives each piece.
-   * @param headers - `{ range }` when only a window is wanted.
-   * @returns `{ ok, size?, error? }`.
-   */
-  const streamLocalFile = async (path, write, headers) => {
-    const checked = validateDestination(path)
-    if (checked.ok !== true) return { ok: false, error: checked.error }
-    const info = await stat(checked.path).catch((error) => ({ error }))
-    if (info?.error !== undefined) return { ok: false, error: `could not read "${checked.path}": ${info.error.message}` }
-    if (!info.isFile()) return { ok: false, error: `not a regular file: "${checked.path}"` }
-    let start = 0
-    let end = info.size - 1
-    const range = headers.range
-    if (typeof range === 'string') {
-      const m = /^bytes=(\d+)-(\d*)$/u.exec(range)
-      if (m !== null) {
-        start = Number(m[1])
-        if (m[2] !== '') end = Math.min(Number(m[2]), info.size - 1)
-      }
-    }
-    if (start > end) return { ok: false, error: `range ${range} is outside "${checked.path}"` }
-    await new Promise((done, fail) => {
-      createReadStream(checked.path, { start, end })
-        .on('data', (piece) => write(piece))
-        .on('error', fail)
-        .on('end', done)
-    }).catch((error) => ({ error }))
-    return { ok: true, size: info.size }
-  }
-
-  /** Split collected pieces into the base64 chunks the tool's no-destination form returns. */
-  const byteChunks = (pieces) => {
-    const bytes = Buffer.concat(pieces)
-    const out = []
-    for (let at = 0; at < bytes.length; at += 512 * 1024) {
-      out.push(bytes.subarray(at, at + 512 * 1024).toString('base64'))
-    }
-    return out
-  }
-
   /**
    * Pull a file from one environment into this machine.
    *
@@ -966,20 +943,23 @@ export function apply(ctx, config) {
       : (piece) => { bytes += piece.length; sink.write(piece) }
     const write = sinkWrite
 
-    let answer
-    if (!remote) {
-      // Local: read the file here, no tunnel involved.
-      const headers = range === undefined ? {} : { range }
-      answer = await streamLocalFile(request.path, write, headers)
-    } else if (config.role === 'main') {
-      answer = await hub.streamFileFromTunnel(source, request.path, write, { range })
-    } else {
-      answer = await agent.streamFileFromPeer(source, request.path, write, range)
-    }
+    // One request whether the file is here or a tunnel away: a local pull is a loopback
+    // HTTP call to this daemon's own `/admin/file`, a remote one goes through the relay.
+    // The same route answers both, so the range and refusal behaviour cannot drift apart.
+    const answer = await peer.bytes(source, {
+      method: 'GET',
+      path: `/admin/file?path=${encodeURIComponent(request.path)}`,
+      headers: range === undefined ? {} : { range },
+    })
 
     if (answer.ok !== true) {
       if (sink !== undefined && sink.ok === true) await sink.finish().catch(() => {})
-      return { ok: false, error: answer.error }
+      return { ok: false, error: answer.error ?? `the source answered ${answer.status}` }
+    }
+    if (sink === undefined || sink.ok !== true) {
+      write(answer.body)
+    } else {
+      sink.write(answer.body)
     }
 
     if (sink === undefined) {

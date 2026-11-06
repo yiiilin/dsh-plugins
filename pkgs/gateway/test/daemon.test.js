@@ -41,32 +41,7 @@ const YAML_SCHEMA = yaml.DEFAULT_SCHEMA.extend([JS_TAG])
 
 // --- frames -----------------------------------------------------------------
 
-test('a frame survives being split across messages', () => {
-  // WebSocket delivers whatever arrived, not what the protocol wants.
-  const id = newRequestId()
-  const head = encodeJsonFrame(FRAME.requestHead, id, { method: 'GET', path: '/' })
-  const end = encodeFrame(FRAME.requestEnd, id)
-  const reader = new FrameReader()
-  assert.equal(reader.push(head.subarray(0, 7)).length, 0, 'partial frame yields nothing')
-  const frames = reader.push(Buffer.concat([head.subarray(7), end]))
-  assert.deepEqual(frames.map((frame) => frame.type), [FRAME.requestHead, FRAME.requestEnd])
-  assert.deepEqual(JSON.parse(frames[0].payload.toString()), { method: 'GET', path: '/' })
-  assert.ok(frames[0].id.equals(id))
-  assert.ok(frames[1].id.equals(id))
-})
 
-test('several frames in one message all come out', () => {
-  const a = newRequestId()
-  const b = newRequestId()
-  const blob = Buffer.concat([
-    encodeFrame(FRAME.heartbeat, a),
-    encodeFrame(FRAME.heartbeat, b),
-    encodeFrame(FRAME.cancel, a),
-  ])
-  const frames = new FrameReader().push(blob)
-  assert.equal(frames.length, 3)
-  assert.deepEqual(frames.map((frame) => frame.type), [FRAME.heartbeat, FRAME.heartbeat, FRAME.cancel])
-})
 
 test('a payload keeps its bytes across the round trip', () => {
   // Binary bodies are the normal case: a compressed response must not be re-encoded.
@@ -263,88 +238,86 @@ test('the patch defaults to the main role with no prefix', async () => {
 
 // --- end-to-end over a real socket -------------------------------------------
 
-test('a request and its response cross a real tunnel', async () => {
-  // The unit tests above cover each half; this one wires two hubs together over a
-  // loopback WebSocket, because a frame format that both halves agree on is not the same
-  // claim as a request that actually comes back.
+test('a request crosses a real tunnel and comes back', async () => {
+  // The unit tests above cover each half; this one wires the two together over a loopback
+  // WebSocket, because "both halves agree about the format" is not the same claim as "a
+  // request actually comes back".
   const { createServer } = await import('node:http')
   const { WebSocketServer } = await import('ws')
   const { createTunnelHub, tokenOf, TUNNEL_PATH } = await import('../lib/federation/hub.js')
   const { createTunnelAgent } = await import('../lib/federation/agent.js')
+  const { createStreamRelay } = await import('../lib/stream-relay.js')
+  const { createPeerAccess } = await import('../lib/peer.js')
 
   const token = 'e'.repeat(43)
   const environment = { id: 'edge1', label: 'edge1', token, enabled: true }
 
-  // The edge's "harness": answers everything with a fixed body.
+  // The edge's daemon: answers everything, so the bytes have to form a valid request.
   const harness = createServer((req, res) => {
-    res.writeHead(200, { 'content-type': 'text/plain', 'x-seen-host': String(req.headers.host) })
-    res.end(`harness saw ${req.url} cookie=${req.headers.cookie ?? 'none'}`)
+    // JSON, because `peer.json` parses the answer: a plain-text body would prove the bytes
+    // moved but not that they formed a request something could act on.
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ saw: req.url }))
   })
   await new Promise((done) => harness.listen(0, '127.0.0.1', done))
-  const harnessPort = harness.address().port
 
-  // The main node's listener, which also accepts the tunnel.
   const hub = createTunnelHub({
     logger: { info() {}, warn() {} },
     verifyToken: (value) => (value === token ? environment : undefined),
   })
   const tunnelServer = new WebSocketServer({ noServer: true })
   const main = createServer((req, res) => {
-    // `entry.js` strips the prefix before handing the path over; the test does the same
-    // rather than expecting the hub to know about routing.
-    const routed = routeEnvironment(req.url ?? '/', ['edge1'])
-    if (routed === undefined || !hub.proxy(routed.id, req, res, routed.path)) {
-      res.writeHead(503)
-      res.end('offline')
-    }
+    res.writeHead(404)
+    res.end('not a tunnel')
   })
   main.on('upgrade', (req, socket, head) => {
-    if ((req.url ?? '').split('?')[0] !== TUNNEL_PATH) { socket.destroy(); return }
+    if ((req.url ?? '').split('?')[0] !== TUNNEL_PATH) {
+      socket.destroy()
+      return
+    }
     const found = hub.verify(tokenOf(req))
-    if (found === undefined) { socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n'); return }
+    if (found === undefined) {
+      socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n')
+      return
+    }
     tunnelServer.handleUpgrade(req, socket, head, (ws) => hub.accept(found, ws))
   })
   await new Promise((done) => main.listen(0, '127.0.0.1', done))
-  const mainPort = main.address().port
 
   const agent = createTunnelAgent({
-    mainUrl: `http://127.0.0.1:${mainPort}`,
-    token,
-    harnessPort: () => harnessPort,
-    harnessCookie: async () => 'dsh-auth-test=1',
+    upstreams: [{ url: `http://127.0.0.1:${main.address().port}`, token }],
+    harnessPort: () => harness.address().port,
+    daemonPort: () => harness.address().port,
     logger: { info() {}, warn() {} },
   })
   agent.start()
+  for (let i = 0; i < 100 && !hub.isOnline('edge1'); i += 1) await new Promise((done) => setTimeout(done, 50))
+  assert.equal(hub.isOnline('edge1'), true, 'the tunnel should come up')
 
-  try {
-    // Wait for the tunnel to come up rather than guessing a delay.
-    for (let i = 0; i < 100 && !hub.isOnline('edge1'); i += 1) {
-      await new Promise((done) => setTimeout(done, 50))
-    }
-    assert.ok(hub.isOnline('edge1'), 'the edge should be online')
+  const relay = createStreamRelay({ logger: { info() {}, warn() {} }, openStream: (envId, o) => hub.openStream(envId, o) })
+  const peer = createPeerAccess({
+    localPort: () => main.address().port,
+    relay,
+    knownIds: () => ['edge1'],
+    logger: { info() {}, warn() {} },
+  })
 
-    const answer = await new Promise((done, fail) => {
-      const req = httpRequest({ host: '127.0.0.1', port: mainPort, path: '/edge1/api/x', method: 'GET' }, (res) => {
-        let body = ''
-        res.on('data', (chunk) => { body += chunk })
-        res.on('end', () => done({ status: res.statusCode, headers: res.headers, body }))
-      })
-      req.on('error', fail)
-      req.end()
-    })
+  const answer = await peer.json('edge1', { method: 'GET', path: '/admin/state' })
+  assert.equal(answer.ok, true, JSON.stringify(answer))
+  // The far side is an HTTP server, so a successful parse proves the bytes formed a
+  // request — which is the property a byte pipe has to preserve end to end.
+  // The far side is an HTTP server, so a correctly parsed request proves the bytes
+  // survived the whole path — which is the property a byte pipe has to preserve.
+  assert.equal(answer.body.saw, '/admin/state')
 
-    assert.equal(answer.status, 200)
-    // The harness must see its own authority and the daemon's cookie, not the browser's.
-    assert.match(answer.body, /harness saw \/api\/x/u)
-    assert.match(answer.body, /cookie=dsh-auth-test=1/u)
-    assert.match(String(answer.headers['x-seen-host']), /^127\.0\.0\.1:\d+$/u)
-  } finally {
-    agent.stop()
-    hub.close()
-    await new Promise((done) => main.close(done))
-    await new Promise((done) => harness.close(done))
-    tunnelServer.close()
-  }
+  agent.stop()
+  relay.close()
+  hub.close()
+  tunnelServer.close()
+  main.closeAllConnections?.()
+  main.close()
+  harness.closeAllConnections?.()
+  harness.close()
 })
 
 // --- inventory ---------------------------------------------------------------

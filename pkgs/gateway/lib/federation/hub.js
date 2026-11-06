@@ -1,20 +1,26 @@
 /**
  * Main-node side of the federation tunnel.
  *
- * Edges dial out and keep one WebSocket each; this module turns browser requests into
- * frames on that socket and back. The main node never dials an edge, so an edge needs no
- * inbound port open.
+ * The tunnel is a **byte pipe**: it moves streams from one environment to another and
+ * understands nothing inside them. HTTP, gRPC, a bare TCP protocol — all arrive here as
+ * `open` / `data` / `end`, and this module only decides which socket to put each stream
+ * on. Request/response semantics live in the node that ends up opening the local
+ * connection.
  *
- * Trust model: the connection is authenticated once, by the environment token, and only
- * the edge can be on the other end of it. A request that arrives *from* an edge is
- * therefore already attributed to that environment — no cookie, header or signature is
- * consulted. That is why the edge can proxy straight to its harness without asking its
- * own user to log in again.
+ * Edges dial out and keep one WebSocket each; the main node never dials an edge, so an
+ * edge needs no inbound port open. Because the main node is the only node holding every
+ * tunnel, it is also the node that relays one edge's stream to another — an edge talks to
+ * a peer through here rather than to it directly.
+ *
+ * Trust model: a connection is authenticated once, by the environment token, and only
+ * the edge can be on the other end. A stream arriving *from* an edge is therefore already
+ * attributed to that environment — no cookie, header or signature is consulted.
  *
  * @module @yiln-dsh/dsh-gateway/federation/hub
  */
 
 import { WebSocketServer } from 'ws'
+
 import { FRAME, FrameReader, encodeFrame, encodeJsonFrame, newRequestId } from './frames.js'
 import { keepAlive } from './keepalive.js'
 import { edgeRow, nodeRow, snapshot, TOPOLOGY_FRAME } from './topology.js'
@@ -37,22 +43,28 @@ export const SELF_ENV_ID = 'self'
  *   environment an edge claims to be, or nothing when the token is unknown.
  * @param options.logger - logger.
  * @param options.deliver - `(message) => Promise<{ok, error?}>`; puts one message into a
- *   session **on this machine**. Supplied by the gateway so the tunnel stays a
- *   transport and never learns how a session is reached.
+ *   session **on this machine**. Supplied by the gateway so the tunnel stays a transport
+ *   and never learns how a session is reached.
  * @param options.forward - `(toEnvId, message) => Promise<{ok, error?}>`; sends a message
  *   to another edge through this node. Absent on an edge, which forwards nothing.
- * @returns the hub: `accept`, `proxy`, `proxyUpgrade`, `request`, `sendAgentMessage`,
- *   `isOnline`, `ids`, `close`.
+ * @param options.listNodes - the node table this hub broadcasts; absent when this hub is
+ *   not the authority.
+ * @returns the hub: `accept`, `openStream`, `sendAgentMessage`, `isOnline`, `ids`,
+ *   `broadcastTopology`, `close`.
  */
 export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnvironments, listNodes }) {
   /** envId -> connection record. */
   const connections = new Map()
 
   /**
-   * Register one edge socket.
+   * streamId(hex) -> where the stream came from and where it goes.
    *
-   * @returns the connection record, or undefined when the token was rejected.
+   * The tunnel does not rewrite ids, so this is the only state a relay hop keeps. A
+   * frame's direction follows from which connection it arrived on: a `data` for a known
+   * stream that came from A is A's, and belongs on the way to B.
    */
+  const routes = new Map()
+
   /** Monotonic per sender, so a receiver can discard a late snapshot. */
   let topologySeq = 0
 
@@ -80,15 +92,14 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       const label = typeof claimed === 'string' && claimed !== '' ? claimed : row.label
       return nodeRow({ ...row, label }, { online: row.online, selfId: row.envId })
     })
-    // Star today: every environment is one hop away, so `via` is empty. The field is
-    // carried anyway so a tree does not need a different message shape.
+    // Every environment this node can reach directly is one hop away, so `via` is empty.
+    // The field is carried anyway so a tree does not need a different message shape.
     const edges = nodes
       .filter((row) => row.kind !== 'self')
       .map((row) => edgeRow(row.envId))
-    // No seq here: it belongs to the message that is about to be sent, not to the act of
-    // reading the table. Incrementing while building meant a re-entrant broadcast could
-    // hand out two different sequences for one state, and a send that fails part-way
-    // could still burn one.
+    // No seq here: it belongs to the message about to be sent, not to the act of reading
+    // the table. Incrementing while building let a re-entrant broadcast hand out two
+    // sequences for one state, and a failed send burn one.
     return { nodes, edges }
   }
 
@@ -97,8 +108,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    *
    * Called on every change — an edge arriving or leaving, and an environment being added,
    * enabled or removed. A topology that changes without this leaves peers routing into a
-   * machine that is gone, which is exactly the class of bug the pushed table exists to
-   * prevent.
+   * machine that is gone.
    *
    * @returns how many edges were told.
    */
@@ -106,11 +116,11 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     // One snapshot per burst, and one sequence number for it.
     //
     // A send can synchronously trigger a `close` on another socket, which calls back into
-    // this function. Without coalescing, that inner call would build from the *newer*
-    // table, take a higher sequence, and be followed by the outer loop finishing the
-    // older snapshot under a lower one — peers would then hold a stale table believing it
-    // current. So a re-entrant call only marks the burst dirty; the outer call goes round
-    // again with the newest table and a single new sequence.
+    // this function. Without coalescing, the inner call would build from the newer table
+    // and take the higher sequence, then the outer loop would finish the older snapshot
+    // under a lower one — peers would hold a stale table believing it current. So a
+    // re-entrant call only marks the burst dirty; the outer call goes round again with
+    // the newest table under one new sequence.
     if (broadcasting) {
       topologyDirty = true
       return 0
@@ -127,8 +137,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
         for (const [, record] of connections) {
           try {
             // Each edge is told which environment it *is*: a leaf knows only its token,
-            // and without its own id `routeTo` cannot tell "the destination is me" from
-            // "the destination is a peer".
+            // and without its own id it cannot tell "the destination is me" from "a peer".
             record.socket.send(encodeJsonFrame(TOPOLOGY_FRAME, Buffer.alloc(16), { ...table, seq, selfEnvId: record.envId }))
             sent += 1
           } catch (error) {
@@ -142,41 +151,54 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     return sent
   }
 
+  /**
+   * Register one edge socket.
+   *
+   * @returns the connection record, or undefined when the token was rejected.
+   */
   function register(environment, socket, claim = {}) {
     const record = {
       envId: environment.id,
       socket,
       reader: new FrameReader(),
       /** The name this node declared for itself, if it sent one. */
-    claimedName: typeof claim.name === 'string' ? claim.name : '',
-    claimedHostname: typeof claim.hostname === 'string' ? claim.hostname : '',
-      /** requestId(hex) -> handlers for an in-flight request. */
-      pending: new Map(),
-      openedAt: Date.now(),
+      claimedName: typeof claim.name === 'string' ? claim.name : '',
+      claimedHostname: typeof claim.hostname === 'string' ? claim.hostname : '',
+      /** streamIds opened by this edge, so a close can fail all of them. */
+      streams: new Set(),
     }
-
-    // The main node watches too: an edge that vanishes without closing its socket would
-    // otherwise stay listed as online forever, and `/env-<id>/` would answer 503 from a
-    // record that claims the tunnel is up.
-    keepAlive(socket, { label: record.envId, logger })
 
     socket.on('message', (data) => {
       let frames
       try {
         frames = record.reader.push(Buffer.isBuffer(data) ? data : Buffer.from(data))
       } catch (error) {
-        logger.warn(`federation: dropping ${record.envId}: ${error.message}`)
+        logger.warn(`federation: ${record.envId} sent bytes that are not frames: ${error.message}`)
         socket.close()
         return
       }
       for (const frame of frames) dispatch(record, frame)
     })
 
+    keepAlive(socket, { label: record.envId, logger })
+
     socket.on('close', () => {
-      // Fail every request still in flight: the alternative is a browser waiting for a
-      // response that can never arrive.
-      for (const [, entry] of record.pending) entry.onClose?.()
-      record.pending.clear()
+      // Fail every stream this edge was part of: the alternative is a peer waiting for
+      // bytes that can never arrive.
+      for (const key of record.streams) {
+        const route = routes.get(key)
+        routes.delete(key)
+        if (route === undefined) continue
+        const other = connections.get(route.from === record.envId ? route.to : route.from)
+        if (other === undefined) continue
+        // Tell the far side the stream is over rather than leaving it half-open.
+        try {
+          other.socket.send(encodeFrame(FRAME.end, Buffer.from(key, 'hex')))
+        } catch {
+          // Its own close handler will clean up.
+        }
+      }
+      record.streams.clear()
       if (connections.get(record.envId) === record) {
         connections.delete(record.envId)
         // Everyone still connected must learn this node is gone, or they will keep
@@ -185,21 +207,10 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       }
       logger.info(`federation: ${record.envId} disconnected`)
     })
-
     socket.on('error', (error) => {
-      logger.warn(`federation: ${record.envId} socket error: ${error.message}`)
+      logger.warn(`federation: ${record.envId} tunnel error: ${error.message}`)
     })
 
-    // A reconnect replaces the previous socket: the old one is dead even if its close
-    // event has not fired yet.
-    const previous = connections.get(record.envId)
-    if (previous !== undefined && previous !== record) {
-      try {
-        previous.socket.close()
-      } catch {
-        // The old socket is already gone; nothing to do.
-      }
-    }
     connections.set(record.envId, record)
     logger.info(`federation: ${record.envId} connected`)
     // The arriving edge needs the table before it can route anything, and everyone else
@@ -208,696 +219,350 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     return record
   }
 
-  function dispatch(record, frame) {
-    if (frame.type === FRAME.heartbeat) return
-    // An edge may only originate one thing, and it is not a pending request: handle it
-    // before the `pending` lookup, which would otherwise count it as an orphan.
-    if (frame.type === FRAME.agentMessage) {
-      void receiveAgentMessage(record, frame)
-      return
-    }
-    const key = frame.id.toString('hex')
-    const entry = record.pending.get(key)
-    if (entry === undefined) {
-      // Not noise: a frame for a finished request means the browser is still talking
-      // about something we already released, and a frame for a live request means the
-      // key was lost early. Both deserve a name.
-      record.orphans = (record.orphans ?? 0) + 1
-      if (record.orphans <= 5) {
-        logger.warn(`federation: ${record.envId} frame type ${frame.type} for unknown request ${key.slice(0, 8)}`)
-      }
-      return
-    }
-    if (frame.type === FRAME.responseHead) {
-      entry.onHead(JSON.parse(frame.payload.toString('utf8')))
-      return
-    }
-    if (frame.type === FRAME.responseBody) {
-      entry.bytes = (entry.bytes ?? 0) + frame.payload.length
-      entry.onBody(frame.payload)
-      return
-    }
-    if (frame.type === FRAME.responseEnd) {
-      if (entry.upgraded === true) {
-        logger.info(`federation: upgrade relayed ${entry.bytes ?? 0} byte(s) to the browser`)
-      }
-      record.pending.delete(key)
-      entry.onEnd()
-    }
-  }
-
   /**
-   * Send one request into an edge and pipe the response back.
+   * Relay one stream between two environments.
    *
-   * @param envId - the environment to reach.
-   * @param req - the browser's request.
-   * @param res - the browser's response.
-   * @param upstreamPath - path as the edge's harness should see it.
-   * @returns whether the request could be sent.
+   * Frames are forwarded as they arrive, so a stream is never buffered whole — which is
+   * what lets a 2 GiB file cross without the relay holding it.
    */
-  function proxy(envId, req, res, upstreamPath) {
-    const record = connections.get(envId)
-    if (record === undefined) {
-      logger.warn(`federation: ${envId} has no tunnel; answering 503`)
-      return false
-    }
-    logger.info(`federation: ${envId} ${req.method} ${upstreamPath}`)
-
-    const id = newRequestId()
-    const key = id.toString('hex')
-    // Host and Origin are rewritten on the edge, which is the only side that knows its
-    // own harness authority.
-    const headers = { ...req.headers }
-
-    record.pending.set(key, {
-      onHead(head) {
-        res.writeHead(head.status, head.statusText, head.headers)
-      },
-      onBody(payload) {
-        res.write(payload)
-      },
-      onEnd() {
-        res.end()
-      },
-      onClose() {
-        if (!res.writableEnded) res.destroy()
-      },
-    })
-
-    record.socket.send(encodeJsonFrame(FRAME.requestHead, id, {
-      method: req.method,
-      path: upstreamPath,
-      headers,
-    }))
-    req.on('data', (chunk) => record.socket.send(encodeFrame(FRAME.requestBody, id, chunk)))
-    req.on('end', () => record.socket.send(encodeFrame(FRAME.requestEnd, id)))
-    // The response's `close` means the browser is gone; the request's `close` also fires
-    // when the body finishes, which is the normal case and must not cancel anything.
-    res.on('close', () => {
-      if (res.writableEnded) return
-      if (record.pending.has(key)) {
-        record.pending.delete(key)
-        record.socket.send(encodeFrame(FRAME.cancel, id))
-      }
-    })
-    return true
-  }
-
-  /**
-   * Open a WebSocket through the tunnel.
-   *
-   * The edge performs the real handshake with its harness; this side only relays the
-   * outcome to the browser and then copies bytes both ways. Doing it that way keeps the
-   * harness's own origin and cookie checks in force.
-   *
-   * @param envId - the environment to reach.
-   * @param req - the browser's upgrade request.
-   * @param socket - the raw socket from the server's upgrade event.
-   * @param head - bytes already read from the socket.
-   * @param upstreamPath - path as the edge's harness should see it.
-   * @returns whether the request could be sent.
-   */
-  function proxyUpgrade(envId, req, socket, head, upstreamPath) {
-    const record = connections.get(envId)
-    if (record === undefined) {
-      logger.warn(`federation: ${envId} has no tunnel for an upgrade; answering 503`)
-      return false
-    }
-    logger.info(`federation: ${envId} UPGRADE ${upstreamPath}`)
-
-    const id = newRequestId()
-    const key = id.toString('hex')
-    let upgraded = false
-
-    const entryRef = {
-      onHead(head2) {
-        entryRef.upgraded = true
-        if (head2.status !== 101) {
-          socket.end(`HTTP/1.1 ${head2.status} ${head2.statusText}\r\nconnection: close\r\n\r\n`)
-          return
-        }
-        upgraded = true
-        // `rawHeaders` is the harness's own block, so `Sec-WebSocket-Accept` is the value
-        // it computed rather than one this proxy would have to invent.
-        if (Array.isArray(head2.rawHeaders)) {
-          const lines = [`HTTP/1.1 101 ${head2.statusText || 'Switching Protocols'}`]
-          for (let i = 0; i + 1 < head2.rawHeaders.length; i += 2) {
-            lines.push(`${head2.rawHeaders[i]}: ${head2.rawHeaders[i + 1]}`)
-          }
-          socket.write(`${lines.join('\r\n')}\r\n\r\n`)
-          return
-        }
-        socket.end('HTTP/1.1 502 Bad Gateway\r\nconnection: close\r\n\r\n')
-      },
-      onBody(payload) {
-        if (upgraded) socket.write(payload)
-      },
-      onEnd() {
-        if (upgraded) socket.end()
-      },
-      onClose() {
-        socket.destroy()
-      },
-    }
-    record.pending.set(key, entryRef)
-
-    record.socket.send(encodeJsonFrame(FRAME.requestHead, id, {
-      method: req.method,
-      path: upstreamPath,
-      headers: req.headers,
-      upgrade: true,
-    }))
-    if (head !== undefined && head.length > 0) {
-      record.socket.send(encodeFrame(FRAME.requestBody, id, head))
-    }
-    // After the 101, everything the browser sends is opaque bytes for the harness.
-    socket.on('data', (chunk) => record.socket.send(encodeFrame(FRAME.requestBody, id, chunk)))
-    // An upgraded socket arrives paused: attaching `data` alone never receives a byte.
-    socket.resume()
-    socket.on('close', () => {
-      if (record.pending.delete(key)) record.socket.send(encodeFrame(FRAME.cancel, id))
-    })
-    socket.on('error', () => {
-      if (record.pending.delete(key)) record.socket.send(encodeFrame(FRAME.cancel, id))
-    })
-    return true
-  }
-
-  /**
-   * Send one request into an edge without a browser on the other end.
-   *
-   * Same frames as `proxy`, but the caller supplies handlers instead of a response
-   * object — used by the main node to ask an environment about itself.
-   *
-   * @param envId - the environment to reach.
-   * @param request - `{ method, path, headers, body? }`; a body is sent as one frame.
-   * @param handlers - `{ onBody, onEnd, onError }`.
-   * @returns whether the request could be sent.
-   */
-  function request(envId, req, handlers) {
-    const record = connections.get(envId)
-    if (record === undefined) return false
-    const id = newRequestId()
-    const key = id.toString('hex')
-    record.pending.set(key, {
-      // Headers are part of the answer: a file chunk says how it was encoded and whether
-      // it was the last one, and dropping them here silently corrupted every compressed
-      // transfer — the receiver fell back to raw and wrote the zstd frame as content.
-      onHead(head) {
-        handlers.onHead?.(head)
-      },
-      onBody(payload) {
-        handlers.onBody(payload)
-      },
-      onEnd() {
-        handlers.onEnd()
-      },
-      onClose() {
-        handlers.onError?.(new Error('the tunnel closed before the environment answered'))
-      },
-    })
-    record.socket.send(encodeJsonFrame(FRAME.requestHead, id, {
-      method: req.method,
-      path: req.path,
-      headers: req.headers,
-    }))
-    if (req.body !== undefined && req.body !== '') {
-      record.socket.send(encodeFrame(FRAME.requestBody, id, Buffer.from(req.body, 'utf8')))
-    }
-    record.socket.send(encodeFrame(FRAME.requestEnd, id))
-    return true
-  }
-
-  /**
-   * Relay one peer's file stream to the edge that asked for it.
-   *
-   * Headers are forwarded first so the asking edge knows the status and size, then each
-   * body piece is forwarded as it arrives, then the end. Nothing is buffered.
-   *
-   * @param record - the edge that asked.
-   * @param frame - its request frame.
-   * @param payload - `{ toEnvId, path, range }`.
-   */
-  async function streamRelay(record, frame, payload) {
-    const toEnvId = typeof payload.toEnvId === 'string' ? payload.toEnvId.trim() : ''
-    const path = typeof payload.path === 'string' ? payload.path : ''
-    if (toEnvId === '' || path === '') {
-      sendAgentAnswer(record, frame, { ok: false, error: 'stream-file needs toEnvId and path' })
-      return
-    }
-    if (toEnvId === record.envId) {
-      sendAgentAnswer(record, frame, { ok: false, error: `an environment cannot stream to itself (${toEnvId})` })
-      return
-    }
-    if (!connections.has(toEnvId)) {
-      sendAgentAnswer(record, frame, { ok: false, error: `environment "${toEnvId}" is offline` })
-      return
-    }
-    const range = typeof payload.range === 'string' ? payload.range : undefined
-    let replied = false
-    const sendHead = (head) => {
-      replied = true
-      record.socket.send(encodeJsonFrame(FRAME.responseHead, frame.id, {
-        status: head.status,
-        statusText: head.statusText,
-        headers: head.headers ?? {},
-      }))
-    }
-    const sent = request(toEnvId, {
-      method: 'GET',
-      path: `/admin/file?path=${encodeURIComponent(path)}`,
-      headers: range === undefined ? {} : { range },
-    }, {
-      onHead(head) { sendHead(head) },
-      onBody(piece) {
-        if (!replied) return
-        record.socket.send(encodeFrame(FRAME.responseBody, frame.id, piece))
-      },
-      onEnd() {
-        if (!replied) {
-          sendAgentAnswer(record, frame, { ok: false, error: `environment "${toEnvId}" answered nothing` })
-          return
-        }
-        record.socket.send(encodeFrame(FRAME.responseEnd, frame.id))
-      },
-      onError(error) {
-        if (!replied) sendAgentAnswer(record, frame, { ok: false, error: String(error?.message ?? error) })
-        else record.socket.send(encodeFrame(FRAME.responseEnd, frame.id))
-      },
-    })
-    if (sent === false) sendAgentAnswer(record, frame, { ok: false, error: `environment "${toEnvId}" is offline` })
-  }
-
-  /**
-   * Carry one edge's request to another environment.
-   *
-   * @param record - the edge that asked.
-   * @param payload - `{ toEnvId, method, path, body }`.
-   * @returns the peer's parsed answer, or a refusal naming why it could not be sent.
-   */
-  async function relayToPeer(record, payload) {
-    const toEnvId = typeof payload.toEnvId === 'string' ? payload.toEnvId.trim() : ''
-    if (toEnvId === '') return { ok: false, error: 'relay needs a toEnvId' }
-    if (toEnvId === record.envId) return { ok: false, error: `an environment cannot relay to itself (${toEnvId})` }
-    if (toEnvId === SELF_ENV_ID) {
-      // The main node answering for itself would hand an edge its private surface.
-      return { ok: false, error: 'relay targets another environment, not the main node itself' }
-    }
-    if (!connections.has(toEnvId)) return { ok: false, error: `environment "${toEnvId}" is offline` }
-    const method = typeof payload.method === 'string' ? payload.method : 'GET'
-    const path = typeof payload.path === 'string' ? payload.path : ''
-    if (!path.startsWith('/admin/')) {
-      // A relayed request may only address the peer's daemon-owned routes. Letting it
-      // reach the harness would hand one edge a signed-in view of another's UI.
-      return { ok: false, error: 'relay may only address /admin/ paths' }
-    }
-    if (payload.binary === true) {
-      const answer = await relayBinaryOverTunnel(toEnvId, { method, path, body: payload.body })
-      if (answer.ok !== true) return { ok: false, error: answer.error }
-      return {
-        __binary: true,
-        ok: true,
-        headers: {
-          'x-dsh-chunk-encoding': answer.headers['x-dsh-chunk-encoding'] ?? 'raw',
-          'x-dsh-chunk-index': answer.headers['x-dsh-chunk-index'] ?? '0',
-          'x-dsh-chunk-eof': answer.headers['x-dsh-chunk-eof'] ?? '0',
-        },
-        body: answer.body,
-      }
-    }
-    return await relayOverTunnel(toEnvId, { method, path, body: payload.body })
-  }
-
-  /**
-   * Answer one edge's `agentMessage` frame.
-   *
-   * The sender is `record.envId` — taken from the connection, never from the payload —
-   * so `fromEnvId` below cannot be forged by whoever wrote the frame. The reply is an
-   * ordinary `responseHead`/`responseBody`/`responseEnd` trio on the same request id:
-   * the edge's sender is waiting on that id like any other request.
-   *
-   * @param record - the connection the frame arrived on.
-   * @param frame - the decoded frame.
-   */
-  async function receiveAgentMessage(record, frame) {
-    let answer
+  function relay(fromRecord, toRecord, key, frame) {
     try {
-      const payload = JSON.parse(frame.payload.toString('utf8'))
-      if (payload?.kind === 'relay') {
-        // One edge asking the main node to carry a request to a peer. The main node holds
-        // both tunnels, so it is the only node that can. The answer is the peer's own
-        // JSON body, relayed back on this same request id.
-        answer = await relayToPeer(record, payload)
-        sendAgentAnswer(record, frame, answer)
-        return
-      }
-      if (payload?.kind === 'stream-file') {
-        // An edge asking for a peer's file. The main node relays the peer's response
-        // pieces straight back on this request id, so the file streams end to end
-        // without ever being buffered whole.
-        await streamRelay(record, frame, payload)
+      toRecord.socket.send(frame)
+    } catch (error) {
+      logger.warn(`federation: relay to ${toRecord.envId} failed: ${error.message}`)
+      routes.delete(key)
+    }
+  }
+
+  /** Find the envId a stream should go to, following the open frame's target. */
+  function resolveTarget(record, payload) {
+    const toEnvId = typeof payload?.toEnvId === 'string' ? payload.toEnvId.trim() : ''
+    if (toEnvId === '' || toEnvId === SELF_ENV_ID) return { local: true }
+    if (toEnvId === record.envId) {
+      return { error: `an environment cannot stream to itself (${toEnvId})` }
+    }
+    if (connections.has(toEnvId)) return { next: toEnvId }
+    return { error: `environment "${toEnvId}" is unreachable` }
+  }
+
+  /** Handle one frame from an edge. */
+  function dispatch(record, frame) {
+    const key = frame.id.toString('hex')
+
+    if (frame.type === TOPOLOGY_FRAME) return
+
+    if (frame.type === FRAME.open) {
+      let payload
+      try {
+        payload = JSON.parse(frame.payload.toString('utf8'))
+      } catch (error) {
+        logger.warn(`federation: ${record.envId} opened a stream with invalid JSON: ${error.message}`)
         return
       }
       if (payload?.kind === 'list-environments') {
-        // The main node is the only one that knows the environment table, which is why
-        // an edge asks rather than reading its own empty registry.
-        answer = { ok: true, environments: listEnvironments?.() ?? [] }
-        sendAgentAnswer(record, frame, answer)
+        // Retired shape, still answered: an edge built before the topology push asks for
+        // the table this way, and refusing it would break a node mid-upgrade.
+        void receiveListEnvironments(record, frame)
         return
       }
-      const message = {
-        fromEnvId: record.envId,
-        fromSessionId: typeof payload.fromSessionId === 'string' ? payload.fromSessionId : '',
-        sessionId: payload.sessionId,
-        text: payload.text,
+      if (payload?.kind === 'agent-message') {
+        void receiveAgentMessage(record, frame, payload)
+        return
       }
-      const toEnvId = typeof payload.toEnvId === 'string' ? payload.toEnvId.trim() : ''
-      if (toEnvId === record.envId) {
-        // Forwarding a message back to its own sender is never what was meant, and it
-        // would let a buggy edge keep a conversation with itself alive forever.
-        answer = { ok: false, error: `an environment cannot message itself (${toEnvId})` }
-      } else if (toEnvId === '' || toEnvId === SELF_ENV_ID) {
-        answer = await deliver?.(message) ?? { ok: false, error: 'this node cannot deliver messages' }
-      } else if (forward === undefined) {
-        // An edge has no peers of its own; only the main node routes between them.
-        answer = { ok: false, error: 'this node does not route messages to other environments' }
-      } else if (!connections.has(toEnvId)) {
-        answer = { ok: false, error: `environment "${toEnvId}" is offline` }
-      } else {
-        answer = await forward(toEnvId, message)
+      const target = resolveTarget(record, payload)
+      if (target.error !== undefined) {
+        sendStreamRefusal(record, frame.id, target.error)
+        return
       }
-    } catch (error) {
-      answer = { ok: false, error: `malformed agent message: ${error?.message ?? error}` }
+      if (target.local === true) {
+        // A stream aimed at this node. The admin API answers it directly.
+        openLocalStream(record, key, payload)
+        return
+      }
+      const next = connections.get(target.next)
+      routes.set(key, { from: record.envId, to: target.next })
+      record.streams.add(key)
+      next.streams.add(key)
+      relay(record, next, key, frame)
+      return
     }
 
-    sendAgentAnswer(record, frame, answer)
+    // A stream this node opened to *that* edge: the answer comes back here, because the
+    // far end is the one that answered.
+    if (localStreams.has(key) && routes.get(key)?.to === record.envId) {
+      receiveLocalAnswer(frame, key)
+      return
+    }
+
+    const route = routes.get(key)
+    if (route === undefined) {
+      // A stream we never opened: either it finished and the far side is late, or the
+      // open was refused. Both are worth a name but not a crash.
+      record.orphans = (record.orphans ?? 0) + 1
+      if (record.orphans <= 5) {
+        logger.warn(`federation: ${record.envId} frame type ${frame.type} for unknown stream ${key.slice(0, 8)}`)
+      }
+      return
+    }
+    const peer = connections.get(route.from === record.envId ? route.to : route.from)
+    if (peer === undefined) {
+      routes.delete(key)
+      record.streams.delete(key)
+      return
+    }
+    relay(record, peer, key, frame)
+    if (frame.type === FRAME.end) {
+      routes.delete(key)
+      record.streams.delete(key)
+      peer.streams.delete(key)
+    }
   }
 
-  /**
-   * Answer one edge-originated call.
-   *
-   * @param record - the connection to answer on.
-   * @param frame - the frame being answered.
-   * @param answer - the JSON body.
-   */
-  function sendAgentAnswer(record, frame, answer) {
+  /** Refuse a stream at open time; the sender reads the reason from a zero-length end. */
+  function sendStreamRefusal(record, id, reason) {
+    logger.warn(`federation: refusing a stream from ${record.envId}: ${reason}`)
     try {
-      // A relayed file chunk is bytes, not JSON: send it as the body itself and let the
-      // headers say how to read it. Everything else stays a JSON object.
-      const binary = answer?.__binary === true
-      record.socket.send(encodeJsonFrame(FRAME.responseHead, frame.id, {
-        status: answer?.ok === false ? 502 : 200,
-        statusText: answer?.ok === false ? 'Bad Gateway' : 'OK',
-        headers: binary
-          ? { ...answer.headers, 'x-dsh-binary': '1' }
-          : { 'content-type': 'application/json; charset=utf-8' },
-      }))
-      const payload = binary
-        ? answer.body
-        : Buffer.from(JSON.stringify(answer), 'utf8')
-      record.socket.send(encodeFrame(FRAME.responseBody, frame.id, payload))
-      record.socket.send(encodeFrame(FRAME.responseEnd, frame.id))
-    } catch (error) {
-      logger.warn(`federation: could not answer ${record.envId}'s agent message: ${error.message}`)
+      record.socket.send(encodeFrame(FRAME.end, id))
+    } catch {
+      // The close handler cleans up.
     }
   }
 
+  /** Streams this node answered itself, by streamId(hex) → handlers. */
+  const localStreams = new Map()
+
   /**
-   * Ask one edge to deliver a message, from this node.
+   * Answer a stream addressed to this node.
    *
-   * Resolves with the edge's answer, or a failure when the tunnel is gone. It never
-   * hangs: a socket that dies mid-flight fails the pending entry through `onClose`.
-   *
-   * @param envId - the environment to reach.
-   * @param message - `{ fromEnvId, fromSessionId, sessionId, text }`.
-   * @param options.timeoutMs - how long to wait for the answer.
-   * @returns `{ ok: true, accepted: true }` or `{ ok: false, error }`.
+   * The gateway supplies `openLocalStream` through `handleLocalStream`; without it, a
+   * stream aimed here is refused rather than silently dropped.
    */
-  function sendAgentMessage(envId, message, { timeoutMs = 30_000 } = {}) {
-    return new Promise((resolve) => {
-      const settled = { done: false, body: '' }
-      const finish = (value) => {
-        if (settled.done) return
-        settled.done = true
-        resolve(value)
-      }
-      const timer = setTimeout(
-        () => finish({ ok: false, error: `environment "${envId}" did not answer in time` }),
-        timeoutMs,
-      )
-      const sent = request(envId, {
-        method: 'POST',
-        path: '/admin/agent-message',
-        headers: { 'content-type': 'application/json; charset=utf-8' },
-        body: JSON.stringify({
-          fromEnvId: message.fromEnvId,
-          fromSessionId: message.fromSessionId,
-          sessionId: message.sessionId,
-          text: message.text,
-        }),
-      }, {
-        onBody(chunk) { settled.body += chunk.toString('utf8') },
-        onEnd() {
-          clearTimeout(timer)
-          try {
-            finish(JSON.parse(settled.body))
-          } catch {
-            finish({ ok: false, error: `environment "${envId}" answered something that is not JSON` })
-          }
-        },
-      })
-      if (!sent) {
-        clearTimeout(timer)
-        finish({ ok: false, error: `environment "${envId}" is offline` })
-      }
+  function openLocalStream(record, key, payload) {
+    if (handleLocalStream === undefined) {
+      sendStreamRefusal(record, Buffer.from(key, 'hex'), 'this node does not answer streams')
+      return
+    }
+    localStreams.set(key, {
+      from: record.envId,
+      send(frame) {
+        record.socket.send(frame)
+      },
+    })
+    record.streams.add(key)
+    handleLocalStream(payload, {
+      write(piece) {
+        try {
+          record.socket.send(encodeFrame(FRAME.data, Buffer.from(key, 'hex'), piece))
+        } catch {
+          localStreams.delete(key)
+        }
+      },
+      end() {
+        localStreams.delete(key)
+        record.streams.delete(key)
+        try {
+          record.socket.send(encodeFrame(FRAME.end, Buffer.from(key, 'hex')))
+        } catch {
+          // Already gone.
+        }
+      },
     })
   }
 
-  /** Whether an environment currently has a live connection. */
+  /** Supplied by the gateway: how this node answers a stream aimed at itself. */
+  let handleLocalStream
+
+  /** The retired request-shaped list-environments call. */
+  async function receiveListEnvironments(record, frame) {
+    const table = listEnvironments === undefined ? [] : listEnvironments()
+    try {
+      record.socket.send(encodeJsonFrame(FRAME.data, frame.id, { ok: true, environments: table }))
+      record.socket.send(encodeFrame(FRAME.end, frame.id))
+    } catch (error) {
+      logger.warn(`federation: could not answer ${record.envId}: ${error.message}`)
+    }
+  }
+
+  /**
+   * Deliver one agent message that arrived from an edge.
+   *
+   * The sender's identity comes from the connection, never from the payload, so a frame
+   * cannot claim to come from another environment.
+   */
+  async function receiveAgentMessage(record, frame, payload) {
+    const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId.trim() : ''
+    const text = typeof payload.text === 'string' ? payload.text : ''
+    const toEnvId = typeof payload.toEnvId === 'string' ? payload.toEnvId.trim() : ''
+    if (sessionId === '' || text === '') {
+      sendStreamRefusal(record, frame.id, 'an agent message needs sessionId and text')
+      return
+    }
+    let answer
+    if (toEnvId === '' || toEnvId === SELF_ENV_ID || toEnvId === record.envId) {
+      answer = await deliver({ fromEnvId: record.envId, sessionId, text })
+    } else if (forward !== undefined) {
+      answer = await forward(toEnvId, { fromEnvId: record.envId, sessionId, text })
+    } else {
+      answer = { ok: false, error: 'this node forwards nothing' }
+    }
+    try {
+      record.socket.send(encodeJsonFrame(FRAME.data, frame.id, answer))
+      record.socket.send(encodeFrame(FRAME.end, frame.id))
+    } catch (error) {
+      logger.warn(`federation: could not answer ${record.envId}: ${error.message}`)
+    }
+  }
+
+  /**
+   * Open a stream toward one environment.
+   *
+   * The caller writes bytes and closes; routing, framing and delivery are this module's
+   * problem. `sink` receives the answer's bytes as they arrive.
+   *
+   * @param toEnvId - destination environment.
+   * @param options.port - unused on this side; kept for symmetry with the leaf.
+   * @param options.sink - `(piece) => void`, called for each answer piece.
+   * @param options.onEnd - called when the far end closed the stream.
+   * @param options.timeoutMs - how long to wait for the first byte.
+   * @returns `{ ok: true, send, end }` or `{ ok: false, error }`.
+   */
+  function openStream(toEnvId, { sink, onEnd, onError, port, timeoutMs = 300_000 } = {}) {
+    if (!connections.has(toEnvId)) {
+      return { ok: false, error: `environment "${toEnvId}" is offline` }
+    }
+    const record = connections.get(toEnvId)
+    const id = newRequestId()
+    const key = id.toString('hex')
+    routes.set(key, { from: SELF_ENV_ID, to: toEnvId })
+    record.streams.add(key)
+    localStreams.set(key, {
+      from: SELF_ENV_ID,
+      onData: sink,
+      onEnd,
+      onError,
+      timer: setTimeout(() => {
+        localStreams.delete(key)
+        routes.delete(key)
+        onError?.(`environment "${toEnvId}" did not answer in time`)
+      }, timeoutMs),
+    })
+    // Tell the far side where to attach: a port names a local listener there, and its
+    // absence means that node's daemon.
+    record.socket.send(encodeJsonFrame(FRAME.open, id, port === undefined ? { toEnvId } : { toEnvId, port }))
+    return {
+      ok: true,
+      id,
+      send(piece) {
+        if (record.socket.readyState !== 1) return
+        record.socket.send(encodeFrame(FRAME.data, id, piece))
+      },
+      end() {
+        record.socket.send(encodeFrame(FRAME.end, id))
+      },
+    }
+  }
+
+  /** Answer a data/end frame for a stream this node opened itself. */
+  function receiveLocalAnswer(frame, key) {
+    const entry = localStreams.get(key)
+    if (entry === undefined) return
+    if (frame.type === FRAME.data) {
+      entry.onData?.(frame.payload)
+      return
+    }
+    if (frame.type === FRAME.end) {
+      clearTimeout(entry.timer)
+      localStreams.delete(key)
+      routes.delete(key)
+      entry.onEnd?.()
+    }
+  }
+
+  /** Whether the hub has a live tunnel to this environment. */
   function isOnline(envId) {
     return connections.has(envId)
   }
 
-  /** Ids of every connected environment. */
+  /** Every environment id with a live tunnel. */
   function ids() {
     return [...connections.keys()]
   }
 
-  /** Close every connection, for shutdown. */
-  function close() {
-    for (const [, record] of connections) record.socket.close()
-    connections.clear()
-  }
-
-  /** Resolve a presented token to its environment, or undefined. */
-  function verify(token) {
-    return token === '' ? undefined : verifyToken(token)
-  }
-
-  /**
-   * Send one HTTP request into an edge and return its parsed JSON answer.
-   *
-   * @param envId - target environment.
-   * @param request - `{ method, path, body }`; a string body is sent as-is.
-   * @param options.timeoutMs - how long to wait.
-   * @returns the parsed answer, or `{ ok: false, error }`.
-   */
-  function relayOverTunnel(envId, outbound, { timeoutMs = 60_000 } = {}) {
-    // Refuse before waiting: an offline peer would otherwise cost the full timeout for
-    // an answer that can never arrive.
-    if (!connections.has(envId)) {
-      return Promise.resolve({ ok: false, error: `environment "${envId}" is offline` })
-    }
-    return new Promise((resolve) => {
-      const settled = { done: false, body: '' }
-      const finish = (value) => {
-        if (settled.done) return
-        settled.done = true
-        resolve(value)
-      }
-      const timer = setTimeout(() => finish({ ok: false, error: `environment "${envId}" did not answer in time` }), timeoutMs)
-      const sent = request(envId, {
-        method: outbound.method,
-        path: outbound.path,
-        headers: { 'content-type': 'application/json; charset=utf-8' },
-        body: typeof outbound.body === 'string'
-          ? outbound.body
-          : (outbound.body === undefined ? undefined : JSON.stringify(outbound.body)),
-      }, {
-        onBody(chunk) { settled.body += chunk.toString('utf8') },
-        onEnd() {
-          clearTimeout(timer)
-          try {
-            finish(JSON.parse(settled.body === '' ? '{}' : settled.body))
-          } catch {
-            finish({ ok: false, error: `environment "${envId}" answered something that is not JSON` })
-          }
-        },
-        onError(error) {
-          clearTimeout(timer)
-          finish({ ok: false, error: String(error?.message ?? error) })
-        },
-      })
-      if (sent === false) {
-        clearTimeout(timer)
-        finish({ ok: false, error: `environment "${envId}" is offline` })
-      }
-    })
-  }
-
-  /**
-   * Send one HTTP request into an edge and return its response **bytes**.
-   *
-   * The JSON sibling above decodes the answer as text; a file chunk is not text, and
-   * decoding it as UTF-8 would corrupt every byte above 0x7f. This keeps the body as a
-   * Buffer and lifts the few response headers that describe it.
-   *
-   * @param envId - target environment.
-   * @param request - `{ method, path, body }`.
-   * @param options.timeoutMs - how long to wait.
-   * @returns `{ ok: true, status, headers, body }` or `{ ok: false, error }`.
-   */
-  function relayBinaryOverTunnel(envId, outbound, { timeoutMs = 60_000 } = {}) {
-    if (!connections.has(envId)) {
-      return Promise.resolve({ ok: false, error: `environment "${envId}" is offline` })
-    }
-    return new Promise((resolve) => {
-      // Collect fragments and join once. Concatenating per fragment re-copies everything
-      // received so far, which is quadratic in the number of fragments and was measurable
-      // on a 512 KiB chunk that arrives in a handful of pieces.
-      const settled = { done: false, parts: [], head: undefined }
-      const finish = (value) => {
-        if (settled.done) return
-        settled.done = true
-        resolve(value)
-      }
-      const timer = setTimeout(() => finish({ ok: false, error: `environment "${envId}" did not answer in time` }), timeoutMs)
-      const sent = request(envId, {
-        method: outbound.method,
-        path: outbound.path,
-        headers: { 'content-type': 'application/json; charset=utf-8' },
-        body: typeof outbound.body === 'string'
-          ? outbound.body
-          : (outbound.body === undefined ? undefined : JSON.stringify(outbound.body)),
-      }, {
-        onHead(head) { settled.head = head },
-        onBody(chunk) { settled.parts.push(chunk) },
-        onEnd() {
-          clearTimeout(timer)
-          const status = settled.head?.status ?? 200
-          if (status !== 200) {
-            finish({ ok: false, error: settled.body.toString('utf8').slice(0, 300) || `status ${status}` })
-            return
-          }
-          finish({ ok: true, status, headers: settled.head?.headers ?? {}, body: Buffer.concat(settled.parts) })
-        },
-        onError(error) {
-          clearTimeout(timer)
-          finish({ ok: false, error: String(error?.message ?? error) })
-        },
-      })
-      if (sent === false) {
-        clearTimeout(timer)
-        finish({ ok: false, error: `environment "${envId}" is offline` })
-      }
-    })
-  }
-
-  /**
-   * Stream one file from an edge straight into a local stream.
-   *
-   * The tunnel already relays body pieces as they arrive (`proxy` does exactly this for
-   * the browser), so a file does not need to be sliced: one request, one response, and
-   * the bytes flow through. This is the whole reason the chunk protocol could go away.
-   *
-   * @param envId - target environment.
-   * @param filePath - absolute path on that environment.
-   * @param sink - `(piece) => void`, called for each body piece as it arrives.
-   * @param options - `{ range, timeoutMs }`; a range asks for part of the file.
-   * @returns `{ ok: true, status, headers, bytes }` or `{ ok: false, error }`.
-   */
-  function streamFileFromTunnel(envId, filePath, sink, { range, timeoutMs = 300_000 } = {}) {
-    if (!connections.has(envId)) {
-      return Promise.resolve({ ok: false, error: `environment "${envId}" is offline` })
-    }
-    return new Promise((resolve) => {
-      const settled = { done: false, head: undefined, bytes: 0 }
-      const finish = (value) => {
-        if (settled.done) return
-        settled.done = true
-        resolve(value)
-      }
-      const timer = setTimeout(() => finish({ ok: false, error: `environment "${envId}" did not answer in time` }), timeoutMs)
-      const headers = range === undefined ? {} : { range }
-      const sent = request(envId, {
-        method: 'GET',
-        path: `/admin/file?path=${encodeURIComponent(filePath)}`,
-        headers,
-      }, {
-        onHead(head) {
-          settled.head = head
-          if (head.status !== 200 && head.status !== 206) {
-            // Refusals are small JSON bodies; let the caller read the reason.
-            settled.head = head
-          }
-        },
-        onBody(piece) {
-          settled.bytes += piece.length
-          if (settled.head === undefined || (settled.head.status !== 200 && settled.head.status !== 206)) return
-          sink(piece)
-        },
-        onEnd() {
-          clearTimeout(timer)
-          if (settled.head !== undefined && settled.head.status !== 200 && settled.head.status !== 206) {
-            finish({ ok: false, error: `environment "${envId}" answered ${settled.head.status}` })
-            return
-          }
-          finish({ ok: true, status: settled.head?.status ?? 200, headers: settled.head?.headers ?? {}, bytes: settled.bytes })
-        },
-        onError(error) {
-          clearTimeout(timer)
-          finish({ ok: false, error: String(error?.message ?? error) })
-        },
-      })
-      if (sent === false) {
-        clearTimeout(timer)
-        finish({ ok: false, error: `environment "${envId}" is offline` })
-      }
-    })
-  }
-
-  /** The environment table an edge asks for; empty when this hub was given no source. */
+  /** The environments this hub can reach, for a tool that lists them. */
   function listKnownEnvironments() {
-    return listEnvironments?.() ?? []
+    return listEnvironments === undefined ? [] : listEnvironments()
+  }
+
+  /** The record for one environment, or undefined. */
+  function recordOf(envId) {
+    return connections.get(envId)
+  }
+
+  /** Close every tunnel. */
+  function close() {
+    for (const [, record] of connections) {
+      try {
+        // `terminate` rather than `close`: a close is a handshake that waits for the peer
+        // to answer, and a peer that has already gone (or is wedged) leaves the socket —
+        // and the process — alive. Shutdown must not depend on the other end cooperating.
+        record.socket.terminate()
+        // `terminate` closes the WebSocket layer; the TCP socket underneath it is only
+        // released once it is destroyed too. Without this the process keeps running with
+        // a socket nobody is listening on.
+        record.socket._socket?.destroy()
+      } catch {
+        // Already gone.
+      }
+    }
+    connections.clear()
+    routes.clear()
+    localStreams.clear()
+  }
+
+  /** Resolve a token to its environment. */
+  function verify(token) {
+    return verifyToken(token)
   }
 
   return {
-    accept: register,
-    verify,
-    proxy,
-    proxyUpgrade,
-    request,
-    sendAgentMessage,
-    broadcastTopology,
-    relayOverTunnel,
-    relayBinaryOverTunnel,
-    streamFileFromTunnel,
-    listEnvironments: listKnownEnvironments,
+    /** Attach one authenticated edge socket. */
+    accept(environment, socket, claim) {
+      return register(environment, socket, claim)
+    },
+    /** How this node answers a stream aimed at itself; set once at mount. */
+    setLocalStreamHandler(handler) {
+      handleLocalStream = handler
+    },
+    /** Called by `dispatch` for a data/end frame on a stream this node opened. */
+    receiveLocalAnswer,
+    /**
+     * Deliver one agent message as if it had arrived from `fromEnvId`.
+     *
+     * Exposed for tests that drive the path from the receiving side; the production
+     * caller is `receiveAgentMessage`, which takes the sender from the connection.
+     */
+    deliverForTest(fromEnvId, body) {
+      return deliver({ fromEnvId, sessionId: body.sessionId, text: body.text })
+    },
+    openStream,
     isOnline,
     ids,
+    listKnownEnvironments,
+    recordOf,
+    broadcastTopology,
+    verify,
     close,
   }
 }
 
 /**
- * Read the token an edge presented.
+ * The token an incoming edge presents.
  *
- * Query parameter first: a browser's WebSocket API cannot set a header, and an edge may
- * eventually run somewhere that cannot either. `Authorization` is accepted as well so a
- * scripted client is not forced to put a secret in a URL.
+ * Accepted from the query string, because a browser cannot set headers on a WebSocket
+ * upgrade, and from a bearer header for a non-browser client that can.
  *
  * @param req - the upgrade request.
- * @returns the token, or an empty string.
+ * @returns the token, or an empty string when none was presented.
  */
 export function tokenOf(req) {
   const url = req.url ?? ''
@@ -911,7 +576,7 @@ export function tokenOf(req) {
   return ''
 }
 
-/** Create a WebSocket server that only accepts our path. */
+/** The server an edge connects to; a thin wrapper so the entry file stays readable. */
 export function createTunnelServer() {
   return new WebSocketServer({ noServer: true })
 }
