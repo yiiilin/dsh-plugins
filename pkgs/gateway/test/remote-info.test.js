@@ -384,6 +384,14 @@ test('resolveWindow treats both bounds as optional and validates the rest', () =
   // asked from offset N, which is valid.
   assert.deepEqual(resolveWindow(100, 90, 50), { ok: true, offset: 90, length: 10 })
   assert.equal(resolveWindow(100, -1, 10).ok, false)
+  // A file past the window cap is not an error: an omitted length means "as much as one
+  // call can move", and the caller continues from there. Refusing made a >2 GiB file
+  // unreadable even by `describe`.
+  const HUGE = 2.5 * 1024 ** 3
+  assert.deepEqual(resolveWindow(HUGE), { ok: true, offset: 0, length: MAX_FILE_BYTES })
+  assert.deepEqual(resolveWindow(HUGE, MAX_FILE_BYTES), { ok: true, offset: MAX_FILE_BYTES, length: HUGE - MAX_FILE_BYTES })
+  // An explicitly oversized window is still the caller's mistake.
+  assert.equal(resolveWindow(HUGE, 0, HUGE).ok, false)
   assert.equal(resolveWindow(100, 0, -5).ok, false)
 })
 

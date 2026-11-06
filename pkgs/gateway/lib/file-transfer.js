@@ -45,7 +45,15 @@ export function resolveWindow(size, offset, length) {
   if (!Number.isSafeInteger(start) || start < 0) return { ok: false, error: 'offset must be a non-negative integer' }
   if (start > size) return { ok: false, error: `offset ${start} is past the end of the file (${size} bytes)` }
   const available = size - start
-  const wanted = length === undefined || length === null || length === '' ? available : Number(length)
+  const omitted = length === undefined || length === null || length === ''
+  // An omitted length means "to the end", but one call can only move a window. For a
+  // file larger than the cap that is not an error — it is the caller asking for as much
+  // as can be had, and the answer is one full window. Refusing here made every file over
+  // the cap unreadable even by `describe`, which reports the size and nothing else.
+  if (omitted) {
+    return { ok: true, offset: start, length: Math.min(available, MAX_FILE_BYTES) }
+  }
+  const wanted = Number(length)
   if (!Number.isSafeInteger(wanted) || wanted < 0) return { ok: false, error: 'length must be a non-negative integer' }
   if (wanted > MAX_FILE_BYTES) {
     return { ok: false, error: `length ${wanted} exceeds the ${MAX_FILE_BYTES} byte window limit` }
