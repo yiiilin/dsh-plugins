@@ -419,8 +419,12 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, log
       owner.send(encodeFrame(FRAME.data, id, piece))
     })
     client.on('end', () => {
+      logger.info(`federation: local stream ${key.slice(0, 8)} ended by the daemon`)
       localStreams.delete(key)
       owner.send(encodeFrame(FRAME.end, id))
+    })
+    client.on('close', () => {
+      logger.info(`federation: local stream ${key.slice(0, 8)} closed`)
     })
     client.on('error', (error) => {
       logger.warn(`federation: local stream to 127.0.0.1:${port} failed: ${error.message}`)
@@ -436,7 +440,8 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, log
    * created when the `open` arrived.
    */
   function writeLocal(id, piece) {
-    const client = localStreams.get(id.toString('hex'))
+    const key = id.toString('hex')
+    const client = localStreams.get(key)
     if (client === undefined) return
     client.write(piece)
   }
@@ -446,8 +451,13 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, log
     const key = id.toString('hex')
     const client = localStreams.get(key)
     if (client === undefined) return
-    localStreams.delete(key)
-    client.end()
+    // Nothing is closed here. A stream's `end` means "the caller has finished sending",
+    // and for HTTP that happens before the answer exists — closing on it discarded every
+    // response that took longer than its request, which is exactly why a small
+    // `/admin/state` worked while `/admin/remote-sessions` came back empty. The socket is
+    // closed when the daemon ends it (`client.on('end')`), which is the real end of the
+    // exchange.
+    client.write(Buffer.alloc(0))
   }
 
   return {

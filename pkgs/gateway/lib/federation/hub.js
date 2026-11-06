@@ -75,8 +75,8 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    */
   const flows = new Map()
 
-  /** Reader for bytes the hub hands to itself; the local end of a stream. */
-  const localReader = new FrameReader()
+  /** One reader per local stream, keyed by streamId(hex). */
+  const localReaders = new Map()
 
   /**
    * Record a relayed stream between the link it arrived on and the link it leaves by.
@@ -117,9 +117,18 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    * in-process shape that could drift from the real one.
    */
   function receiveLocalAnswerBytes(bytes, key) {
+    // One reader per stream. A shared reader interleaves the pieces of every concurrent
+    // stream into one buffer, so frame boundaries land in the wrong stream — the symptom is
+    // an answer arriving for a request that is still waiting, and the request that owns
+    // those bytes never completing.
+    let reader = localReaders.get(key)
+    if (reader === undefined) {
+      reader = new FrameReader()
+      localReaders.set(key, reader)
+    }
     let frames
     try {
-      frames = localReader.push(bytes)
+      frames = reader.push(bytes)
     } catch (error) {
       logger.warn(`federation: a local stream received something unreadable: ${error.message}`)
       return
@@ -771,6 +780,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     if (frame.type === FRAME.end) {
       clearTimeout(entry.timer)
       localStreams.delete(key)
+      localReaders.delete(key)
       routes.delete(key)
       entry.onEnd?.()
     }

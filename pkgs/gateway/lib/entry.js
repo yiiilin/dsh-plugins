@@ -338,7 +338,10 @@ async function handleHttp({ req, res, url, listEnvironments, local, root, tunnel
           const value = line.slice(at + 1).trim()
           // Length and framing are the browser's business now, and a stale
           // `content-length` would truncate a streamed body.
-          if (name === 'transfer-encoding' || name === 'content-length' || name === 'connection') continue
+          // `content-length` is kept: it describes the body the far side actually sent,
+          // and dropping it left the browser reading an empty answer. Only the framing the
+          // near side owns is dropped — `transfer-encoding` and `connection`.
+          if (name === 'transfer-encoding' || name === 'connection') continue
           // A cookie the far harness scoped to `/` would be sent to the portal and to every
           // other environment; scoped to this environment's prefix, it only comes back
           // here. `res.writeHead` takes one value per name, so several cookies have to be
@@ -427,8 +430,15 @@ async function handleHttp({ req, res, url, listEnvironments, local, root, tunnel
       if (name.toLowerCase() === 'transfer-encoding') continue
       lines.push(`${name}: ${Array.isArray(value) ? value.join(', ') : value}`)
     }
+    // A request with no body still needs to say so. Without a length the far daemon waits
+    // for one that will never come, and the caller sees a 200 with an empty body — the
+    // exact symptom that made every proxied `/admin` read empty.
+    if (req.headers['content-length'] === undefined && req.method !== 'GET' && req.method !== 'HEAD') {
+      lines.push('content-length: 0')
+    }
     lines.push('Connection: close')
-    opened.send(Buffer.from(`${lines.join('\r\n')}\r\n\r\n`, 'utf8'))
+    const wire = Buffer.from(`${lines.join('\r\n')}\r\n\r\n`, 'utf8')
+    opened.send(wire)
     req.on('data', (piece) => opened.send(piece))
     req.on('end', () => opened.end())
     // A browser that goes away must not leave the far side working for nobody.
