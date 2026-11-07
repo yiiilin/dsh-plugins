@@ -48,6 +48,15 @@ export function createAdmin({
   harnessUrl,
   getPeer,
   reachableEnvironments,
+  /**
+   * Whether this node keeps a registry of its own.
+   *
+   * Derived from the configuration unless the caller supplies a check: `accept` is what
+   * decides it, and a caller mounting the router directly has already put that on
+   * `config`. The callback exists for the real daemon, where the answer is the same but
+   * computed from a live value.
+   */
+  managesRegistry = () => config.accept !== false,
 }) {
   /** id -> `{ at, value }` for the last known connection state. */
   const statusCache = new Map()
@@ -96,7 +105,7 @@ export function createAdmin({
    * @returns one node envelope; `sessions` is present only when the node answered.
    */
   async function askNode(environment) {
-    const node = { id: environment.id, role: 'edge', label: environment.label }
+    const node = { id: environment.id, label: environment.label }
     if (!hub.isOnline(environment.id)) {
       return { ...node, state: 'offline', error: `environment "${environment.id}" is offline` }
     }
@@ -150,11 +159,11 @@ export function createAdmin({
    * @returns `{ ok, partial, nodes }`; `partial` is true when any node did not answer.
    */
   async function overview(sessionId) {
-    const self = { id: SELF_NODE_ID, role: config.role, state: 'ok', sessions: sessions(sessionId) }
-    // An edge manages no environments, so its overview is itself: that is the answer the
-    // main node relays into the table, and it is also what an operator reading the edge
-    // directly should see.
-    if (config.role !== 'main') return { ok: true, partial: false, nodes: [self] }
+    const self = { id: SELF_NODE_ID, state: 'ok', sessions: sessions(sessionId) }
+    // A node that keeps no registry has no other environments to ask about, so its
+    // overview is itself: that is what an upstream relays into its own table, and it is
+    // also what an operator reading this node directly should see.
+    if (managesRegistry?.() !== true) return { ok: true, partial: false, nodes: [self] }
     const nodes = await Promise.all([self, ...registry.list().map(askNode)])
     return { ok: true, partial: nodes.some((node) => node.state !== 'ok'), nodes }
   }
@@ -180,14 +189,17 @@ export function createAdmin({
     if (pathname === '/admin/state' && method === 'GET') {
       json(res, 200, {
         ok: true,
-        role: config.role,
+        manages: managesRegistry?.() === true,
+        // This node's own setting, echoed so its own pages can honour it. It says nothing
+        // about who may reach this node — that is what being registered means.
+        switcher: config.switcher ?? 'auto',
         host: config.host,
         port: config.port,
         self: profileSelf === undefined ? undefined : profileSelf(),
         // What a switcher can offer. The main node enumerates its registry; an edge has
         // no registry but does know which peers it can reach, and without them its own
         // switcher had nothing to show even though navigation would have worked.
-        environments: config.role === 'main'
+        environments: managesRegistry?.() === true
           ? registry.list().map(describe)
           : (reachableEnvironments?.() ?? []).map((row) => ({
             id: row.envId,
@@ -388,9 +400,10 @@ export function createAdmin({
       return true
     }
 
-    // Everything below belongs to the main node. An edge owns no other machines.
-    if (config.role !== 'main') {
-      json(res, 404, { ok: false, error: 'this daemon is an edge; it manages no environments' })
+    // Everything below edits this node's own registry. A node that keeps none owns no
+    // other machines, so there is nothing here to edit.
+    if (managesRegistry?.() !== true) {
+      json(res, 404, { ok: false, error: 'this daemon keeps no registry; it manages no environments' })
       return true
     }
 

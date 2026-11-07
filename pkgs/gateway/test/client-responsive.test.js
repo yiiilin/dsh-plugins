@@ -242,7 +242,7 @@ test('the environment switcher is withdrawn in the collapsed sidebar', () => {
   const client = loadClient({
     fetch: async (input) => {
       requests.push(input instanceof URL ? input.href : String(input))
-      return { status: 200, text: async () => JSON.stringify({ ok: true, self: { role: 'main' }, environments: [] }) }
+      return { status: 200, text: async () => JSON.stringify({ ok: true, self: {}, manages: true, environments: [] }) }
     },
   })
   const { makeSwitcher, ZH } = client.exported.__test

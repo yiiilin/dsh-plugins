@@ -34,7 +34,7 @@ const ENDPOINT = `${BASE}admin/credential`
 const SESSIONS = `${BASE}admin/sessions`
 
 /** What `/admin/state` answers for a main node with no environments registered. */
-const MAIN_STATE = { status: 200, body: { ok: true, role: 'main', self: { role: 'main' }, environments: [] } }
+const MAIN_STATE = { status: 200, body: { ok: true, manages: true, self: {}, environments: [] } }
 
 // ===== a React-shaped hook runtime =====
 
@@ -327,9 +327,9 @@ test('the credential page shows its own copy and no data about the credential in
 })
 
 test('the environment page keeps the shape it had: edge note, failure note, create form', async () => {
-  // The panel takes the role from `self`, which is what `/admin/state` reports about
-  // this process; the top-level `role` is the same value.
-  const edge = mount({ answer: (url) => (url === STATE ? { status: 200, body: { ok: true, role: 'edge', self: { role: 'edge' }, environments: [] } } : undefined) })
+  // The panel reads whether this node keeps a registry, which is what decides if there
+  // are environments to manage here.
+  const edge = mount({ answer: (url) => (url === STATE ? { status: 200, body: { ok: true, manages: false, self: {}, environments: [] } } : undefined) })
   await edge.settle()
   const { ZH } = edge.exported.__test
   assert.ok(edge.text().includes(ZH.edgeNote), 'an edge says it manages no environments')
@@ -349,8 +349,8 @@ test('the environment page keeps the shape it had: edge note, failure note, crea
       status: 200,
       body: {
         ok: true,
-        role: 'main',
-        self: { role: 'main' },
+        manages: true,
+        self: {},
         environments: [{ id: 'nalpha', label: 'alpha', online: true, hostname: 'alpha.example', lastSeen: 1_700_000_000_000 }],
       },
     } : undefined),

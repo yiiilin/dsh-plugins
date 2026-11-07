@@ -108,7 +108,7 @@ async function startDaemon(home, config = {}) {
     port: 0,
     rootEmbedded: false,
     systemdUnit: '',
-    role: 'main',
+    accept: true,
     profile: '',
     ...config,
   })
@@ -185,7 +185,7 @@ function fakeHub({ online, replies }) {
       // The shape an edge's own daemon answers with: one `self` envelope.
       const envelope = reply.kind === 'envelope'
         ? reply.nodes
-        : [{ id: 'self', role: 'edge', state: 'ok', sessions: reply.sessions ?? [] }]
+        : [{ id: 'self', state: 'ok', sessions: reply.sessions ?? [] }]
       if (reply.kind === 'barrier') {
         barriers += 1
         held.push(() => answer({ ok: true, partial: false, nodes: envelope }))
@@ -231,7 +231,7 @@ function session(id, overrides = {}) {
  * daemon's wiring (which the mounted tests cover).
  */
 async function withFakeHub({
-  online = [], replies = {}, role = 'main', sessions = () => [], environments = [ALPHA, BETA], relayTimeoutMs,
+  online = [], replies = {}, keepsRegistry = true, sessions = () => [], environments = [ALPHA, BETA], relayTimeoutMs,
 }, body) {
   const hub = fakeHub({ online, replies })
   // The admin reaches other nodes through the peer accessor. This stub drives the fake
@@ -269,7 +269,7 @@ async function withFakeHub({
   const admin = createAdmin({
     registry: fakeRegistry(environments),
     hub,
-    config: { role },
+    config: { accept: keepsRegistry },
     sessions,
     relayTimeoutMs,
     getPeer,
@@ -325,7 +325,7 @@ test('the overview includes this node\'s own sessions, marked with the one askin
     assert.equal(body.partial, false, 'nothing failed, so the answer is whole')
     assert.equal(body.nodes.length, 1, 'no environments are registered, so there is one node')
     const self = node(body, 'self')
-    assert.equal(self.role, 'main', 'the node the panel is read on says which role it is')
+    assert.equal(self.state, 'ok', 'the node the panel is read on reports its own health')
     assert.equal(self.state, 'ok')
     assert.equal(self.sessions.length, 1, 'the pairing session is live')
     const [only] = self.sessions
@@ -564,7 +564,7 @@ test('an edge reports only itself, which is what the main node relays', async ()
   // its own sessions out of. An edge that listed environments too would make the main
   // node's table depend on a registry the edge does not have.
   await withFakeHub({
-    role: 'edge',
+    keepsRegistry: false,
     online: [ALPHA.id],
     sessions: () => [session('e1', { current: true })],
   }, async ({ origin, hub }) => {
@@ -574,9 +574,19 @@ test('an edge reports only itself, which is what the main node relays', async ()
     assert.equal(body.partial, false)
     assert.equal(body.nodes.length, 1, 'an edge aggregates nothing: it has no environments')
     const self = node(body, 'self')
-    assert.equal(self.role, 'edge')
     assert.equal(self.state, 'ok')
     assert.deepEqual(self.sessions.map((one) => one.id), ['e1'])
     assert.equal(hub.sent.length, 0, 'and asks nobody over a tunnel')
+  })
+})
+
+test('the state route echoes this node\'s own switcher setting', async () => {
+  // The setting is about the person sitting here, not about who may reach this node: it
+  // only decides whether a control for leaving is drawn on this node's own pages.
+  await withFakeHub({ keepsRegistry: true, environments: [] }, async ({ origin }) => {
+    const answer = await fetch(`${origin}/admin/state`)
+    const body = await answer.json()
+    assert.equal(body.switcher, 'auto', 'the default is to show it when there is somewhere to go')
+    assert.equal(body.manages, true)
   })
 })

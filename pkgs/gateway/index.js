@@ -97,9 +97,24 @@ export const Config = z.object({
    * Reported at mount so the operator learns these no longer decide anything instead of
    * believing an old key is still in force.
    */
-  role: z.union([z.const('main'), z.const('edge')]).default('main'),
   mainUrl: z.string().default(''),
   token: z.string().default(''),
+
+  /**
+   * Whether this node's own pages offer the environment switcher.
+   *
+   * `switcher` is about *this* node only, and it is deliberately not a statement about who
+   * may reach whom. Whether a node accepts tunnels is `accept`; where it dials is
+   * `upstreams`; and a node that is reachable at all is reachable by everyone who can
+   * route to it — that is what registering it means. This key decides one thing: whether
+   * the person sitting at this node sees a control for leaving it.
+   *
+   * - `auto`   — shown when there is somewhere to switch to. The default.
+   * - `always` — shown even with nothing to switch to, which reads as an empty control
+   *              rather than as a broken one.
+   * - `never`  — never shown here. This node is still reachable from elsewhere.
+   */
+  switcher: z.union([z.const('auto'), z.const('always'), z.const('never')]).default('auto'),
 
   registryPath: z.string().default(''),
   /** Profile this process serves. Empty reads DSH_PROFILE, then `main`. */
@@ -356,7 +371,9 @@ export function apply(ctx, config) {
       plugins = undefined
     }
     return {
-      role: config.role,
+      // What callers actually branch on: whether this node manages a registry at all.
+      manages: config.accept === true,
+      switcher: config.switcher,
       host: config.host,
       port: config.port,
       // The listener this node's own UI answers on. A peer needs it to address the mux
@@ -780,6 +797,10 @@ export function apply(ctx, config) {
      */
     // A function, not the object: `createAdmin` is built before `peer` exists.
     getPeer: () => peer,
+    // A function, not the value: `createAdmin` is built before this is defined, and
+    // destructuring would resolve it at construction time. Named differently from the
+    // closure it returns, because a same-named arrow here would call itself.
+    managesRegistry: () => keepsRegistry(),
     // An edge's peers, from the topology its upstreams pushed. Empty on the main node,
     // which answers from its registry instead.
     reachableEnvironments: () => agent?.topology?.nodes()
@@ -841,9 +862,13 @@ export function apply(ctx, config) {
   // A config produced before `upstreams` existed has the key absent rather than empty,
   // because the schema default only applies to a config that went through validation.
   const declaredUpstreams = Array.isArray(config.upstreams) ? config.upstreams : []
+  // `typeof === 'string'` matters: an unvalidated config has these keys absent, and
+  // `undefined !== ''` is true — which made every such mount dial `undefined` and hang
+  // waiting for a socket to a URL that is not one.
+  const retiredUpstream = typeof config.mainUrl === 'string' && config.mainUrl !== ''
   const upstreamList = declaredUpstreams.length > 0
     ? declaredUpstreams
-    : (config.role === 'edge' && config.mainUrl !== '' ? [{ url: config.mainUrl, token: config.token }] : [])
+    : (retiredUpstream ? [{ url: config.mainUrl, token: config.token }] : [])
 
   const agent = upstreamList.length === 0
     ? undefined
@@ -890,13 +915,30 @@ export function apply(ctx, config) {
   })
 
   /**
+   * Whether this node keeps a registry of its own.
+   *
+   * There is no role any more, and this is what the old `role === 'main'` branches were
+   * really asking: a node that accepts tunnels admits peers by token, and the tokens live
+   * in a registry. A node that accepts nobody has nothing to look up, so it answers from
+   * the topology its upstreams pushed instead.
+   *
+   * The two are not exclusive — a node can accept and dial at once — which is why this
+   * asks about the registry rather than about a kind of node.
+   */
+  // `!== false`, not `=== true`: a caller may hand `apply` a configuration that never went
+  // through the schema, where `accept` is simply absent. Absent means the default, and the
+  // default is that this node accepts tunnels — reading it strictly turned every such
+  // mount into a leaf with no registry.
+  const keepsRegistry = () => config.accept !== false
+
+  /**
    * The environments this node can reach, by id.
    *
    * A main node knows its registry; a leaf knows what its upstreams pushed. Both answer
    * here so a caller never has to know which kind of node it is running on.
    */
   const reachableIds = () => {
-    if (config.role === 'main') return registry.list().filter((one) => one.enabled !== false).map((one) => one.id)
+    if (keepsRegistry()) return registry.list().filter((one) => one.enabled !== false).map((one) => one.id)
     return agent?.topology?.nodes()
       ?.filter((row) => row.envId !== agent?.topology?.selfId)
       .map((row) => row.envId) ?? []
@@ -955,7 +997,7 @@ export function apply(ctx, config) {
     // One source for both roles: the main node reads its registry, a leaf reads what its
     // upstreams pushed. Asking the upstream on demand was the previous shape, and it left
     // every leaf blind until its first call.
-    if (config.role === 'main') {
+    if (keepsRegistry()) {
       return [
         { envId: 'self', label: config.name === '' ? 'this node' : config.name, online: true },
         ...registry.list().map((environment) => ({
@@ -1126,7 +1168,7 @@ export function apply(ctx, config) {
         environments = []
       }
       loaded = true
-      logger.info(`daemon: ${environments.length} environment(s) registered (role ${config.role})`)
+      logger.info(`daemon: ${environments.length} environment(s) registered`)
       if (cancelled) return
 
       // Driven by whether there are upstreams to dial, not by `role`: a node can accept

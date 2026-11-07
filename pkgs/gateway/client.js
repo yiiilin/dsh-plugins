@@ -19,12 +19,12 @@ window.__ModuleLoader__.load({
       sectionEnvironments: '环境',
       create: '创建环境', creating: '创建中…',
       tokenOnce: '这个令牌只显示一次，请现在复制',
-      tokenHint: '把它填到那台机器 dsh 的 daemon 配置：role=edge，并填上主节点地址。',
+      tokenHint: '把它填到那台机器的 daemon 配置：upstreams 里加一条 {url, token}，地址指向本节点。',
       confirmRemove: '移除环境 {id}？那台机器上的 dsh 不会被删除，只是不再连进来。',
       confirmRotate: '为 {id} 换一个新令牌？旧令牌立即失效，那台机器要改成新令牌才能重连。',
       removed: '已移除 {id}。', rotated: '已为 {id} 换令牌。',
       actionFailed: '操作失败：{message}',
-      edgeNote: '这台 dsh 是边端：它连向主节点，自己不管理其它环境。要在这里管理环境，把 role 改成 main。',
+      edgeNote: '这台 dsh 不接受下游连接，所以没有环境可管理。要在这里管理环境，打开 accept。',
       switcherLabel: '当前环境：',
       switcherLocal: '本机',
       switcherOffline: '（离线）',
@@ -71,12 +71,12 @@ window.__ModuleLoader__.load({
       sectionEnvironments: 'Environments',
       create: 'Create environment', creating: 'Creating…',
       tokenOnce: 'This token is shown once — copy it now',
-      tokenHint: 'Put it in that machine\'s dsh daemon config: role=edge, plus this node\'s address.',
+      tokenHint: 'Put it in that machine\'s daemon config: add {url, token} to upstreams, pointing here.',
       confirmRemove: 'Remove environment {id}? The dsh on that machine stays; it just stops connecting here.',
       confirmRotate: 'Give {id} a new token? The old one stops working immediately, and that machine must be updated before it can reconnect.',
       removed: 'Removed {id}.', rotated: 'New token issued for {id}.',
       actionFailed: 'Failed: {message}',
-      edgeNote: 'This dsh is an edge: it connects to a main node and manages no environments itself. Set role to main to manage them here.',
+      edgeNote: 'This dsh accepts no downstream connections, so it has no environments to manage. Turn on accept to manage them here.',
       switcherLabel: 'Current environment:',
       switcherLocal: 'This host',
       switcherOffline: ' (offline)',
@@ -651,7 +651,14 @@ window.__ModuleLoader__.load({
       const load = useCallback(async () => {
         try {
           const result = await call('/admin/state')
-          if (result.ok) setState({ phase: 'ready', self: result.self, environments: result.environments ?? [] })
+          if (result.ok) {
+            setState({
+              phase: 'ready',
+              self: result.self,
+              manages: result.manages === true,
+              environments: result.environments ?? [],
+            })
+          }
           else setState({ phase: 'failed', self: undefined, environments: [], error: result.error })
         } catch (error) {
           setState({ phase: 'failed', self: undefined, environments: [], error: String(error) })
@@ -815,7 +822,10 @@ window.__ModuleLoader__.load({
         }
       }, [form])
 
-      const role = state.self?.role ?? 'main'
+      // Whether this node keeps a registry, which is what decides if there are
+      // environments to manage here. There is no role any more: a node that accepts
+      // downstream connections has one, and one that does not has nothing to list.
+      const manages = state.manages === true
 
       /**
        * The environment page, exactly as it was before the tabs existed: the list, the
@@ -834,7 +844,7 @@ window.__ModuleLoader__.load({
 
         if (state.phase === 'failed') parts.push(h('div', { key: 'error', style: styles.error }, t('unreachable')))
 
-        if (role !== 'main') {
+        if (!manages) {
           parts.push(h('div', { key: 'edge', style: styles.note }, t('edgeNote')))
           return parts
         }
@@ -1070,7 +1080,7 @@ window.__ModuleLoader__.load({
     }
 
     const makeSwitcher = (t) => function EnvironmentSwitcher({ wide }) {
-      const [state, setState] = useState({ phase: 'loading', role: 'main', current: '', environments: [] })
+      const [state, setState] = useState({ phase: 'loading', switcher: 'auto', current: '', environments: [] })
 
       useEffect(() => {
         // Collapsed rail: nothing is drawn, so nothing is asked for either. This is
@@ -1085,7 +1095,7 @@ window.__ModuleLoader__.load({
             if (result.ok) {
               setState({
                 phase: 'ready',
-                role: result.self?.role ?? 'main',
+                switcher: result.switcher ?? 'auto',
                 current: result.self?.rootPrefix ?? '',
                 environments: result.environments ?? [],
               })
@@ -1105,10 +1115,13 @@ window.__ModuleLoader__.load({
       // environment list still switches. ds-bot withdraws its own footer entry on
       // the same flag.
       if (!wide) return null
-      // What matters is whether there is anywhere to switch to, not which role this node
-      // was configured as: an edge that can reach peers lists them, and the check used to
-      // hide the control from it even though navigating away would have worked.
-      if (state.phase === 'loading' || state.environments.length === 0) return null
+      // `switcher` is this node's own setting, and it only decides whether the person
+      // sitting here sees the control — it is not a statement about who may reach this
+      // node. `never` withdraws it entirely; `always` draws it even when the list is
+      // empty, which reads as an empty control rather than as a missing one.
+      if (state.switcher === 'never') return null
+      if (state.phase === 'loading') return null
+      if (state.switcher !== 'always' && state.environments.length === 0) return null
 
       // Where we are now, so the control shows the truth rather than a default.
       const path = window.location.pathname

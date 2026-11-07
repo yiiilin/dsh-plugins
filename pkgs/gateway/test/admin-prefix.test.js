@@ -85,7 +85,7 @@ async function startDaemon(home, config = {}) {
     port: 0,
     rootEmbedded: false,
     systemdUnit: '',
-    role: 'main',
+    accept: true,
     profile: '',
     ...config,
   })
@@ -136,7 +136,7 @@ test('a paired browser reaches the admin API under the mount the panel is served
     assert.match(String(state.headers.get('content-type')), /^application\/json/u, 'the panel gets JSON, not the login page')
     const body = await state.json()
     assert.equal(body.ok, true)
-    assert.equal(body.role, 'main')
+    assert.equal(body.manages, true, 'this node keeps its own registry')
     assert.deepEqual(body.environments, [], 'the mounted daemon answers with its own state')
   })
 })
@@ -240,7 +240,7 @@ test('a profile still carrying the retired credential keys is told they do nothi
       port: 0,
       rootEmbedded: false,
       systemdUnit: '',
-      role: 'main',
+      accept: true,
       profile: '',
       rootPrefix: 'main',
       twoFactorEnabled: true,
