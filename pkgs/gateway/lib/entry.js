@@ -149,6 +149,7 @@ export function startEntry({ host, port, listEnvironments, local, root, tunnel, 
         tunnel.hub.accept(environment, ws, {
           name: claim.get('name') ?? '',
           hostname: claim.get('hostname') ?? '',
+          harnessPort: Number(claim.get('harnessPort')) || 0,
         })
       })
       return
@@ -423,11 +424,26 @@ async function handleHttp({ req, res, url, listEnvironments, local, root, tunnel
 
     // Re-serialize the request: method, path, headers, then body pieces as they arrive.
     const lines = [`${req.method ?? 'GET'} ${upstreamPath} HTTP/1.1`]
+    // The far harness signs its session cookie against the authority it was asked on. Left
+    // as the browser's own host — `dsh.yiln.de` behind a reverse proxy — the cookie is
+    // issued for an address the browser never presents again, so it is discarded and every
+    // visit lands on "authentication required". The peer's loopback authority is what its
+    // `/api` trust fence expects, and it is the contract the upgrade path already follows.
+    const forwardedAuthority = administered ? '' : (hub.harnessAuthorityOf?.(envId) ?? '')
     for (const [name, value] of Object.entries(req.headers)) {
       if (value === undefined) continue
+      const lower = name.toLowerCase()
       // `transfer-encoding` is dropped so the answer comes back unframed: the tunnel is
       // the framing, and a chunked body would arrive with its size markers intact.
-      if (name.toLowerCase() === 'transfer-encoding') continue
+      if (lower === 'transfer-encoding') continue
+      if (lower === 'host' && forwardedAuthority !== '') {
+        lines.push(`${name}: ${forwardedAuthority}`)
+        continue
+      }
+      if (lower === 'origin' && forwardedAuthority !== '') {
+        lines.push(`${name}: http://${forwardedAuthority}`)
+        continue
+      }
       lines.push(`${name}: ${Array.isArray(value) ? value.join(', ') : value}`)
     }
     // A request with no body still needs to say so. Without a length the far daemon waits

@@ -313,6 +313,8 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       /** The name this node declared for itself, if it sent one. */
       claimedName: typeof claim.name === 'string' ? claim.name : '',
       claimedHostname: typeof claim.hostname === 'string' ? claim.hostname : '',
+      /** The peer's own UI listener, declared at handshake because nothing else knows it. */
+      claimedHarnessPort: Number(claim.harnessPort) || 0,
       /** streamIds opened by this edge, so a close can fail all of them. */
       streams: new Set(),
     }
@@ -801,8 +803,12 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    * @returns `127.0.0.1:<port>`, or an empty string when unknown.
    */
   function harnessAuthorityOf(envId) {
-    const row = reported.get(envId)
-    const port = Number(row?.harnessPort)
+    // A direct peer declares this at handshake; one further out is described by a report.
+    // Only the node itself knows the port, and a wrong guess signs a cookie the browser
+    // will never accept.
+    const declared = connections.get(envId)?.claimedHarnessPort
+    if (Number.isInteger(declared) && declared > 0) return `127.0.0.1:${declared}`
+    const port = Number(reported.get(envId)?.harnessPort)
     return Number.isInteger(port) && port > 0 ? `127.0.0.1:${port}` : ''
   }
 

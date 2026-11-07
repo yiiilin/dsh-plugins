@@ -39,7 +39,7 @@ const BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000]
  * everything — socket, reader, reconnect timer, clock estimate — and sharing any of that
  * would make one link's failure disturb another.
  */
-function createUpstream({ url, token, selfName, logger, onTopology, onFrame, onClockSample, onLinkUp }) {
+function createUpstream({ url, token, selfName, harnessPort, logger, onTopology, onFrame, onClockSample, onLinkUp }) {
   let socket
   let reader
   /** The keepalive for the current socket; cleared whenever that socket goes away. */
@@ -64,7 +64,13 @@ function createUpstream({ url, token, selfName, logger, onTopology, onFrame, onC
     const named = selfName === '' ? '' : `&name=${encodeURIComponent(selfName)}`
     const host = process.env.HOSTNAME ?? ''
     const hostPart = host === '' ? '' : `&hostname=${encodeURIComponent(host)}`
-    return `${scheme}//${rest}/_tunnel?token=${encodeURIComponent(token)}${named}${hostPart}`
+    // The listener this node's own UI answers on. A peer needs it to address the mux
+    // socket and to sign a session cookie the browser will accept, and nothing else can
+    // supply it — a port number cannot be derived, and the topology table does not carry
+    // it for a direct peer.
+    const port = typeof harnessPort === 'function' ? harnessPort() : 0
+    const portPart = port > 0 ? `&harnessPort=${port}` : ''
+    return `${scheme}//${rest}/_tunnel?token=${encodeURIComponent(token)}${named}${hostPart}${portPart}`
   }
 
   function schedule() {
@@ -292,6 +298,7 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, log
     url: upstream.url,
     token: upstream.token,
     selfName: claimedName,
+    harnessPort,
     logger,
     onTopology(table, owner) {
       if (owner !== undefined && typeof table?.from === 'string' && table.from !== '') {
