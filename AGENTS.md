@@ -99,3 +99,27 @@ If a project has no index yet, do not build one yourself: upstream requires that
 indexing stays the user's decision. Note that `codegraph status` exits `0` even
 with no index, so read `status --json`'s `initialized` field instead of the exit code.
 
+
+<!-- INIT-CODE-GRAPH:START -->
+## 代码知识图谱（CodeGraph）
+
+回答代码问题前先查图，再考虑 grep / 读文件：
+
+- `codegraph explore "<符号名或代码里的词>"` —— 一次拿到相关符号的逐字源码、调用路径、影响面
+- `codegraph node <符号|文件>` —— 单符号或文件的结构与依赖
+- `codegraph impact <符号>` / `codegraph affected <文件>` —— 改之前的影响面 / 该跑哪些测试
+- 查询按字面匹配，词要取自符号名 / 文件名 / 标识符；中文词命中不了，用 `GLOSSARY.md` 括号里的英文
+- 图的输出带 `file:line`，视为已经读过；只在图没覆盖时才 Read
+
+### 本机还没有索引时
+
+配置（`codegraph.json`）随仓库共享，索引（`.codegraph/`）各建各的、不入库——刚 clone
+时那个目录里只有它自带的 `.gitignore`，**空壳目录不代表索引存在**。
+
+先判断有没有索引：读 `codegraph status . --json` 的 `initialized` 字段。
+**不要看退出码**——`codegraph status` 未初始化时仍退出 `0`。
+
+没有索引（或 `command not found`）时：**不要自己装 CLI、不要自己跑 `codegraph init`**，
+装上会在用户目录落一百多 MB 数据和全局命令，这属于用户的决定。把情况告诉用户，
+请其执行 `/init-code-graph`——它会把体检、安装、建索引、调优整条流程走完。
+<!-- INIT-CODE-GRAPH:END -->

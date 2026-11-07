@@ -1,0 +1,10 @@
+{
+  "exclude": [
+    "pkgs/browser-vnc/novnc/"
+  ],
+  "deprioritize": [
+    "test/",
+    "**/test/**",
+    "scripts/"
+  ]
+}
