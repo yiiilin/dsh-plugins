@@ -2,7 +2,7 @@
 
 ## 状态
 
-已接受（2026-10-18）。实现待做，见 `docs/changes/federation-design.md`。
+已接受（2026-10-18）。实现见 `pkgs/gateway`。
 
 ## 背景
 

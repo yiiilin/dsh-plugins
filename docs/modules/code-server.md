@@ -14,8 +14,8 @@ testing.
 [code-server](https://github.com/coder/code-server)（浏览器里的 VS Code）嵌进
 面板，**每个 DSH Workspace 一个进程**：同一工作区下的所有会话共用一个编辑器，
 打开标签页就自动启动，并直接打开该工作区的目录。所有实例**共享一个 VS Code
-扩展目录**。插件本身不携带 code-server：启动时探测二进制，缺失时面板给出安装
-命令、复制、确认后的一键安装和重新检测入口。
+扩展目录**。插件本身不携带 code-server：启动时探测二进制，缺失时面板给出安装入口，
+里面有安装命令和复制按钮，还有确认后执行的一键安装，以及重新检测。
 
 English: a right-sidebar tab that embeds a host-installed code-server (VS Code
 in the browser), **one process per DSH Workspace**. Every session in a workspace
@@ -144,10 +144,10 @@ gateway 的远端 edge 上，会话的 `cwd` 属于另一个执行世界，本�
 
 ## 验证
 
-`npm run check` 与 `npm test` 覆盖了：挂载契约、URL / 头改写（含真实 TCP
-握手重放）、按工作区归属与幂等创建、共享扩展目录与隔离的 user-data、
-`?folder=` 拼接、`useWorkspaces` 解析、卸载竞态、端口回收、探测、Host 路由、
-Client 的中英词典与辅助函数。这些测试用真实的 loopback 上游跑反代，但**不证明
+`npm run check` 与 `npm test` 覆盖了：挂载契约、URL 与头改写（含真实 TCP
+握手重放）、按工作区归属与幂等创建、共享扩展目录而 user-data 隔离、
+`?folder=` 拼接、`useWorkspaces` 解析、卸载竞态和端口回收，还有探测与 Host 路由，
+以及 Client 的中英词典和辅助函数。这些测试用真实的 loopback 上游跑反代，但**不证明
 VS Code workbench 真的渲染出来**。
 
 workbench 与 WebSocket 已在 live profile 上实测通过（code-server 4.145.0）：
