@@ -47,6 +47,7 @@ export function createAdmin({
   topologyChanged,
   harnessUrl,
   getPeer,
+  reachableEnvironments,
 }) {
   /** id -> `{ at, value }` for the last known connection state. */
   const statusCache = new Map()
@@ -183,7 +184,20 @@ export function createAdmin({
         host: config.host,
         port: config.port,
         self: profileSelf === undefined ? undefined : profileSelf(),
-        environments: config.role === 'main' ? registry.list().map(describe) : [],
+        // What a switcher can offer. The main node enumerates its registry; an edge has
+        // no registry but does know which peers it can reach, and without them its own
+        // switcher had nothing to show even though navigation would have worked.
+        environments: config.role === 'main'
+          ? registry.list().map(describe)
+          : (reachableEnvironments?.() ?? []).map((row) => ({
+            id: row.envId,
+            label: row.label,
+            enabled: true,
+            hostname: row.hostname,
+            machineId: undefined,
+            online: row.online !== false,
+            lastSeen: row.lastSeen,
+          })),
       })
       return true
     }

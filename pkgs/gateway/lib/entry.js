@@ -150,6 +150,9 @@ export function startEntry({ host, port, listEnvironments, local, root, tunnel, 
           name: claim.get('name') ?? '',
           hostname: claim.get('hostname') ?? '',
           harnessPort: Number(claim.get('harnessPort')) || 0,
+          // The id this node calls itself. Unique and self-generated, so it is the node's
+          // to declare — the registry's stored id is only what the operator typed.
+          envId: claim.get('envId') ?? '',
         })
       })
       return

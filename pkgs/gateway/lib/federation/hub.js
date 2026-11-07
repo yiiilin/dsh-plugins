@@ -23,7 +23,7 @@ import { WebSocketServer } from 'ws'
 
 import { FRAME, FrameReader, encodeFrame, encodeJsonFrame, newRequestId } from './frames.js'
 import { keepAlive } from './keepalive.js'
-import { createTopologyView, edgeRow, nodeRow, snapshot, TOPOLOGY_FRAME } from './topology.js'
+import { createTopologyView, linkState, nodeRow, TOPOLOGY_FRAME } from './topology.js'
 
 /** Path the edges connect to. */
 export const TUNNEL_PATH = '/_tunnel'
@@ -52,7 +52,7 @@ export const SELF_ENV_ID = 'self'
  * @returns the hub: `accept`, `openStream`, `sendAgentMessage`, `isOnline`, `ids`,
  *   `broadcastTopology`, `close`.
  */
-export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnvironments, listNodes }) {
+export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnvironments, listNodes, selfEnvId }) {
   /** envId -> connection record. */
   const connections = new Map()
 
@@ -152,7 +152,13 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    * wide as its own links, so a node several hops down shows as offline and no route to it
    * exists. Children report what they know and the authority merges it.
    */
-  const reported = createTopologyView({})
+  // The view's `me` starts empty because this node's id is read from disk asynchronously;
+  // `setSelfId` below fills it in. Without it the graph had no origin, so every route
+  // needed at least one hop through somebody else and a node's own neighbours were
+  // invisible to its own routing.
+  const reported = createTopologyView({
+    selfId: typeof selfEnvId === 'function' ? selfEnvId() : (selfEnvId ?? ''),
+  })
 
   /** Monotonic per sender, so a receiver can discard a late snapshot. */
   let topologySeq = 0
@@ -179,12 +185,49 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    * indistinguishable on the wire, so their counters could not be told apart.
    */
   function selfName() {
-    const rows = listNodes === undefined ? [] : listNodes()
-    return rows.find((row) => row.kind === 'self')?.envId ?? SELF_ENV_ID
+    // Told, not inferred. It used to be read back out of the node table by looking for a
+    // row tagged `self`, which meant every receiver of that table read the same tag as
+    // "this is me" — an edge could not see the node it was connected to.
+    // Resolved on each use: the value is not known when this hub is constructed.
+    const named = typeof selfEnvId === 'function' ? selfEnvId() : selfEnvId
+    return typeof named === 'string' && named !== '' ? named : SELF_ENV_ID
   }
 
-  function buildSnapshot() {
+  /** This node's own advertisement counter; a receiver keeps the higher of two. */
+  let ownSeq = 0
+
+  /** The last table every peer was sent, and how many peers it went to. */
+  let lastSent = ''
+  let lastSentPeers = -1
+
+  /**
+   * This node's own advertisement: the environments it holds a live tunnel to.
+   *
+   * This is the only fact a node can contribute that nobody else can observe, and it is
+   * what every route in the federation is derived from.
+   */
+  function ownNeighbours() {
+    const ids = []
+    for (const record of connections.values()) {
+      if (typeof record.envId === 'string' && record.envId !== '') ids.push(record.envId)
+    }
+    return ids
+  }
+
+  /**
+   * What to send on a link.
+   *
+   * A node floods the advertisements it holds, not a computed table: every receiver runs
+   * the same shortest-path step over the same facts and arrives at the same answer. It
+   * cannot go stale, because there is nothing to age — a link that dies stops being
+   * advertised, and every route that crossed it disappears on the next walk.
+   *
+   * @param exclude - the environment the message is going to, withheld from the payload.
+   */
+  function buildSnapshot(exclude = '') {
     if (listNodes === undefined) return undefined
+
+    // Metadata for everything this node knows, including itself.
     const nodes = listNodes().map((row) => {
       // A node's own name beats whatever the registry was given when it was enrolled:
       // the machine is the authority on what it is called, and two upstreams that typed
@@ -193,60 +236,33 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       const label = typeof claimed === 'string' && claimed !== '' ? claimed : row.label
       return nodeRow({ ...row, label }, { online: row.online, selfId: row.envId })
     })
-    // Every environment this node can reach directly is one hop away, so `via` is empty.
-    // The field is carried anyway so a tree does not need a different message shape.
-    const edges = nodes
-      .filter((row) => row.kind !== 'self')
-      .map((row) => edgeRow(row.envId))
-
-    // Add what the children reported but this node cannot see directly. Without this the
-    // authority believes its own links are the whole federation, so a node deeper in a
-    // cascade is reported as absent — it shows offline and no route to it exists.
     const seen = new Set(nodes.map((row) => row.envId))
     for (const row of reported.nodes()) {
       if (seen.has(row.envId)) continue
       seen.add(row.envId)
-      // Already in wire shape: reported by a peer that filled it in. Re-deriving it here
-      // recomputed `online` against *this* node's id, so a live node came out offline
-      // whenever it was not this node — which is every node the cascade is meant to show.
-      nodes.push({
-        envId: row.envId,
-        label: row.label ?? row.envId,
-        kind: row.kind ?? 'remote',
-        hostname: row.hostname ?? '',
-        online: row.online !== false,
-        lastSeen: typeof row.lastSeen === 'number' ? row.lastSeen : 0,
-        harnessPort: Number(row.harnessPort) || 0,
-      })
-      edges.push(edgeRow(row.envId, { hops: row.hops ?? 1 }))
+      // Already in wire shape: re-deriving it here recomputed `online` against *this*
+      // node's id, so a live node came out offline whenever it was not this node.
+      nodes.push(nodeRow(row, { online: row.online !== false }))
     }
-    // No seq here: it belongs to the message about to be sent, not to the act of reading
-    // the table. Incrementing while building let a re-entrant broadcast hand out two
-    // sequences for one state, and a failed send burn one.
-    return { nodes, edges }
+
+    // Every advertisement known here, plus this node's own — which is never withheld,
+    // even from a peer it names, because that peer needs to be told who its neighbours are.
+    // Other nodes' advertisements are passed on as received; this node's own is rebuilt
+    // from its live connections, so it is always current and always its own fact.
+    const states = reported.advertisements().filter((state) => state.envId !== selfName())
+    // Refreshed on every build: the id is read from disk after this hub is constructed, so
+    // the value captured at mount time is empty and the view would keep no origin.
+    reported.setSelfId(selfName())
+    const mine = reported.selfAdvertisement(ownNeighbours())
+    // Kept in the view as well as sent. A node's own links are half of every path that
+    // starts here, and `routeTo` walks the graph — without this entry the graph has no
+    // edges at the origin, so a direct neighbour resolves but anything one hop further
+    // reports "unreachable" while sitting in the table.
+    reported.learn(mine)
+    const without = states.filter((state) => state.envId !== selfName())
+    return { nodes, states: [...without, mine] }
   }
 
-  /**
-   * Push the current shape to every connected edge.
-   *
-   * Called on every change — an edge arriving or leaving, and an environment being added,
-   * enabled or removed. A topology that changes without this leaves peers routing into a
-   * machine that is gone.
-   *
-   * @returns how many edges were told.
-   */
-  /** The table as it was last sent, so an unchanged table is not broadcast again. */
-  let lastSent = ''
-
-  /**
-   * Broadcast, but only when the table changed.
-   *
-   * The loop guard belongs here rather than in a caller. Two nodes that each report to the
-   * other will answer every report with one of their own; without a "nothing changed"
-   * check the conversation never ends, and each round carries a higher sequence number so
-   * the receiver treats it as news. Comparing the serialized table terminates it: once the
-   * merges settle, both sides produce the same thing.
-   */
   function broadcastTopology(force = false) {
     // One snapshot per burst, and one sequence number for it.
     //
@@ -267,16 +283,30 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
         topologyDirty = false
         const table = buildSnapshot()
         if (table === undefined) break
+        // The message differs per peer only by split horizon, so the unchanged-table guard
+        // compares what every peer would actually receive — withholding is part of the
+        // content, and a change that only affects one peer must still be sent.
         const serialized = JSON.stringify(table)
-        if (force !== true && serialized === lastSent) break
+        if (force !== true && serialized === lastSent && connections.size === lastSentPeers) break
         lastSent = serialized
+        lastSentPeers = connections.size
         topologySeq += 1
         const seq = topologySeq
-        for (const [, record] of connections) {
+        for (const [peerId, record] of connections) {
           try {
+            // Withhold the peer being told from every neighbour list: an advertisement that
+            // names the receiver as the way to reach a node is a message going back the way
+            // it came.
+            const states = table.states.map((state) => ({
+              envId: state.envId,
+              neighbours: state.neighbours.filter((one) => one !== peerId),
+              seq: state.seq,
+            }))
             // Each edge is told which environment it *is*: a leaf knows only its token,
             // and without its own id it cannot tell "the destination is me" from "a peer".
-            record.socket.send(encodeJsonFrame(TOPOLOGY_FRAME, Buffer.alloc(16), { ...table, seq, from: selfName(), selfEnvId: record.envId }))
+            record.socket.send(encodeJsonFrame(TOPOLOGY_FRAME, Buffer.alloc(16), {
+              ...table, states, seq, from: selfName(), selfEnvId: record.envId,
+            }))
             sent += 1
           } catch (error) {
             logger.warn(`federation: could not send the topology to ${record.envId}: ${error.message}`)
@@ -305,9 +335,33 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    *
    * @returns the connection record, or undefined when the token was rejected.
    */
+  /**
+   * The id a connected node declared for itself, given what the registry calls it.
+   *
+   * The two differ by design: the registry holds what an operator typed, the handshake
+   * carries what the machine calls itself. Routing only knows the declared one.
+   *
+   * @param registryId - the registry's stored id.
+   * @returns the declared id, or the registry id when that node is not connected.
+   */
+  function declaredIdFor(registryId) {
+    for (const record of connections.values()) {
+      if (record.registryId === registryId) return record.envId
+    }
+    return registryId
+  }
+
   function register(environment, socket, claim = {}) {
+    // The node's own id wins. An environment id is unique and generated by the machine it
+    // names, so that machine is the only authority on it; the registry's stored id is what
+    // an operator typed when enrolling it, and may be a name they preferred. Keeping the
+    // typed one produced two identities for one node — the registry knew it by one, the
+    // topology by another — and every neighbour list came out one hop wrong.
+    const declared = typeof claim.envId === 'string' && claim.envId !== '' ? claim.envId : ''
     const record = {
-      envId: environment.id,
+      envId: declared !== '' ? declared : environment.id,
+      /** The registry row this connection was admitted under, whatever it was named. */
+      registryId: environment.id,
       socket,
       reader: new FrameReader(),
       /** The name this node declared for itself, if it sent one. */
@@ -355,6 +409,11 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
         // Whatever this node reported is unknowable now that its link is gone. Keeping it
         // left a dead peer reported as reachable for ever, because a route to it survived
         // in the table with nothing to invalidate it.
+        // The node itself, not only what it reported. It may have been learned about
+        // through somebody else's table — an edge is described by its upstream as well as
+        // by itself — so matching on `learnedFrom` alone left it listed as reachable with
+        // nothing behind it, and this node went on repeating that upwards.
+        reported.forget(record.envId)
         const dropped = reported.forgetLearnedFrom(record.envId)
         if (dropped > 0) logger.info(`federation: forgot ${dropped} node(s) reported by ${record.envId}`)
         // Everyone still connected must learn this node is gone, or they will keep
@@ -442,11 +501,33 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
         // include it — but not *now*. Rebroadcasting inside the receive path closes a loop
         // across messages: each node answers the other's report with its own, for ever.
         // Measured on four nodes: 592,949 broadcasts and rising before it was stopped.
-        const merged = reported.apply(table, { source: record.envId })
+        // Flood-per-origin: every advertisement in the message is stored under the node it
+        // describes, and this node's own is exempt because it knows its own links best..slice(0, 220)}`)
+        let merged = false
+        for (const state of Array.isArray(table?.states) ? table.states : []) {
+          if (state?.envId === selfName()) continue
+          if (reported.learn(state)) merged = true
+        }
+        for (const row of Array.isArray(table?.nodes) ? table.nodes : []) {
+          if (row?.envId === selfName()) continue
+          if (reported.describe(row)) merged = true
+        }
         logger.info(`federation: ${record.envId} reported ${table?.nodes?.length ?? 0} node(s); ${merged ? 'merged' : 'no change'}`)
         if (merged) {
           topologyDirty = true
           scheduleBroadcast()
+          // And pass it on to this node's own upstreams. Without this a cascade only ever
+          // propagates downward: the middle node merged what its child reported but told
+          // nobody above it, so the root never learned the child existed — and when the
+          // path through one child died, nothing knew the other child could still reach it.
+          if (!notifying) {
+            notifying = true
+            try {
+              notifyUplinks?.(record.envId)
+            } finally {
+              notifying = false
+            }
+          }
         }
       } catch (error) {
         logger.warn(`federation: ${record.envId} reported a topology this node could not read: ${error.message}`)
@@ -514,10 +595,14 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
 
     const flow = flows.get(key)
     if (flow !== undefined) {
-      const out = flow.fromRecord === record ? flow.toRecord : flow.fromRecord
+      const fromNear = flow.fromRecord === record
+      const out = fromNear ? flow.toRecord : flow.fromRecord
       if (out === undefined) return
       forwardFrame(out, frame)
-      if (frame.type === FRAME.end) flows.delete(key)
+      // Only the answer's end releases the flow. The request's end carries the same tag
+      // and arrives first; treating it as the finish dropped the flow before the answer
+      // could be placed, which is what a relayed request timed out on.
+      if (frame.type === FRAME.end && !fromNear) flows.delete(key)
       return
     }
 
@@ -563,6 +648,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     if (resolved.error !== undefined) return { forward: false }
     if (resolved.local === true) return { forward: false }
     const next = connections.get(resolved.next)
+    logger.info(`federation: arrived "${toEnvId}" -> ${JSON.stringify(resolved)} next=${next === undefined ? 'NONE' : next.envId}`)
     if (next === undefined) return { forward: false }
     const key = () => undefined
     void key
@@ -585,7 +671,11 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       // sent back the way it came — the ping-pong that made a relayed request answer with
       // its own bytes.
       forwardFrame(out.toRecord, frame)
-      if (frame.type === FRAME.end) flows.delete(id)
+      // Deliberately *not* removed on `end`. For HTTP the request's end arrives long
+      // before the answer does, and dropping the flow there left every relaying node
+      // unable to place the response — it reported frames "for unknown stream" while the
+      // caller timed out. The flow is released when the answer's own end passes through
+      // `dispatch`, which is the point where neither side can say anything more.
     }
     return { forward: true, handle }
   }
@@ -667,6 +757,15 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    * propagates downward and the root of a chain never learns about its tail.
    */
   let notifyUplinks
+
+  /**
+   * Set while a report is being passed uphill.
+   *
+   * A report that arrives while another is being forwarded is dropped: the two would
+   * otherwise answer each other for ever, which is what a broadcast storm looked like when
+   * this was first written.
+   */
+  let notifying = false
 
   /** The retired request-shaped list-environments call. */
   async function receiveListEnvironments(record, frame) {
@@ -833,7 +932,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     // the two answered different questions from the same table.
     const route = reported.routeTo(envId)
     if (route === undefined) {
-      logger.info(`federation: no route to "${envId}"; nodes=${reported.nodes().map((r) => r.envId).join(',')} edges=${reported.edges().map((r) => r.to + '<-' + r.via).join(',')}`)
+      logger.info(`federation: no route to "${envId}"; nodes=${reported.nodes().map((r) => r.envId).join(',')} adj=${reported.advertisements().map((s) => `${s.envId}:[${s.neighbours.join(' ')}]`).join(' ')}`)
     }
     return route !== undefined
   }
@@ -889,6 +988,13 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     accept(environment, socket, claim) {
       return register(environment, socket, claim)
     },
+    /**
+     * The id a connected node declared for itself, given what the registry calls it.
+     *
+     * Routing only knows the declared id, so a caller holding a registry record has to
+     * translate before asking whether that node is reachable.
+     */
+    declaredIdFor,
     /** How this node answers a stream aimed at itself; set once at mount. */
     setLocalStreamHandler(handler) {
       handleLocalStream = handler

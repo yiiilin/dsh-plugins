@@ -1,25 +1,26 @@
 /**
- * The federation's shape, and who knows it.
+ * The federation's shape: who exists, and who is connected to whom.
  *
- * A node cannot route to an environment it has never heard of. Before this module each
- * edge learned the environment table by *asking* the main node whenever it needed it —
- * which worked, but left every node that had not asked yet blind, and made "is this peer
- * online" unanswerable locally. That gap produced a real bug: an edge asked its own
- * tunnel table whether a peer was up, which is always empty on an edge, so every
- * edge-to-edge message reported "offline".
+ * This is a link-state table, not a routing table. Every node keeps the same facts — each
+ * environment's metadata plus the set of *neighbours* it is directly connected to — and
+ * works out its own next hop locally. The distinction matters:
  *
- * The main node is the authority — it is the only node holding every tunnel — and it
- * pushes the whole picture to every connected edge. Pushed, not polled: a topology that
- * changes and is not broadcast leaves nodes routing into a machine that is gone.
+ * The previous design broadcast a computed answer (`to: 'n4', via: 'n3', hops: 2`) and
+ * every node repeated whatever it was told. That answer goes stale the moment a link dies,
+ * and nothing can recompute it, because the fact it was derived from — who is actually
+ * connected to whom — was never sent. The symptoms were ones no amount of patching cured:
+ * a node stayed "reachable" with a route through a dead peer, a second path was never
+ * discovered after the first one failed, and a restart reset the hop count that the choice
+ * depended on.
  *
- * Two parts, because they change for different reasons:
+ * Here the answer is derived, so it cannot be stale: a dead link disappears from the
+ * neighbour set, the graph no longer contains a path, and the next hop changes with no
+ * special case. Reaching a node through two different upstreams, a cycle, or a node whose
+ * only path goes three hops up and two across all fall out of one shortest-path walk.
  *
- * - **nodes** — what each environment *is*: label, hostname, kind, whether it is online,
- *   when it was last seen. Metadata outlives any particular connection.
- * - **edges** — how to *reach* it from here: which peer to hand a stream to, and whether
- *   a direct tunnel exists. Today every edge hangs off the main node, so a route is one
- *   hop; the field exists so that a tree — or a mesh with intermediate hops — does not
- *   need a new message shape.
+ * The model is deliberately the same shape as EasyTier's OSPF routing — link-state
+ * advertisements carrying adjacency, with each peer computing its own table — because that
+ * pairing is what makes a mesh work, not the particular algorithm.
  *
  * @module @yiln-dsh/dsh-gateway/federation/topology
  */
@@ -28,9 +29,9 @@
 export const TOPOLOGY_FRAME = 4
 
 /**
- * One node's metadata, as every node in the federation sees it.
+ * One environment's metadata, as every node in the federation sees it.
  *
- * @param environment - the registry record, or `{ id: 'self' }` for this machine.
+ * @param environment - the registry record, or a locally built row.
  * @param options.online - whether it is currently reachable.
  * @param options.selfId - this node's own id, so the self row is marked.
  * @returns the flat row that goes on the wire.
@@ -44,8 +45,6 @@ export function nodeRow(environment, { online = false, selfId = '' } = {}) {
   return {
     envId,
     label: environment.label ?? envId,
-    // `kind` is absent for this node's own row: it is not a registry record.
-    kind: environment.kind ?? 'self',
     hostname: environment.hostname ?? '',
     online: envId === selfId ? true : online === true,
     // A peer needs this to address the mux socket, and cannot derive it.
@@ -55,259 +54,285 @@ export function nodeRow(environment, { online = false, selfId = '' } = {}) {
 }
 
 /**
- * How to reach one environment from the node holding this table.
+ * One node's view of itself in the link-state table.
  *
- * `via` is the peer a stream must be handed to; empty means the target is directly
- * reachable (it is this node, or a tunnel to it exists here). `hops` counts the forwards,
- * so a caller can tell "reachable directly" from "reachable through one intermediate".
+ * `neighbours` is what this node is *directly* connected to — the fact routing is derived
+ * from. It is the only thing a node can report about itself that no one else can, which is
+ * why it travels while routes do not.
  *
- * @param envId - the destination.
- * @param options.via - the next peer, or empty for a direct destination.
- * @param options.hops - how many forwards the route needs, 0 for direct.
- * @returns the edge row.
+ * @param envId - the reporting node.
+ * @param neighbours - ids it has a live direct link to, in either direction.
+ * @param seq - this node's own counter; a receiver keeps the higher one.
+ * @returns the advertisement.
  */
-export function edgeRow(envId, { via = '', hops = 0 } = {}) {
-  return { to: envId, via, hops }
+export function linkState(envId, neighbours, seq) {
+  const list = [...new Set((neighbours ?? []).filter((one) => typeof one === 'string' && one !== ''))]
+  list.sort()
+  return { envId, neighbours: list, seq: Number(seq) || 0 }
 }
 
 /**
- * Build one snapshot.
+ * A table that knows every node and every adjacency in the federation.
  *
- * `seq` is monotonic per sender so a receiver can tell a late broadcast from a current
- * one. Without it, a snapshot that arrives out of order would resurrect a node that has
- * already gone offline — the failure mode is a stale "online" that routes into nothing.
+ * Each node holds one, keeps the newest advertisement per *origin* (link-state routing is
+ * flood-per-origin, not last-writer-wins), and derives routes from the merged graph.
  *
- * @param options.nodes - node rows.
- * @param options.edges - edge rows.
- * @param options.seq - this sender's counter.
- * @param options.at - epoch milliseconds the snapshot was built.
- * @returns the snapshot to broadcast.
- */
-export function snapshot({ nodes, edges, seq, at = Date.now() }) {
-  return { seq, at, nodes, edges }
-}
-
-/**
- * Decide whether a received snapshot should replace the one held.
- *
- * @param held - the current snapshot, or undefined.
- * @param incoming - the snapshot just received.
- * @returns whether `incoming` is newer and should be adopted.
- */
-export function isNewer(held, incoming) {
-  if (incoming === undefined || incoming === null) return false
-  if (!Array.isArray(incoming.nodes) || !Array.isArray(incoming.edges)) return false
-  if (held === undefined) return true
-  // Strictly greater: the same seq seen twice is a duplicate, and adopting it again does
-  // nothing useful while making the "changed" signal fire twice.
-  return Number(incoming.seq) > Number(held.seq)
-}
-
-/**
- * A local view of the federation, fed by broadcasts.
- *
- * Deliberately a plain object with no timers: freshness is the sender's job (it
- * broadcasts on every change), and a node that invents its own expiry would disagree
- * with the authority about who is online.
- *
- * @param options.selfId - this node's id.
- * @returns `{ apply, nodes, edges, routeTo, get }`.
+ * @param options.selfId - this node's own id.
+ * @returns the view.
  */
 export function createTopologyView({ selfId = '' } = {}) {
-  /**
-   * What this node knows about the federation, by environment id.
-   *
-   * A map rather than one snapshot because two paths can describe the same node, and
-   * "which is right" has an answer — the shorter path, in hops. Keeping the last snapshot
-   * whole made the answer depend on message arrival order.
-   */
-  const known = new Map()
-
-  /** The highest `seq` seen from each source, so one sender's late message is dropped. */
-  const highWater = new Map()
-
-  /** Every edge, so a route can name the next hop. */
-  const edgeRoutes = new Map()
-
   let me = selfId
 
-  /** This node's own counter for the tables it sends. */
-  let outboundSeq = 0
+  /**
+   * This node's own advertisement counter, owned by the view.
+   *
+   * It must be the *same* counter wherever this node speaks from: the hub broadcasts and
+   * the agent announces, and two counters meant one node's advertisement arrived with
+   * numbers that did not order — a receiver kept whichever came last, so an empty neighbour
+   * list sent during startup overwrote the real one indefinitely.
+   */
+  let ownSeq = 0
 
-  /** Fold one snapshot in. @returns whether anything changed. */
-  function absorb(incoming, source) {
-    const fromHops = Number(incoming.hops ?? 0)
-    let changed = false
-    const rows = Array.isArray(incoming.nodes) ? incoming.nodes : []
-    for (const row of rows) {
-      const envId = row.envId
-      if (typeof envId !== 'string' || envId === '') continue
-      const hops = envId === me ? 0 : fromHops + 1
-      const held = known.get(envId)
-      // Shorter is truer: a node one hop away must not become three because a longer path
-      // reported it later. At equal distance the newest report wins, because two peers one
-      // hop away are equally authoritative and the later one has more recent information —
-      // keeping the incumbent made a node that only the second peer knew about stay
-      // invisible for ever.
-      if (held !== undefined && held.hops < hops) continue
-      known.set(envId, { ...row, hops, learnedFrom: source ?? '' })
-      changed = true
+  /** Newest advertisement per origin: `envId -> { envId, neighbours, seq }`. */
+  const advertisements = new Map()
+
+  /** Metadata per environment, from whichever report described it most recently. */
+  const described = new Map()
+
+  /**
+   * Rebuild the graph from the advertisements.
+   *
+   * Edges are undirected because a tunnel works both ways once established: an edge that
+   * dials its upstream still answers streams on that same socket, which is how a stream
+   * reaches a leaf at all.
+   */
+  function graph() {
+    const adjacency = new Map()
+    const link = (a, b) => {
+      if (!adjacency.has(a)) adjacency.set(a, new Set())
+      adjacency.get(a).add(b)
     }
-    for (const row of incoming.edges ?? []) {
-      if (typeof row.to !== 'string' || row.to === '') continue
-      const hops = Number(row.hops ?? fromHops) + 1
-      const held = edgeRoutes.get(row.to)
-      if (held !== undefined && held.hops <= hops) continue
-      // Two ways a route arrives, and they answer different questions.
-      //
-      // - Built locally, a row names its own `via`: the operator states the next hop.
-      // - Reported by a peer, the row's `via` describes *that* node's next hop and is
-      //   meaningless here; what matters is which of this node's links the report came on.
-      //
-      // Getting this backwards sent relayed streams to the wrong peer, so the distinction
-      // is explicit rather than a null-coalescing chain.
-      const via = incoming.from === undefined || incoming.from === '' ? (row.via ?? '') : (source ?? '')
-      edgeRoutes.set(row.to, { to: row.to, via, hops })
-      changed = true
+    for (const state of advertisements.values()) {
+      if (!adjacency.has(state.envId)) adjacency.set(state.envId, new Set())
+      for (const peer of state.neighbours) {
+        link(state.envId, peer)
+        // The far side may not have advertised yet; it still exists as a vertex.
+        if (!adjacency.has(peer)) adjacency.set(peer, new Set())
+      }
     }
-    // This node is always reachable from itself, whatever anyone else says.
-    if (me !== '' && !known.has(me)) {
-      known.set(me, { envId: me, label: me, kind: 'self', online: true, lastSeen: 0, hops: 0 })
-      changed = true
+    if (me !== '') {
+      if (!adjacency.has(me)) adjacency.set(me, new Set())
+      // This node's own advertisement is half of every path that starts here. The loop
+      // below only picks up links a *peer* reported; without this line the origin has no
+      // edges, so a direct neighbour resolves and anything one hop further is unreachable
+      // while sitting in the table.
+      const own = advertisements.get(me)
+      if (own !== undefined) for (const peer of own.neighbours) link(me, peer)
+      for (const state of advertisements.values()) {
+        if (state.neighbours.includes(me)) link(me, state.envId)
+      }
     }
-    return changed
+    return adjacency
+  }
+
+  /**
+   * The next hop towards `target`, by breadth-first search.
+   *
+   * Breadth-first is enough because every link costs the same; EasyTier's Dijkstra buys
+   * latency-weighted paths, which this federation has no measurement for.
+   *
+   * @param target - destination environment id.
+   * @returns the neighbour to hand the stream to, or `undefined` when no path exists.
+   */
+  function nextHop(target) {
+    if (target === me) return undefined
+    const adjacency = graph()
+    if (!adjacency.has(target)) return undefined
+    const start = adjacency.get(me)
+    if (start === undefined) return undefined
+    if (start.has(target)) return target
+
+    // Breadth-first from this node, remembering the first step taken to each vertex. The
+    // first step *is* the answer: it names the neighbour to hand the stream to.
+    const seen = new Set([me])
+    let frontier = []
+    for (const peer of start) {
+      if (seen.has(peer)) continue
+      seen.add(peer)
+      frontier.push({ node: peer, first: peer })
+    }
+    while (frontier.length > 0) {
+      const next = []
+      for (const entry of frontier) {
+        if (entry.node === target) return entry.first
+        for (const peer of adjacency.get(entry.node) ?? []) {
+          if (seen.has(peer)) continue
+          seen.add(peer)
+          next.push({ node: peer, first: entry.first })
+        }
+      }
+      frontier = next
+    }
+    return undefined
   }
 
   return {
-    /** Learn which environment this node is. */
+    /** This node's own id, as the table knows it. */
+    get selfId() {
+      return me
+    },
+
+    /** Replace this node's own identity, learned from an upstream's advertisement. */
     setSelfId(envId) {
-      me = envId
-      known.set(envId, { envId, label: envId, kind: 'self', online: true, lastSeen: 0, hops: 0 })
+      if (typeof envId === 'string' && envId !== '') me = envId
     },
 
     /**
-     * Fold a snapshot in.
+     * Record one advertisement.
      *
-     * `seq` orders one sender's broadcasts, compared per source: two upstreams each count
-     * from one, and comparing across them discarded whichever was behind.
+     * Per-origin ordering, not global: two upstreams count independently, and comparing
+     * their counters made one of them look permanently stale.
+     *
+     * @param state - `{ envId, neighbours, seq }`.
+     * @returns whether anything changed.
      */
-    apply(incoming, { source } = {}) {
-      if (incoming === undefined || incoming === null) return false
-      if (!Array.isArray(incoming.nodes)) return false
-      const from = typeof incoming.from === 'string' && incoming.from !== '' ? incoming.from : (source ?? '')
-      const seq = Number(incoming.seq)
-      const seen = highWater.get(from)
-      // A sender's counter restarts at one when it restarts, so a lower `seq` from a known
-      // source is not necessarily stale — it is usually a fresh process. Treating it as
-      // stale discarded every table until the new process happened to overtake the old
-      // high-water mark, which for a quiet federation could be never: the peer stayed
-      // invisible with its last pre-restart view. Adopt it and reset the mark.
-      if (seen !== undefined && seq === seen) return false
-      if (seen !== undefined && seq < seen) {
-        highWater.set(from, seq)
-        absorb(incoming, from)
-        return true
-      }
-      highWater.set(from, seq)
-      // A newer table from a known source is news even when it adds no row: the source is
-      // still reporting, and a caller uses the return value to decide whether to log.
-      absorb(incoming, from)
+    learn(state) {
+      if (state === null || typeof state !== 'object') return false
+      const origin = String(state.envId ?? '')
+      if (origin === '') return false
+      const next = linkState(origin, state.neighbours, state.seq)
+      const held = advertisements.get(origin)
+      // Newer wins, older is a duplicate. Accepting anything that merely differed let a
+      // stale copy overtake a fresh one — two paths carried the same node's advertisement
+      // with different counters, and the older one kept overwriting the newer, so a node
+      // oscillated between its real neighbour list and an empty one.
+      if (held !== undefined && next.seq <= held.seq) return false
+      advertisements.set(origin, next)
       return true
     },
 
-    /** Every node row this node knows, itself included. */
-    nodes() {
-      return [...known.values()]
+    /** Record metadata for one environment. */
+    describe(row) {
+      if (row === null || typeof row !== 'object') return false
+      const envId = String(row.envId ?? '')
+      if (envId === '') return false
+      const before = described.get(envId)
+      const fresh = nodeRow({ ...(before ?? {}), ...row, envId }, { online: row.online === true })
+      described.set(envId, fresh)
+      return before === undefined
     },
 
-    /** Every edge, as `{ to, via, hops }`. */
-    edges() {
-      return [...edgeRoutes.values()]
+    /** Everything this node knows, as advertisements — what to flood onwards. */
+    advertisements() {
+      return [...advertisements.values()]
+    },
+
+    /** Metadata for every environment, this node included. */
+    nodes() {
+      const rows = [...described.values()]
+      if (me !== '' && !described.has(me)) {
+        rows.push({ envId: me, label: me, hostname: '', online: true, harnessPort: 0, lastSeen: 0 })
+      }
+      return rows
+    },
+
+    /** The row for one environment, or undefined. */
+    get(envId) {
+      return described.get(envId)
+    },
+
+    /** Whether this node can currently reach `envId`. */
+    reaches(envId) {
+      if (envId === me) return true
+      return nextHop(envId) !== undefined
     },
 
     /**
-     * Drop everything learned about one environment.
+     * The route to `envId`.
      *
-     * A node reaches this view by being reported; nothing ever removes it. So a peer that
-     * dies stops being reported and stays "reachable" for ever, because a route to it is
-     * still in the table. Forgetting is what the caller does when the link that carried
-     * those reports is gone.
+     * @returns `undefined` when no path exists, `{ local: true }` for this node, otherwise
+     * `{ next }` naming the neighbour to hand the stream to.
+     */
+    routeTo(envId) {
+      if (envId === '' || envId === me) return { done: true }
+      const next = nextHop(envId)
+      if (next === undefined) return undefined
+      if (next === envId) return { done: false, next: envId }
+      return { done: false, next }
+    },
+
+    /**
+     * Forget everything about an environment.
      *
-     * @param envId - the environment to drop.
+     * Its advertisement goes, and so does every mention of it in someone else's neighbour
+     * list — a departed node that stays inside another's adjacency keeps a path alive
+     * through a machine that is not there.
+     *
      * @returns whether anything was removed.
      */
     forget(envId) {
-      const hadNode = known.delete(envId)
-      const hadEdge = edgeRoutes.delete(envId)
-      return hadNode || hadEdge
+      let changed = advertisements.delete(envId)
+      if (described.delete(envId)) changed = true
+      for (const state of advertisements.values()) {
+        const before = state.neighbours.length
+        state.neighbours = state.neighbours.filter((one) => one !== envId)
+        if (state.neighbours.length !== before) changed = true
+      }
+      return changed
     },
 
     /**
      * Drop everything learned through one neighbour.
      *
-     * Called when that neighbour's link goes away: whatever it reported was true while it
-     * was connected and is unknowable after, so keeping it shows a dead node as reachable.
-     *
-     * @param source - the neighbour whose reports are dropped.
      * @returns how many rows were removed.
      */
     forgetLearnedFrom(source) {
-      let dropped = 0
-      for (const [envId, row] of [...known.entries()]) {
-        if (row.learnedFrom !== source) continue
-        known.delete(envId)
-        edgeRoutes.delete(envId)
-        dropped += 1
-      }
-      return dropped
-    },
-
-    /** The row for one environment, or undefined. */
-    get(envId) {
-      return known.get(envId)
-    },
-
-    /** What to hand to a stream addressed to `envId`. */
-    routeTo(envId) {
-      if (envId === '' || envId === me) return { done: true }
-      const route = edgeRoutes.get(envId)
-      if (route === undefined) {
-        if (known.has(envId)) return { done: false, next: '' }
-        return undefined
-      }
-      return { done: false, next: route.via }
+      return this.forget(source) ? 1 : 0
     },
 
     /**
-     * What to send uphill: this node's view, minus what came from the receiving side.
+     * What to flood onwards, with one peer withheld.
      *
-     * Split-horizon. Echoing back what a peer just told us is what would make a loop
-     * circulate forever; withholding it terminates propagation without a hop limit.
+     * Withholding is split horizon: telling a peer about links it already sees is wasted,
+     * and telling it that a node is reachable *through the peer being told* is how a
+     * message goes back the way it came.
+     *
+     * @param options.exclude - the environment this message is going to.
+     * @param options.self - this node's own advertisement, from `selfAdvertisement`.
      */
-    outbound({ exclude } = {}) {
-      const nodes = [...known.values()]
-        .filter((row) => row.envId !== exclude)
-        // `hops` and `learnedFrom` are this node's bookkeeping, not facts about the
-        // network — a peer receiving them would treat its own guess as a report.
-        .map(({ hops, learnedFrom, ...row }) => row)
-      if (nodes.length === 0) return undefined
-      // `via` is rewritten to the neighbour the *receiver* should hand the stream to, so
-      // a node one hop further out can build a route from a table it did not observe.
-      // Blanking it here left every receiver unable to answer "which peer do I use for
-      // that destination", which is why a cascade could be described but not routed.
-      // Only the receiving node itself is withheld. Filtering by `via` as well dropped
-      // every route this node had learned *through* that peer, which is most of them — the
-      // report shrank to the two rows that happened to survive, so the node at the top of
-      // a cascade never saw its tail.
-      const edges = [...edgeRoutes.values()]
-        .filter((row) => row.to !== exclude)
-        .map((row) => ({ to: row.to, via: '', hops: row.hops }))
-      return { seq: outboundSeq += 1, from: me, nodes, edges }
+    outbound({ exclude = '', self = undefined } = {}) {
+      const states = [...advertisements.values()]
+        .filter((state) => state.envId !== exclude && state.envId !== me)
+        // Passed on as received. Filtering the neighbour lists corrupted the facts: with
+        // two upstreams, each got a different version of a third node's links, and whichever
+        // arrived last erased the other — nodes disappeared from the graph that were
+        // connected all along. Duplicate information is discarded by `learn`, which keeps
+        // one entry per origin, so flooding still terminates.
+        .map((state) => ({ ...state }))
+      // This node's own advertisement leads, so a receiver always knows who is speaking
+      // and what it is attached to. Without it an edge is a dead end in everyone's graph:
+      // it answers streams but nothing can compute a way to it.
+      if (me !== '' && self !== undefined) {
+        // Not filtered by `exclude`. Split horizon is about not repeating a *route* back to
+        // its source; a neighbour list is a fact, and removing an entry from it tells the
+        // receiver a link does not exist. With two upstreams each got a different version
+        // of this node's own links, and whichever arrived last erased the other — the node
+        // came out attached to one upstream and invisible from the rest of the graph.
+        states.unshift({ ...self })
+      }
+      return { from: me, nodes: this.nodes(), states }
     },
 
-    /** The raw snapshot, for diagnostics. */
-    get snapshot() {
-      return { nodes: this.nodes(), edges: this.edges() }
+    /**
+     * This node's own advertisement.
+     *
+     * The sequence is taken from the view, so every caller here shares one ordering.
+     *
+     * @param neighbours - the ids this node holds a live direct link to.
+     */
+    selfAdvertisement(neighbours) {
+      ownSeq += 1
+      return linkState(me, neighbours, ownSeq)
     },
   }
 }

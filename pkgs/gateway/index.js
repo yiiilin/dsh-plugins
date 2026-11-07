@@ -32,6 +32,7 @@ import { createProfileProcesses } from './lib/profile-process.js'
 import { createTunnelAgent } from './lib/federation/agent.js'
 import { createTunnelHub, createTunnelServer, tokenOf, TUNNEL_PATH } from './lib/federation/hub.js'
 import { deliverToSession } from './lib/agent-message.js'
+import { ensureNodeId } from './lib/node-id.js'
 import { listSessions, listWorkspaces } from './lib/remote-info.js'
 import { serveFileRoute } from './lib/file-route.js'
 import { createPeerAccess } from './lib/peer.js'
@@ -264,7 +265,19 @@ export function apply(ctx, config) {
    * Derived from the listener rather than stored: it only has to be stable for the life of
    * the process and distinct from every other node's, which `host:port` gives for free.
    */
-  const selfEnvId = () => process.env.DSH_ENV_ID || `${config.host}:${config.port}`
+  /** This node's stable id; resolved once at start, from `daemon/node-id`. */
+  let nodeId = process.env.DSH_ENV_ID ?? ''
+
+  /**
+   * This node's own id.
+   *
+   * A federation is a set of ids; every node needs one of the same kind, or a table of
+   * them is a table of things nobody can compare. The main node used to answer with its
+   * listen address (`0.0.0.0:3080`) — not an identity: it changes with the port, means
+   * nothing to another machine, and lives in a different namespace from the ids the
+   * registry hands out.
+   */
+  const selfEnvId = () => nodeId !== '' ? nodeId : (process.env.DSH_ENV_ID ?? 'self')
 
   /**
    * Whether an id names this node.
@@ -277,6 +290,10 @@ export function apply(ctx, config) {
 
   const hub = createTunnelHub({
     logger,
+    // A function, not the value: this node's id is read from disk asynchronously, so at
+    // construction time it is not known yet. Passing the empty string made every
+    // advertisement go out as `from: "self"` — the one id no peer can match.
+    selfEnvId: () => selfEnvId(),
     verifyToken: (token) => registry.byToken(token),
     deliver: deliverMessage,
     forward: forwardMessage,
@@ -297,19 +314,24 @@ export function apply(ctx, config) {
         // indistinguishable, and their sequence counters cannot be ordered per source.
         {
           envId: selfEnvId(),
-          label: config.name === '' ? 'this node' : config.name,
-          kind: 'self',
+          // Read by peers, so it must name the machine rather than describe the reader's
+          // relationship to it — a row called "this node" appeared in every other node's
+          // switcher as if it were themselves.
+          label: config.name === '' ? (process.env.HOSTNAME ?? selfEnvId()) : config.name,
           online: true,
           // Published so a peer can address this node's own UI.
           harnessPort: embeddedRoot.portOrZero(),
         },
         ...registry.list().map((environment) => ({
-          envId: environment.id,
+          // The id the node declared, not the one the registry was given: routing knows
+          // only the former, so publishing the latter made this table name machines no
+          // route could reach.
+          envId: hub.declaredIdFor(environment.id),
           label: environment.label,
           kind: environment.kind,
           hostname: environment.hostname ?? '',
           lastSeen: environment.lastSeen ?? 0,
-          online: hub.isReachable(environment.id),
+          online: hub.isReachable(hub.declaredIdFor(environment.id)),
         })),
       ],
     // What an edge asks for: this node's environment table, with live state.
@@ -758,6 +780,19 @@ export function apply(ctx, config) {
      */
     // A function, not the object: `createAdmin` is built before `peer` exists.
     getPeer: () => peer,
+    // An edge's peers, from the topology its upstreams pushed. Empty on the main node,
+    // which answers from its registry instead.
+    reachableEnvironments: () => agent?.topology?.nodes()
+      // The edge's own id comes from the topology, not from this process's listener: to its
+      // upstreams it is a registered environment with a registry id, and `selfEnvId()` — the
+      // local `host:port` — never matches it. Filtering on the wrong identity listed the
+      // node itself as a place to switch to.
+      // The view knows which id is its own; comparing against it is the whole test. No
+      // row carries a `self` tag any more, because that tag was broadcast and read as
+      // "this is me" by everyone who received it.
+      ?.filter((row) => row.envId !== agent?.topology?.selfId) ?? [],
+    /** Diagnostic: everything the edge's view holds. */
+    allTopologyRows: () => agent?.topology?.nodes() ?? [],
     harnessUrl: () => {
       const connection = ctx.get('connection')
       if (connection === undefined || typeof connection.authenticatedUrl !== 'function') return undefined
@@ -815,6 +850,8 @@ export function apply(ctx, config) {
     : createTunnelAgent({
       upstreams: upstreamList,
       selfName: config.name,
+      // Declared at the door: an environment id belongs to the machine it names.
+      envId: () => selfEnvId(),
       harnessPort: () => embeddedRoot.portOrZero(),
       // `/admin` belongs to this process; the tunnel forwards it here, not to the harness.
       daemonPort: () => config.port,
@@ -860,7 +897,9 @@ export function apply(ctx, config) {
    */
   const reachableIds = () => {
     if (config.role === 'main') return registry.list().filter((one) => one.enabled !== false).map((one) => one.id)
-    return agent?.topology?.nodes()?.filter((row) => !isThisNode(row.envId)).map((row) => row.envId) ?? []
+    return agent?.topology?.nodes()
+      ?.filter((row) => row.envId !== agent?.topology?.selfId)
+      .map((row) => row.envId) ?? []
   }
 
   /**
@@ -1074,6 +1113,12 @@ export function apply(ctx, config) {
   ctx.effect(() => {
     let cancelled = false
     void (async () => {
+      try {
+        nodeId = await ensureNodeId({ daemonDir, configured: process.env.DSH_ENV_ID ?? '', profile: profileName })
+      } catch (error) {
+        logger.warn(`daemon: could not resolve this node's id: ${error.message}`)
+      }
+      logger.info(`daemon: this node is "${selfEnvId()}"`)
       try {
         environments = await readRegistry(registryPath)
       } catch (error) {

@@ -1,9 +1,12 @@
 /**
  * The federation's shape, and how a node decides where a stream goes.
  *
- * The interesting cases are the ones that were bugs before: an edge that asked its own
- * table whether a peer was online (always false there), and a snapshot arriving out of
- * order and resurrecting a node that had already gone.
+ * This is a link-state table: every node holds the same facts — each environment's
+ * metadata and the set of neighbours it is directly attached to — and derives its own next
+ * hop from that graph. The tests below are the cases that were bugs under the previous
+ * design, which broadcast a computed route instead: a table that goes stale the moment a
+ * link dies, a second path never being discovered, and a peer that stayed "reachable"
+ * through a machine that was gone.
  */
 
 import assert from 'node:assert/strict'
@@ -11,240 +14,132 @@ import test from 'node:test'
 
 import {
   createTopologyView,
-  edgeRow,
-  isNewer,
+  linkState,
   nodeRow,
-  snapshot,
   TOPOLOGY_FRAME,
 } from '../lib/federation/topology.js'
 
-const main = { id: 'self' }
-const edgeA = { id: 'n95c', label: '6.13', kind: 'remote', hostname: 'six13', lastSeen: 100 }
-const edgeB = { id: 'dev2', label: 'dev', kind: 'remote', hostname: 'devbox' }
-
-const view = (rows, edges, seq = 1) => {
-  const v = createTopologyView({ selfId: 'self' })
-  v.apply(snapshot({ nodes: rows, edges, seq }))
-  return v
-}
-
-// --- rows ---------------------------------------------------------------------
+const edgeA = { id: 'n95c', label: '6.13', hostname: 'six13', lastSeen: 100 }
+const edgeB = { id: 'dev2', label: 'dev', hostname: 'devbox' }
 
 test('a node row carries the metadata a peer needs, and no token', () => {
-  const row = nodeRow(edgeA, { online: true })
+  const row = nodeRow({ ...edgeA, token: 'secret' }, { online: true, selfId: '' })
   assert.deepEqual(row, {
-    envId: 'n95c', label: '6.13', kind: 'remote', hostname: 'six13', online: true, lastSeen: 100,
+    envId: 'n95c', label: '6.13', hostname: 'six13', online: true, lastSeen: 100,
     // The port a peer's own UI answers on: not derivable, so it travels with the table.
     harnessPort: 0,
   })
-  assert.equal('token' in row, false, 'a secret has no business in a broadcast')
 })
 
-test("this node's own row is always online and marked as self", () => {
-  const row = nodeRow(main, { online: false, selfId: 'self' })
-  assert.equal(row.online, true, 'a node is reachable from itself')
-  assert.equal(row.kind, 'self')
+test('an advertisement is sorted and de-duplicated, so two nodes cannot disagree', () => {
+  const state = linkState('a', ['z', 'b', 'z', ''], 3)
+  assert.deepEqual(state, { envId: 'a', neighbours: ['b', 'z'], seq: 3 })
 })
 
-// --- ordering -----------------------------------------------------------------
-
-test('a newer snapshot replaces an older one, an older one is ignored', () => {
-  const older = snapshot({ nodes: [], edges: [], seq: 5 })
-  const newer = snapshot({ nodes: [], edges: [], seq: 6 })
-  assert.equal(isNewer(older, newer), true)
-  assert.equal(isNewer(newer, older), false, 'a late broadcast must not win')
-  assert.equal(isNewer(newer, newer), false, 'a duplicate changes nothing')
-})
-
-test('a malformed snapshot is refused rather than adopted', () => {
-  const held = snapshot({ nodes: [], edges: [], seq: 1 })
-  assert.equal(isNewer(held, { seq: 9 }), false, 'no nodes/edges')
-  assert.equal(isNewer(held, { seq: 9, nodes: [], edges: 'x' }), false)
-  assert.equal(isNewer(held, undefined), false)
-})
-
-test('a snapshot is merged, not substituted', () => {
-  const v = view([nodeRow(edgeA)], [edgeRow('n95c')], 1)
-  assert.equal(v.apply({ from: 'x', seq: 2, nodes: [], edges: [] }), true)
-  // The node always knows itself, so the count is the reported row plus this node.
-  assert.deepEqual(v.nodes().map((row) => row.envId).sort(), ['n95c', 'self'],
-    'a silent snapshot does not erase what is known')
-})
-
-// --- routing ------------------------------------------------------------------
-
-test('routing to this node is answered locally, not forwarded', () => {
-  const v = view([], [])
-  assert.deepEqual(v.routeTo('self'), { done: true })
-  assert.deepEqual(v.routeTo(''), { done: true }, 'an empty target is this node')
-})
-
-test('a direct edge names no intermediate hop', () => {
-  const v = view([nodeRow(edgeA)], [edgeRow('n95c')])
-  assert.deepEqual(v.routeTo('n95c'), { done: false, next: '' })
-})
-
-test('an edge reached through an intermediate names it', () => {
-  // The shape a tree or mesh would take; a star never produces one today.
-  const v = view([nodeRow(edgeB)], [edgeRow('dev2', { via: 'n95c', hops: 1 })])
-  assert.deepEqual(v.routeTo('dev2'), { done: false, next: 'n95c' })
-})
-
-test('an unknown environment has no route rather than a wrong one', () => {
-  // Returning "direct" here would send the stream into nothing; the caller needs to be
-  // able to say "I have no route to that" instead.
-  const v = view([], [])
-  assert.equal(v.routeTo('nowhere'), undefined)
-})
-
-test('an edge that is listed but offline is still routed, so the failure is real', () => {
-  // Deciding "offline" from a cached snapshot would be guessing; the node that holds the
-  // tunnel is the authority, and its refusal is the truthful answer.
-  const v = view([nodeRow(edgeA, { online: false })], [edgeRow('n95c')])
-  assert.equal(v.get('n95c').online, false)
-  assert.deepEqual(v.routeTo('n95c'), { done: false, next: '' })
-})
-
-test('a leaf learns its own id from the broadcast, and then routes to itself locally', () => {
-  // A leaf knows only its token; without this it would treat its own id as a peer and
-  // forward a stream meant for itself.
-  const v = createTopologyView({})
-  const table = snapshot({ seq: 1, nodes: [nodeRow(edgeA, { online: true })], edges: [edgeRow('n95c')] })
-  v.setSelfId('n95c')
-  v.apply(table)
-  assert.deepEqual(v.routeTo('n95c'), { done: true })
-})
-
-// --- concurrent change ---------------------------------------------------------
-
-test('successive broadcasts produce increasing sequences and the newest table', async () => {
-  // A broadcast can synchronously trigger another (a failing send closes a socket, which
-  // broadcasts again). Without coalescing, the inner call built from the newer table and
-  // took a higher sequence, then the outer loop finished the older snapshot under a lower
-  // one — peers would hold a stale table believing it current.
-  const { createTunnelHub } = await import('../lib/federation/hub.js')
-
-  const table = [
-    { envId: 'self', kind: 'self', label: 'm', online: true },
-    { envId: 'a', kind: 'remote', label: 'A', online: true },
-  ]
-  const frames = []
-  const socket = {
-    on() {},
-    send(buffer) {
-      const length = buffer.readUInt32BE(0)
-      frames.push({
-        type: buffer.readUInt8(4),
-        body: JSON.parse(buffer.subarray(21, 21 + length).toString('utf8')),
-      })
-    },
-    close() {},
-  }
-  const hub = createTunnelHub({
-    logger: { info() {}, warn() {} },
-    verifyToken: () => undefined,
-    listNodes: () => table,
-  })
-  hub.accept({ id: 'a' }, socket)
-
-  table.push({ envId: 'b', kind: 'remote', label: 'B', online: true })
-  hub.broadcastTopology()
-
-  assert.ok(frames.length >= 2)
-  const sequences = frames.map((frame) => frame.body.seq)
-  assert.deepEqual(sequences, [...sequences].sort((x, y) => x - y), 'sequences must increase')
-  const last = frames[frames.length - 1]
-  assert.equal(last.type, TOPOLOGY_FRAME)
-  assert.equal(last.body.nodes.length, 3, 'the final frame carries the newest table')
-  assert.equal(last.body.selfEnvId, 'a', 'each edge is told which environment it is')
-  hub.close()
-})
-
-test('a row already in wire shape keeps its envId', () => {
-  // `listNodes` hands the hub rows keyed `envId` while a stored record is keyed `id`.
-  // Reading only one of them produced nodes whose `envId` was null — and a node with no
-  // id cannot be a route destination, so routing silently found nothing.
-  const wireShape = { envId: 'n95c', label: '6.13', kind: 'remote', online: true, lastSeen: 1 }
-  assert.equal(nodeRow(wireShape).envId, 'n95c')
-  assert.equal(nodeRow(edgeA).envId, 'n95c', 'registry shape still works')
-})
-
-test("a node's own name wins over what the registry was told", async () => {
-  // The machine is the authority on what it is called. A registry label typed in by
-  // whoever enrolled it is that side's guess, and two upstreams would disagree about the
-  // same machine. The claim arrives with the handshake and travels in the broadcast.
-  const { createTunnelHub } = await import('../lib/federation/hub.js')
-  const table = [
-    { envId: 'self', kind: 'self', label: 'main', online: true },
-    { envId: 'a', kind: 'remote', label: 'typed-in-by-upstream', online: true },
-  ]
-  const frames = []
-  const socket = {
-    on() {},
-    send(buffer) {
-      const length = buffer.readUInt32BE(0)
-      frames.push(JSON.parse(buffer.subarray(21, 21 + length).toString('utf8')))
-    },
-    close() {},
-  }
-  const hub = createTunnelHub({
-    logger: { info() {}, warn() {} },
-    verifyToken: () => undefined,
-    listNodes: () => table,
-  })
-  hub.accept({ id: 'a' }, socket, { name: 'my-own-name' })
-  const row = frames[frames.length - 1].nodes.find((node) => node.envId === 'a')
-  assert.equal(row.label, 'my-own-name')
-  hub.close()
-})
-
-test('a node that declares no name keeps the registry one', async () => {
-  const { createTunnelHub } = await import('../lib/federation/hub.js')
-  const table = [{ envId: 'a', kind: 'remote', label: 'fallback', online: true }]
-  const frames = []
-  const hub = createTunnelHub({
-    logger: { info() {}, warn() {} },
-    verifyToken: () => undefined,
-    listNodes: () => table,
-  })
-  hub.accept({ id: 'a' }, { on() {}, send(b) { const l = b.readUInt32BE(0); frames.push(JSON.parse(b.subarray(21, 21 + l).toString())) }, close() {} })
-  assert.equal(frames[frames.length - 1].nodes.find((n) => n.envId === 'a').label, 'fallback')
-  hub.close()
-})
-
-test('two upstreams each count their own sequence, and neither is dropped as stale', () => {
-  // Each sender numbers its broadcasts from one. Comparing one upstream's `seq` against
-  // another's discards whichever is behind — a node with two upstreams kept the first
-  // one's table and ignored the second on every broadcast, which is how this was found.
+test('a direct neighbour is its own next hop', () => {
   const v = createTopologyView({ selfId: 'me' })
-  const fromA = { from: 'a', seq: 5, nodes: [nodeRow({ id: 'a', label: 'A' })], edges: [] }
-  const fromB = { from: 'b', seq: 1, nodes: [nodeRow({ id: 'b', label: 'B' })], edges: [] }
-  assert.equal(v.apply(fromA), true)
-  assert.equal(v.apply(fromB), true, 'a different source is not stale just because its counter is lower')
-  assert.equal(v.apply({ ...fromB, seq: 2 }), true, 'but the same source still has to advance')
-  assert.equal(v.apply({ ...fromB, seq: 2 }), false, 'and a duplicate is still dropped')
+  v.learn(linkState('me', ['peer'], 1))
+  v.learn(linkState('peer', ['me'], 1))
+  assert.deepEqual(v.routeTo('peer'), { done: false, next: 'peer' })
 })
 
-test('a sender that restarts and counts from one is still heard', () => {
-  // A peer's counter resets when its process does. Refusing the lower `seq` as stale left
-  // the receiver holding the last pre-restart table until the new process overtook the
-  // old mark — on a quiet federation that could be never, and the peer stayed invisible.
+test('a two-hop node is reached through the neighbour that leads there', () => {
   const v = createTopologyView({ selfId: 'me' })
-  v.apply({ from: 'peer', seq: 9, nodes: [nodeRow({ id: 'a', label: 'old' })], edges: [] })
-  assert.equal(v.apply({ from: 'peer', seq: 1, nodes: [nodeRow({ id: 'b', label: 'new' })], edges: [] }), true)
-  assert.deepEqual(v.nodes().map((row) => row.envId).sort(), ['a', 'b', 'me'])
-  assert.equal(v.apply({ from: 'peer', seq: 1, nodes: [], edges: [] }), false, 'a duplicate is still a duplicate')
+  v.learn(linkState('me', ['mid'], 1))
+  v.learn(linkState('mid', ['me', 'far'], 1))
+  v.learn(linkState('far', ['mid'], 1))
+  assert.deepEqual(v.routeTo('far'), { done: false, next: 'mid' })
+  assert.equal(v.reaches('far'), true)
 })
 
-test('a lost neighbour takes its reports with it, and only those', () => {
-  // A node reaches the view by being reported, and nothing used to remove it — so a peer
-  // that died stayed "reachable" for ever because a route to it survived with nothing to
-  // invalidate it. What one neighbour reported is unknowable once its link is gone, but
-  // what another reported is not.
+test('a route that crossed a dead link disappears, and another is found if one exists', () => {
+  // The case the previous design could not express: two paths to the same node. It
+  // broadcast one answer, so when that answer's link died the node stayed listed as
+  // reachable and every stream failed on a hop that was no longer there.
   const v = createTopologyView({ selfId: 'me' })
-  v.apply({ from: 'a', seq: 1, nodes: [{ envId: 'x', label: 'x', online: true }], edges: [] }, { source: 'a' })
-  v.apply({ from: 'b', seq: 1, nodes: [{ envId: 'y', label: 'y', online: true }], edges: [] }, { source: 'b' })
-  assert.equal(v.forgetLearnedFrom('a'), 1)
-  assert.deepEqual(v.nodes().map((row) => row.envId).sort(), ['me', 'y'])
-  assert.equal(v.forgetLearnedFrom('a'), 0, 'forgetting twice is not an error')
+  v.learn(linkState('me', ['a'], 1))
+  v.learn(linkState('a', ['me', 'far'], 1))
+  v.learn(linkState('far', ['a', 'b'], 1))
+  v.learn(linkState('b', ['far', 'me'], 1))
+  assert.equal(v.reaches('far'), true)
+
+  v.forget('a')
+  v.learn(linkState('me', ['b'], 2))
+  // `b` still lists `far`, so the destination survives — on the other path.
+  assert.equal(v.reaches('far'), true)
+})
+
+test('losing the only path makes a node unreachable, without a special case', () => {
+  const v = createTopologyView({ selfId: 'me' })
+  v.learn(linkState('me', ['a'], 1))
+  v.learn(linkState('a', ['me', 'far'], 1))
+  v.learn(linkState('far', ['a'], 1))
+  assert.equal(v.reaches('far'), true)
+  v.forget('a')
+  assert.equal(v.reaches('far'), false)
+  assert.equal(v.routeTo('far'), undefined)
+})
+
+test('forgetting a node also removes it from every neighbour list', () => {
+  // A departed node left inside another node's adjacency keeps a path alive through a
+  // machine that is not there.
+  const v = createTopologyView({ selfId: 'me' })
+  v.learn(linkState('me', ['gone', 'kept'], 1))
+  v.learn(linkState('kept', ['me', 'gone'], 1))
+  v.forget('gone')
+  assert.equal(v.reaches('gone'), false)
+  assert.deepEqual(v.advertisements().find((s) => s.envId === 'kept').neighbours, ['me'])
+})
+
+test('newer wins and an older copy cannot overtake it', () => {
+  // Two paths carry the same node's advertisement with different counters. Accepting
+  // anything that merely differed let the stale copy keep overwriting the fresh one, and
+  // the node oscillated between its real neighbour list and an empty one.
+  const v = createTopologyView({ selfId: 'me' })
+  assert.equal(v.learn(linkState('peer', ['me', 'far'], 9)), true)
+  assert.equal(v.learn(linkState('peer', [], 3)), false, 'older copy is a duplicate')
+  assert.deepEqual(v.advertisements()[0].neighbours, ['far', 'me'])
+  assert.equal(v.learn(linkState('peer', ['me', 'far'], 9)), false, 'same message twice')
+  assert.equal(v.learn(linkState('peer', ['me'], 10)), true, 'newer wins')
+})
+
+test('two upstreams reporting different parts of the graph both count', () => {
+  const v = createTopologyView({ selfId: 'me' })
+  v.learn(linkState('me', ['up1', 'up2'], 1))
+  v.learn(linkState('up1', ['me', 'only1'], 1))
+  v.learn(linkState('up2', ['me', 'only2'], 1))
+  assert.deepEqual(v.routeTo('only1'), { done: false, next: 'up1' })
+  assert.deepEqual(v.routeTo('only2'), { done: false, next: 'up2' })
+})
+
+test('a cycle terminates instead of looping', () => {
+  const v = createTopologyView({ selfId: 'me' })
+  v.learn(linkState('me', ['a', 'c'], 1))
+  v.learn(linkState('a', ['me', 'b'], 1))
+  v.learn(linkState('b', ['a', 'c'], 1))
+  v.learn(linkState('c', ['b', 'me'], 1))
+  assert.equal(v.reaches('x'), false)
+  assert.equal(v.reaches('b'), true)
+})
+
+test('metadata survives without any advertisement', () => {
+  const v = createTopologyView({ selfId: 'me' })
+  v.describe(nodeRow(edgeB, { online: true }))
+  assert.equal(v.get('dev2')?.label, 'dev')
+  assert.equal(v.reaches('dev2'), false, 'described but not connected')
+})
+
+test('outbound withholds the peer being told, and always names itself', () => {
+  const v = createTopologyView({ selfId: 'me' })
+  v.learn(linkState('me', ['them', 'other'], 1))
+  v.learn(linkState('other', ['me'], 1))
+  const table = v.outbound({ exclude: 'them', self: v.selfAdvertisement(['them', 'other']) })
+  const mine = table.states.find((s) => s.envId === 'me')
+  assert.ok(mine !== undefined, 'the sender is always in its own message')
+  assert.deepEqual(mine.neighbours, ['other', 'them'], 'a neighbour list is a fact, not a route')
+  assert.equal(table.states.some((s) => s.envId === 'them'), false)
+})
+
+test('the frame tag is stable: it is part of the wire format', () => {
+  assert.equal(TOPOLOGY_FRAME, 4)
 })

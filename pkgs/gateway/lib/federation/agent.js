@@ -39,7 +39,7 @@ const BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000]
  * everything — socket, reader, reconnect timer, clock estimate — and sharing any of that
  * would make one link's failure disturb another.
  */
-function createUpstream({ url, token, selfName, harnessPort, logger, onTopology, onFrame, onClockSample, onLinkUp }) {
+function createUpstream({ url, token, selfName, harnessPort, envId, logger, onTopology, onFrame, onClockSample, onLinkUp }) {
   let socket
   let reader
   /** The keepalive for the current socket; cleared whenever that socket goes away. */
@@ -70,7 +70,14 @@ function createUpstream({ url, token, selfName, harnessPort, logger, onTopology,
     // it for a direct peer.
     const port = typeof harnessPort === 'function' ? harnessPort() : 0
     const portPart = port > 0 ? `&harnessPort=${port}` : ''
-    return `${scheme}//${rest}/_tunnel?token=${encodeURIComponent(token)}${named}${hostPart}${portPart}`
+    // This node's own id, declared at the door. An environment id is unique and generated
+    // by the machine it names, so the node that owns it is the only authority on it — the
+    // upstream records what it is told rather than assigning one. Two identities for one
+    // node (a registry id here, a different one in the topology) is what put every
+    // neighbour list one hop out of step.
+    const id = typeof envId === 'function' ? envId() : ''
+    const idPart = typeof id === 'string' && id !== '' ? `&envId=${encodeURIComponent(id)}` : ''
+    return `${scheme}//${rest}/_tunnel?token=${encodeURIComponent(token)}${named}${hostPart}${portPart}${idPart}`
   }
 
   function schedule() {
@@ -277,7 +284,7 @@ function createUpstream({ url, token, selfName, harnessPort, logger, onTopology,
  * @param options.selfName - the name this node claims for itself.
  * @returns `{ start, stop, connected, topology, linkTo, openStream }`.
  */
-export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, logger, selfName = '' }) {
+export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, envId, logger, selfName = '' }) {
   /** streamId(hex) -> the local socket a stream aimed at this node is delivered to. */
   const localStreams = new Map()
 
@@ -291,6 +298,8 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, log
    */
   let routeQuery
 
+  // Empty for the same reason as the hub's: an edge learns its id from its upstream. It is
+  // filled in by `setSelfId` on the first topology it receives.
   const topology = createTopologyView({})
   const claimedName = selfName === '' ? (process.env.HOSTNAME ?? '') : selfName
 
@@ -299,20 +308,35 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, log
     token: upstream.token,
     selfName: claimedName,
     harnessPort,
+    envId,
     logger,
     onTopology(table, owner) {
-      if (owner !== undefined && typeof table?.from === 'string' && table.from !== '') {
-        owner.adoptPeer(table.from)
-      }
+      const learned = owner !== undefined && typeof table?.from === 'string' && table.from !== ''
+      if (learned) owner.adoptPeer(table.from)
       // The upstream says which environment this edge is; a leaf knows only its token.
       if (typeof table?.selfEnvId === 'string' && table.selfEnvId !== '') {
         topology.setSelfId(table.selfEnvId)
       }
-      // Attribute the table to the link it arrived on, so its sequence numbers order
-      // separately from another upstream's.
-      const adopted = topology.apply(table, { source: owner?.url })
-      logger.info(`federation: topology ${adopted ? 'updated' : 'ignored stale'} (seq ${table?.seq}, ${table?.nodes?.length ?? 0} node(s))`)
-      if (adopted) announce(owner)
+      // Learn every advertisement the message carries. Flood-per-origin: each is stored
+      // under the node it describes, so two upstreams reporting different parts of the
+      // graph add up instead of overwriting one another. This node's own entry is skipped
+      // — it knows its own links first-hand, and adopting a peer's view of them would let
+      // a stale report outlive the link it described.
+      let adopted = false
+      for (const state of Array.isArray(table?.states) ? table.states : []) {
+        if (state?.envId === topology.selfId) continue
+        if (topology.learn(state)) adopted = true
+      }
+      for (const row of Array.isArray(table?.nodes) ? table.nodes : []) {
+        if (row?.envId === topology.selfId) continue
+        if (topology.describe(row)) adopted = true
+      }
+      logger.info(`federation: topology ${adopted ? 'updated' : 'unchanged'} (${Array.isArray(table?.states) ? table.states.length : 0} state(s), ${Array.isArray(table?.nodes) ? table.nodes.length : 0} node(s))`)
+      // Re-announce when the link's identity was just learned: the advertisement this node
+      // sent on link-up listed its neighbours by id, and it had no id for this one yet. The
+      // result was an empty neighbour set reaching every other node, which made this node a
+      // dead end in their graph — reachable by name, with no path to it.
+      if (adopted || learned) announce(owner)
     },
     onFrame(frame, owner) {
       // A frame for a stream this node never opened: either an `open` addressed to this
@@ -381,7 +405,15 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, log
   function announce(origin) {
     for (const one of links) {
       if (one === origin) continue
-      const table = topology.outbound({ exclude: one.url })
+      // Withheld by *id*, not URL: the exclude set is compared against environment ids, and
+      // a URL never matches one — which silently disabled split horizon.
+      const attached = links.filter((link) => link.connected).map((link) => link.envId).filter((id) => typeof id === 'string' && id !== '')
+      const table = topology.outbound({
+        exclude: one.envId ?? '',
+        // The view's counter, not a local one: this node also speaks from the hub, and two
+        // counters made its advertisements arrive in an order no receiver could apply.
+        self: topology.selfAdvertisement(attached),
+      })
       const sent = one.reportTopology(table)
       if (table !== undefined) {
         logger.info(`federation: reporting ${table.nodes.length} node(s) to ${one.url}${sent ? '' : ' (link not open)'}`)
@@ -506,10 +538,19 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, log
       const route = topology.routeTo(envId)
       if (route === undefined) return undefined
       if (route.done === true) return { local: true }
-      // `via` names the environment to hand the stream to. Every link reaches the
-      // upstream that published the table, so any connected one will do today; when a
-      // node holds several upstreams that see different parts of the graph, this is where
-      // the choice becomes meaningful.
+
+      // The route names the neighbour to hand the stream to. It is chosen from the graph,
+      // not from whichever link happens to be up: with several upstreams only one of them
+      // may lead where the stream is going.
+      //
+      // A next hop that is not one of this node's own upstreams is a node reached *back*
+      // through a link — the stream goes to the upstream that advertised it, and the
+      // packet's `toEnvId` carries it the rest of the way.
+      const wanted = route.next ?? ''
+      if (wanted !== '') {
+        const named = links.find((one) => one.connected && one.envId === wanted)
+        if (named !== undefined) return named
+      }
       return links.find((one) => one.connected)
     },
     writeLocal,

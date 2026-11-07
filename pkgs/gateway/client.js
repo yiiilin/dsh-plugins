@@ -647,29 +647,7 @@ window.__ModuleLoader__.load({
          * missing credential.
          */
         const openEnvironment = useCallback(async (envId) => {
-          const fallback = `/${envId}/`
-          try {
-            // Asked of this node, which fetches the peer's token through the tunnel. A
-            // browser cannot ask the peer itself: its `/admin` answers only a tunnelled
-            // request, so a direct call came back as the login page.
-            const answer = await fetch(`/admin/harness-url?envId=${encodeURIComponent(envId)}`)
-            if (!answer.ok) { window.open(fallback, '_blank'); return }
-            const body = await answer.json()
-            const search = body?.url?.search ?? ''
-            if (search === '') { window.open(fallback, '_blank'); return }
-            // The token is exchanged for a cookie by the *browser*, so the exchange has
-            // to happen before the tab opens: a tab that loads the tokenized URL carries
-            // no cookie yet and the far harness answers 401. Fetching it here leaves the
-            // cookie in place, and the tab then opens signed in.
-            // Follow the redirect: the exchange answers 303 with a `Set-Cookie` scoped to
-            // this environment, and `redirect: 'manual'` surfaces the 303 as an opaque
-            // response whose cookie a browser discards. `same-origin` is the default for a
-            // relative URL, and the cookie must land on this origin.
-            await fetch(`${fallback}${search}`, { credentials: 'same-origin' })
-            window.open(fallback, '_blank')
-          } catch {
-            window.open(fallback, '_blank')
-          }
+          await enterEnvironment(envId, { open: true })
         }, [])
 
         /**
@@ -997,6 +975,37 @@ window.__ModuleLoader__.load({
      * (ds-bot does the same for its 连接插件 entry in the same seat); switching
      * environment stays available from the panel's own environment list.
      */
+    /**
+     * Go to an environment's own UI.
+     *
+     * `dsh web` authenticates by exchanging a launch token for a cookie, and only the node
+     * holding that token can produce it — so the token is asked for here, over the portal's
+     * own authenticated route, and the navigation carries it. Two callers need this: the
+     * "open" button and the sidebar switcher, and the switcher used to navigate bare, which
+     * landed on "dsh web authentication required" for every peer.
+     *
+     * The exchange is a navigation, not a fetch: a tab that loads the tokenized URL follows
+     * the harness's 303 and stores the cookie on the way, whereas a fetch-then-open leaves
+     * the cookie in the *current* tab and a phone browser may open the new tab without it.
+     *
+     * @param envId - destination; empty means this node.
+     * @param options.open - open a new tab instead of navigating this one.
+     */
+    const enterEnvironment = async (envId, { open = false } = {}) => {
+      const target = envId === '' ? '/' : `/${envId}/`
+      const launch = (url) => { if (open) window.open(url, '_blank'); else window.location.href = url }
+      if (envId === '') { launch('/'); return }
+      try {
+        const answer = await fetch(`/admin/harness-url?envId=${encodeURIComponent(envId)}`)
+        if (!answer.ok) { launch(target); return }
+        const body = await answer.json()
+        const search = body?.url?.search ?? ''
+        launch(`${target}${search}`)
+      } catch {
+        launch(target)
+      }
+    }
+
     const makeSwitcher = (t) => function EnvironmentSwitcher({ wide }) {
       const [state, setState] = useState({ phase: 'loading', role: 'main', current: '', environments: [] })
 
@@ -1033,8 +1042,10 @@ window.__ModuleLoader__.load({
       // environment list still switches. ds-bot withdraws its own footer entry on
       // the same flag.
       if (!wide) return null
-      // An edge has no other environments to offer, and no list to build one from.
-      if (state.phase === 'loading' || state.role !== 'main' || state.environments.length === 0) return null
+      // What matters is whether there is anywhere to switch to, not which role this node
+      // was configured as: an edge that can reach peers lists them, and the check used to
+      // hide the control from it even though navigating away would have worked.
+      if (state.phase === 'loading' || state.environments.length === 0) return null
 
       // Where we are now, so the control shows the truth rather than a default.
       const path = window.location.pathname
@@ -1049,7 +1060,7 @@ window.__ModuleLoader__.load({
           value: active,
           onChange: (event) => {
             const id = event.target.value
-            window.location.href = id === '' ? '/' : `/${id}/`
+            void enterEnvironment(id)
           },
         },
         h('option', { value: '' }, t('switcherLocal')),
