@@ -63,7 +63,11 @@ English: a right-sidebar tab that auto-connects on open. It lists the **browser 
    "lastActiveAt": 1792637200, "viewers": 1 }]
 ```
 
-`state` 为 `starting` | `ready` | `failed`。`createdAt` / `lastActiveAt` 是 **epoch 秒**。
+`state` 为 `starting` | `ready` | `failed` | `closed`。`createdAt` / `lastActiveAt` 是 **epoch 秒**。
+
+`closed` 是**正常关闭**的终态，与 `failed` 分开：窗口被用户或它的会话关掉，不是坏了。
+计数失败、提示重试、统计错误率都应当只看 `failed`——早先把关闭也写成 `failed`，等于把
+每一次正常关闭都记成一次故障。`closed` 不会再变成任何其它状态。
 
 `error` 是**条件字段**：只在 `state === "failed"` 时出现，携带失败原因；其余状态整个键
 缺席（不是 `null`，也不是 `undefined`）。侧边栏因此能在同一行里解释失败，不必再发一次请求。
