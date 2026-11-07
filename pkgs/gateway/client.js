@@ -411,6 +411,52 @@ window.__ModuleLoader__.load({
     const DEFAULT_TAB = 'environment'
 
     /**
+     * The credential form's lifecycle, as a table.
+     *
+     * The page held four independent `phase` values with overlapping vocabularies and no
+     * single place saying which moves are legal. `invalid` was produced by local validation
+     * and `failed` by the request, and nothing said a `sending` form cannot become
+     * `invalid` — so the two outcomes were reachable from the same place and only the
+     * caller's ordering kept them apart.
+     *
+     * An event with no entry leaves the phase unchanged, so a submit that resolves after
+     * the form was reset cannot overwrite the reset.
+     *
+     * - `submit`   — the operator pressed the button.
+     * - `reject`   — local validation refused it; no request was made.
+     * - `accept`   — the request succeeded.
+     * - `fail`     — the request or the transport failed.
+     * - `reset`    — the form was cleared, whatever it was showing.
+     */
+    const CREDENTIAL_TRANSITIONS = {
+      idle: { submit: 'sending', reset: 'idle' },
+      sending: { reject: 'invalid', accept: 'done', fail: 'failed' },
+      invalid: { submit: 'sending', reset: 'idle' },
+      done: { submit: 'sending', reset: 'idle' },
+      failed: { submit: 'sending', reset: 'idle' },
+    }
+
+    /** @returns whether `phase` is one of the five credential phases. */
+    function isCredentialPhase(phase) {
+      return Object.prototype.hasOwnProperty.call(CREDENTIAL_TRANSITIONS, phase)
+    }
+
+    /**
+     * Advance the credential form.
+     *
+     * @param phase - the phase it is in now.
+     * @param event - one of the events named on the table.
+     * @returns the phase after the event.
+     */
+    function reduceCredential(phase, event) {
+      const row = Object.prototype.hasOwnProperty.call(CREDENTIAL_TRANSITIONS, phase)
+        ? CREDENTIAL_TRANSITIONS[phase]
+        : undefined
+      const next = row === undefined ? undefined : row[event]
+      return typeof next === 'string' ? next : phase
+    }
+
+    /**
      * The shortest new credential the daemon will accept.
      *
      * `PAIRING_CREDENTIAL_MIN_LENGTH` on the daemon is the authority; the form repeats
@@ -738,7 +784,10 @@ window.__ModuleLoader__.load({
        * the credential, and it does not stay on screen after it has been accepted.
        */
       const submitCredential = useCallback(async () => {
-        setCredential({ phase: 'sending' })
+        setCredential((current) => ({ phase: reduceCredential(
+          isCredentialPhase(current.phase) ? current.phase : 'idle',
+          'submit',
+        ) }))
         try {
           const outcome = await changeCredential(form, (body) => call('/admin/credential', {
             method: 'POST',
@@ -746,9 +795,23 @@ window.__ModuleLoader__.load({
             body: JSON.stringify(body),
           }))
           if (outcome.phase === 'done') setForm({ current: '', password: '', confirm: '' })
-          setCredential(outcome)
+          // The outcome names an end state; `reject` is the one local validation produces
+          // without a request, and `accept` the one a successful request produces.
+          setCredential((current) => ({
+            ...outcome,
+            phase: reduceCredential(
+              isCredentialPhase(current.phase) ? current.phase : 'idle',
+              outcome.phase === 'invalid' ? 'reject' : outcome.phase === 'done' ? 'accept' : 'fail',
+            ),
+          }))
         } catch (error) {
-          setCredential({ phase: 'failed', error: String(error) })
+          setCredential((current) => ({
+            phase: reduceCredential(
+              isCredentialPhase(current.phase) ? current.phase : 'idle',
+              'fail',
+            ),
+            error: String(error),
+          }))
         }
       }, [form])
 

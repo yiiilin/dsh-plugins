@@ -143,3 +143,23 @@ test('outbound withholds the peer being told, and always names itself', () => {
 test('the frame tag is stable: it is part of the wire format', () => {
   assert.equal(TOPOLOGY_FRAME, 4)
 })
+
+test('a view built before its id is known says so, and routes nothing', () => {
+  // The hub and the agent both construct a view before the id is read from disk. Every
+  // method used to check `me === ''` separately, and the one that forgot produced a graph
+  // with no origin — which reads exactly like "no route" and cost a long time to find.
+  const v = createTopologyView({ selfId: '' })
+  assert.equal(v.named, false)
+  v.learn(linkState('peer', ['me'], 1))
+  assert.equal(v.reaches('peer'), false, 'no origin means no route')
+
+  v.setSelfId('me')
+  assert.equal(v.named, true)
+  assert.equal(v.reaches('peer'), true, 'the same table routes once the id is known')
+})
+
+test('an empty id does not name the view', () => {
+  const v = createTopologyView({ selfId: '' })
+  v.setSelfId('')
+  assert.equal(v.named, false, 'an empty id is not an identity')
+})

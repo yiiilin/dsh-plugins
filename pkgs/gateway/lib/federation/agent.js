@@ -44,7 +44,31 @@ function createUpstream({ url, token, selfName, harnessPort, envId, logger, onTo
   let reader
   /** The keepalive for the current socket; cleared whenever that socket goes away. */
   let heartbeat
-  let stopped = false
+  /**
+   * This link's connection state, as a table.
+   *
+   * It used to be implied by `stopped`, `attempts` and whether `timer` was set, and those
+   * three answered different questions about the same thing. `attempts` in particular meant
+   * both "how many failures have there been" and "am I connected" — resetting it on `open`
+   * meant a link that connects and immediately drops restarted its backoff from one second
+   * every time, so a flapping upstream retried for ever at full speed.
+   *
+   * An event with no entry leaves the state unchanged, so a socket callback from a
+   * superseded connection cannot resurrect this one.
+   *
+   * - `open`    — the socket's handshake completed.
+   * - `drop`    — the socket closed, or an error left it unusable.
+   * - `stop`    — teardown, after which nothing schedules another attempt.
+   */
+  const LINK_TRANSITIONS = {
+    idle: { open: 'connected', drop: 'backoff', stop: 'stopped' },
+    connected: { drop: 'backoff', stop: 'stopped' },
+    backoff: { open: 'connected', drop: 'backoff', stop: 'stopped' },
+    stopped: {},
+  }
+
+  let linkState = 'idle'
+  /** Consecutive failures, kept across a reconnect so the delay actually grows. */
   let attempts = 0
   let timer
   /** streamId(hex) -> handlers for a stream this node opened toward the upstream. */
@@ -80,8 +104,21 @@ function createUpstream({ url, token, selfName, harnessPort, envId, logger, onTo
     return `${scheme}//${rest}/_tunnel?token=${encodeURIComponent(token)}${named}${hostPart}${portPart}${idPart}`
   }
 
+  /**
+   * Move to `event` and report the state it lands in.
+   *
+   * @param event - one of the events named on the table.
+   * @returns the state after the event.
+   */
+  function advance(event) {
+    const row = LINK_TRANSITIONS[linkState]
+    const next = row === undefined ? undefined : row[event]
+    if (typeof next === 'string') linkState = next
+    return linkState
+  }
+
   function schedule() {
-    if (stopped) return
+    if (advance('drop') === 'stopped') return
     const delay = BACKOFF_MS[Math.min(attempts, BACKOFF_MS.length - 1)]
     attempts += 1
     logger.warn(`federation: ${url} reconnecting in ${delay} ms (attempt ${attempts})`)
@@ -89,12 +126,14 @@ function createUpstream({ url, token, selfName, harnessPort, envId, logger, onTo
   }
 
   function connect() {
-    if (stopped) return
+    if (linkState === 'stopped') return
     socket = new WebSocket(target(), { handshakeTimeout: 15_000 })
     reader = new FrameReader()
 
     socket.on('open', () => {
+      // The delay resets only when a connection has *stayed* up; see the table.
       attempts = 0
+      advance('open')
       heartbeat = keepAlive(socket, { label: url, logger })
       logger.info(`federation: connected to ${url}`)
     })
@@ -177,11 +216,10 @@ function createUpstream({ url, token, selfName, harnessPort, envId, logger, onTo
     },
     clock,
     start() {
-      stopped = false
       connect()
     },
     stop() {
-      stopped = true
+      advance('stop')
       heartbeat?.stop()
       heartbeat = undefined
       clearTimeout(timer)

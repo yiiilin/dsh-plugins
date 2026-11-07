@@ -448,6 +448,44 @@ export function createBridge({ wsSocket, tcpSocket, subprotocol, maxFrameBytes =
   // gone. They differ exactly while the close handshake flushes its frame.
   const state = { bytesToTcp: 0, bytesToWs: 0, closed: false, closeSent: false, torn: false, forceTimer: null }
 
+  /**
+   * The close handshake, as a table.
+   *
+   * Three booleans described it and the difference between two of them exists for exactly
+   * one moment — `closed` with `!torn` is "flushing a close frame, transports still up".
+   * Naming the states makes that moment a state instead of a combination a reader has to
+   * reconstruct, and gives the flush timeout somewhere to say what it does.
+   *
+   * - `open`       — payload flows both ways.
+   * - `flushing`   — `close()` ran; the close frame is going out, transports still up.
+   * - `torn`       — both transports destroyed; nothing else may be written.
+   *
+   * `closeSent` stays a flag on purpose: it is a property of the handshake ("has the frame
+   * been queued"), not a state — a write can be attempted before and after it flips.
+   */
+  const CLOSE_TRANSITIONS = {
+    open: { shutdown: 'flushing', teardown: 'torn' },
+    flushing: { teardown: 'torn' },
+    torn: {},
+  }
+
+  /** The lifecycle state the three flags encode. */
+  const closeState = () => (state.torn ? 'torn' : state.closed ? 'flushing' : 'open')
+
+  /**
+   * Move the handshake to `event` and report where it landed.
+   *
+   * @param event - one of the events named on the table.
+   * @returns the state after the event.
+   */
+  const advanceClose = (event) => {
+    const row = CLOSE_TRANSITIONS[closeState()]
+    const next = row === undefined ? undefined : row[event]
+    if (next === 'flushing') state.closed = true
+    if (next === 'torn') { state.closed = true; state.torn = true }
+    return closeState()
+  }
+
   const note = (level, message) => {
     if (typeof log === 'function') {
       try {
@@ -484,8 +522,7 @@ export function createBridge({ wsSocket, tcpSocket, subprotocol, maxFrameBytes =
 
   const destroyBoth = () => {
     stopTimer()
-    state.closed = true
-    state.torn = true
+    advanceClose('teardown')
     for (const socket of [wsSocket, tcpSocket]) {
       try {
         if (socket.destroyed !== true) socket.destroy()
@@ -497,8 +534,8 @@ export function createBridge({ wsSocket, tcpSocket, subprotocol, maxFrameBytes =
 
   /** Close the session: flush a close frame, then end both transports. */
   const close = (code = CLOSE_NORMAL, reason = '') => {
-    if (state.closed) return
-    state.closed = true
+    if (closeState() !== 'open') return
+    advanceClose('shutdown')
     stopTimer()
     sendClose(code, reason)
     try {

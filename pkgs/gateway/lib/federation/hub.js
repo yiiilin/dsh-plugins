@@ -163,11 +163,41 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
   /** Monotonic per sender, so a receiver can discard a late snapshot. */
   let topologySeq = 0
 
-  /** Set while a broadcast loop is running, so a re-entrant call cannot interleave. */
-  let broadcasting = false
+  /**
+   * Where the broadcast loop stands.
+   *
+   * Two booleans used to describe this — `broadcasting` for "a loop is running" and
+   * `topologyDirty` for "the table moved under it" — and the pair had a third meaning in
+   * combination: `busy + dirty` is what makes the loop go round again. Naming the states
+   * puts that in one place, where a re-entrant call has to answer one question instead of
+   * setting the right one of two flags.
+   *
+   * - `idle`    — nothing is running; a call starts a loop.
+   * - `busy`    — a loop is running over a table nobody has changed.
+   * - `dirty`   — a loop is running and must go round again.
+   * - `settled` — a loop finished; the next call starts a fresh one.
+   */
+  const BUSY_TRANSITIONS = {
+    idle: { begin: 'busy' },
+    busy: { change: 'dirty', finish: 'settled' },
+    dirty: { change: 'dirty', finish: 'settled' },
+    settled: { begin: 'busy' },
+  }
 
-  /** Set when the table changed during a broadcast, so the loop repeats with it. */
-  let topologyDirty = false
+  let broadcastState = 'idle'
+
+  /**
+   * Move the loop to `event` and report where it landed.
+   *
+   * @param event - one of the events named on the table.
+   * @returns the state after the event.
+   */
+  function advanceBroadcast(event) {
+    const row = BUSY_TRANSITIONS[broadcastState]
+    const next = row === undefined ? undefined : row[event]
+    if (typeof next === 'string') broadcastState = next
+    return broadcastState
+  }
 
   /**
    * Build the snapshot this node would tell others about.
@@ -272,15 +302,19 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     // under a lower one — peers would hold a stale table believing it current. So a
     // re-entrant call only marks the burst dirty; the outer call goes round again with
     // the newest table under one new sequence.
-    if (broadcasting) {
-      topologyDirty = true
+    // Checked before moving: `begin` is inert from `busy`, so asking afterwards whether we
+    // are busy would answer yes for the re-entrant call too and start a second loop.
+    if (broadcastState === 'busy' || broadcastState === 'dirty') {
+      advanceBroadcast('change')
       return 0
     }
-    broadcasting = true
+    advanceBroadcast('begin')
     let sent = 0
     try {
       do {
-        topologyDirty = false
+        // Back to plain `busy` for this pass; anything that changes the table during it
+        // moves us to `dirty` and the loop repeats.
+        if (broadcastState === 'dirty') broadcastState = 'busy'
         const table = buildSnapshot()
         if (table === undefined) break
         // The message differs per peer only by split horizon, so the unchanged-table guard
@@ -312,9 +346,9 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
             logger.warn(`federation: could not send the topology to ${record.envId}: ${error.message}`)
           }
         }
-      } while (topologyDirty)
+      } while (broadcastState === 'dirty')
     } finally {
-      broadcasting = false
+      advanceBroadcast('finish')
     }
     return sent
   }
@@ -325,7 +359,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     if (scheduled !== undefined) return
     scheduled = setTimeout(() => {
       scheduled = undefined
-      if (topologyDirty) broadcastTopology()
+      broadcastTopology()
     }, 50)
     scheduled.unref?.()
   }
@@ -514,7 +548,9 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
         }
         logger.info(`federation: ${record.envId} reported ${table?.nodes?.length ?? 0} node(s); ${merged ? 'merged' : 'no change'}`)
         if (merged) {
-          topologyDirty = true
+          // Marked, not broadcast here: a loop already running must go round again with
+          // this change, and one that is not gets a fresh pass from the scheduler.
+          advanceBroadcast('change')
           scheduleBroadcast()
           // And pass it on to this node's own upstreams. Without this a cascade only ever
           // propagates downward: the middle node merged what its child reported but told

@@ -483,3 +483,33 @@ test('bytes already read past the request line are replayed into the decoder', a
   assert.equal(tcp.written[0].toString(), 'early')
   bridge.dispose()
 })
+
+test('a closed bridge forwards no further payload, and one close frame is sent', async () => {
+  // `closed` and `torn` differ for exactly one moment — while the close frame flushes.
+  // That moment is a state now rather than a combination a reader has to reconstruct.
+  const ws = fakeSocket()
+  const tcp = fakeSocket()
+  const bridge = createBridge({ wsSocket: ws.socket, tcpSocket: tcp.socket, subprotocol: 'binary' })
+
+  bridge.close(1000, 'done')
+  assert.equal(bridge.closed, true)
+
+  const afterClose = ws.written.length
+  ws.feed(clientFrame(OPCODE_BINARY, Buffer.from([0x01])))
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(tcp.written.length, 0, 'no payload reaches TCP once closed')
+
+  // A second close must not queue a second frame: the peer would see two handshakes.
+  bridge.close(1000, 'again')
+  assert.equal(ws.written.length, afterClose, 'the close frame was already sent')
+  bridge.dispose()
+})
+
+test('closing a bridge twice is inert', () => {
+  const ws = fakeSocket()
+  const tcp = fakeSocket()
+  const bridge = createBridge({ wsSocket: ws.socket, tcpSocket: tcp.socket, subprotocol: 'binary' })
+  bridge.close()
+  assert.doesNotThrow(() => bridge.close())
+  bridge.dispose()
+})

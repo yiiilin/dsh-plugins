@@ -181,6 +181,48 @@ export function createInstanceRegistry({
   const seconds = (ms) => Math.floor(ms / 1000)
 
   /**
+   * The browser-instance lifecycle, as a table.
+   *
+   * It used to be implied by assignments scattered across `boot` and `close`, and closing
+   * an instance wrote `state: 'failed'` — the same value a broken boot writes. Anything
+   * counting failures counted every normal close, and a UI offering "retry" offered it for
+   * a window the user had dismissed on purpose. `closed` is its own terminal state now.
+   *
+   * An event with no entry leaves the state unchanged, so a late boot callback cannot
+   * revive an instance the user already closed.
+   *
+   * - `booted`  — the stack started and the debug port answers.
+   * - `failed`  — boot threw; `entry.error` explains it.
+   * - `close`   — the user or its owning session asked for it.
+   */
+  const INSTANCE_TRANSITIONS = {
+    starting: { booted: 'ready', failed: 'failed', close: 'closed' },
+    ready: { close: 'closed', failed: 'failed' },
+    failed: { close: 'closed' },
+    closed: {},
+  }
+
+  /** @returns whether `state` is one of the four lifecycle states. */
+  const isInstanceState = (state) => Object.prototype.hasOwnProperty.call(INSTANCE_TRANSITIONS, state)
+
+  /**
+   * Advance one entry's state.
+   *
+   * Unknown states and events are inert rather than throwing: this runs from a boot that
+   * may finish after teardown.
+   *
+   * @param entry - the instance whose state changes.
+   * @param event - one of the events named on the table.
+   * @returns the state after the event.
+   */
+  const advance = (entry, event) => {
+    const row = INSTANCE_TRANSITIONS[entry.state]
+    const next = row === undefined ? undefined : row[event]
+    if (typeof next === 'string') entry.state = next
+    return entry.state
+  }
+
+  /**
    * One list row: the only shape the HTTP list and the agent tools report.
    *
    * `error` is conditional on purpose: a `failed` row has to explain itself
@@ -506,12 +548,12 @@ export function createInstanceRegistry({
         throw new Error(`调试端口 ${cdpPort} 未就绪（debug port ${cdpPort} never accepted a connection）`)
       }
 
-      entry.state = 'ready'
+      advance(entry, 'booted')
       note('info', `desktop-vnc: browser instance ${entry.id} is ready on 127.0.0.1:${entry.port}`)
     } catch (error) {
       if (entry.closed) return
-      entry.state = 'failed'
       entry.error = error instanceof Error ? error.message : String(error)
+      advance(entry, 'failed')
       note('warn', `desktop-vnc: browser instance ${entry.id} failed: ${entry.error}`)
     }
   }
@@ -648,7 +690,9 @@ export function createInstanceRegistry({
     entry.displayClaim = null
     releaseCdpPort(entry.cdpPort)
     entry.cdpPort = null
-    entry.state = 'failed'
+    // Not `failed`: this window was dismissed, not broken, and a caller counting failures
+    // must not count it.
+    advance(entry, 'close')
     entry.error = 'closed'
 
     await disposeBackend(entry)
@@ -809,6 +853,10 @@ export function createInstanceRegistry({
     typeText,
     row,
     seconds,
+    // The lifecycle table and its reducer, so a test can assert the legal moves without
+    // having to boot a browser stack to observe them.
+    INSTANCE_TRANSITIONS,
+    advance,
     entries,
     claimedPorts,
     viewport,

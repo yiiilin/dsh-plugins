@@ -181,7 +181,27 @@ export function apply(ctx, config = {}) {
   const detectNow = () => detect({ executable, resolveExecutable, spawn })
   /** The one in-flight (or settled) detection. Replaced only by /detect and /install. */
   let detectionPromise = detectNow()
-  let installInFlight = false
+  /**
+   * The install lifecycle, as a table.
+   *
+   * `phase` and a separate `installInFlight` boolean described the same thing and could
+   * disagree: the flag was cleared in a `finally` that also awaited a re-detection, so an
+   * error there left a phase of `running` that no flag still backed. The panel then showed
+   * an install that would never progress, and a retry was accepted against it.
+   *
+   * An event with no entry leaves the state unchanged, so a second `start` cannot restart
+   * a running install.
+   *
+   * - `start`   — the operator asked for one.
+   * - `succeed` — the command exited zero and the binary resolves.
+   * - `fail`    — it exited non-zero, threw, or left no usable binary.
+   */
+  const INSTALL_TRANSITIONS = {
+    idle: { start: 'running' },
+    running: { succeed: 'succeeded', fail: 'failed' },
+    succeeded: { start: 'running' },
+    failed: { start: 'running' },
+  }
   /**
    * The current (or last) guided install.
    *
@@ -253,9 +273,21 @@ export function apply(ctx, config = {}) {
    * Never throws at the caller: a spawn failure becomes `phase: 'failed'` with
    * a readable `error`, because the panel has to be able to show it.
    */
+  /**
+   * Move the install to `event` and report the phase it lands in.
+   *
+   * @param event - one of the events named on the table.
+   * @returns the phase after the event.
+   */
+  const advanceInstall = (event) => {
+    const row = INSTALL_TRANSITIONS[install.phase]
+    const next = row === undefined ? undefined : row[event]
+    if (typeof next === 'string') install.phase = next
+    return install.phase
+  }
+
   const startInstall = () => {
-    if (installInFlight) return
-    installInFlight = true
+    if (install.phase === 'running') return
     install.phase = 'running'
     install.startedAt = Date.now()
     install.finishedAt = null
@@ -299,22 +331,21 @@ export function apply(ctx, config = {}) {
         drainInstall()
         install.exitCode = outcome?.exitCode ?? null
         if (install.exitCode === 0) drainInstall()
-        install.phase = 'succeeded'
+        advanceInstall('succeed')
       } catch (error) {
         drainInstall()
-        install.phase = 'failed'
+        advanceInstall('fail')
         install.error = error instanceof Error ? error.message : String(error)
       } finally {
         if (timer !== undefined) clearTimeout(timer)
         install.finishedAt = Date.now()
-        installInFlight = false
         // The binary may be on PATH now, so re-detect before the panel asks.
         detectionPromise = detectNow()
         const installed = (await detectionPromise.catch(() => ({ installed: false }))).installed
         if (install.phase === 'succeeded' && installed !== true) {
           // The command exited 0 but the binary is not resolvable — usually a
           // PATH problem, and far clearer as its own state than as "succeeded".
-          install.phase = 'failed'
+          advanceInstall('fail')
           install.error = install.error ?? `${installCommand[0]} exited successfully but the binary is still not on PATH`
         }
         log(installed === true ? 'info' : 'warn',
@@ -584,7 +615,7 @@ export function apply(ctx, config = {}) {
         sendJson(res, 409, { error: 'code-server is already installed' })
         return
       }
-      if (installInFlight) {
+      if (install.phase === 'running') {
         sendJson(res, 409, { error: 'an install is already running' })
         return
       }

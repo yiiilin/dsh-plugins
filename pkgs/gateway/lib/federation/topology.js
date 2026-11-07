@@ -81,6 +81,38 @@ export function linkState(envId, neighbours, seq) {
  * @returns the view.
  */
 export function createTopologyView({ selfId = '' } = {}) {
+  /**
+   * Whether this node knows its own id yet.
+   *
+   * `me === ''` meant "not known", and every method had to remember to check it — the
+   * checks were written out four times, and one of them (`selfAdvertisement` returning an
+   * id that `learn` then rejected) produced a graph with no origin, which reads exactly
+   * like "no route" and cost a long time to find.
+   *
+   * - `anonymous` — constructed before the id was read from disk; cannot build a graph.
+   * - `named`     — `me` is usable.
+   */
+  const IDENTITY_TRANSITIONS = {
+    anonymous: { name: 'named' },
+    named: { name: 'named' },
+  }
+
+  /** The identity state the `me` string encodes. */
+  const identity = () => (me === '' ? 'anonymous' : 'named')
+
+  /**
+   * Set this node's id and report the state it lands in.
+   *
+   * @param envId - the id to adopt; an empty one is ignored.
+   * @returns the state after the call.
+   */
+  const advanceIdentity = (envId) => {
+    const row = IDENTITY_TRANSITIONS[identity()]
+    const next = typeof envId === 'string' && envId !== '' && row !== undefined ? row.name : undefined
+    if (next === 'named') me = envId
+    return identity()
+  }
+
   let me = selfId
 
   /**
@@ -120,7 +152,7 @@ export function createTopologyView({ selfId = '' } = {}) {
         if (!adjacency.has(peer)) adjacency.set(peer, new Set())
       }
     }
-    if (me !== '') {
+    if (identity() === 'named') {
       if (!adjacency.has(me)) adjacency.set(me, new Set())
       // This node's own advertisement is half of every path that starts here. The loop
       // below only picks up links a *peer* reported; without this line the origin has no
@@ -184,7 +216,12 @@ export function createTopologyView({ selfId = '' } = {}) {
 
     /** Replace this node's own identity, learned from an upstream's advertisement. */
     setSelfId(envId) {
-      if (typeof envId === 'string' && envId !== '') me = envId
+      advanceIdentity(envId)
+    },
+
+    /** Whether this node knows its own id; `false` means routing cannot be computed. */
+    get named() {
+      return identity() === 'named'
     },
 
     /**
@@ -230,7 +267,7 @@ export function createTopologyView({ selfId = '' } = {}) {
     /** Metadata for every environment, this node included. */
     nodes() {
       const rows = [...described.values()]
-      if (me !== '' && !described.has(me)) {
+      if (identity() === 'named' && !described.has(me)) {
         rows.push({ envId: me, label: me, hostname: '', online: true, harnessPort: 0, lastSeen: 0 })
       }
       return rows
@@ -312,7 +349,7 @@ export function createTopologyView({ selfId = '' } = {}) {
       // This node's own advertisement leads, so a receiver always knows who is speaking
       // and what it is attached to. Without it an edge is a dead end in everyone's graph:
       // it answers streams but nothing can compute a way to it.
-      if (me !== '' && self !== undefined) {
+      if (identity() === 'named' && self !== undefined) {
         // Not filtered by `exclude`. Split horizon is about not repeating a *route* back to
         // its source; a neighbour list is a fact, and removing an entry from it tells the
         // receiver a link does not exist. With two upstreams each got a different version

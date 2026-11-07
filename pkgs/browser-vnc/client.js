@@ -127,6 +127,7 @@ window.__ModuleLoader__.load({
       'state.starting': '启动中',
       'state.ready': '就绪',
       'state.failed': '失败',
+      'state.closed': '已关闭',
       'state.unknown': '未知状态',
     }
     const EN_DICT = {
@@ -190,6 +191,7 @@ window.__ModuleLoader__.load({
       'state.starting': 'Starting',
       'state.ready': 'Ready',
       'state.failed': 'Failed',
+      'state.closed': 'Closed',
       'state.unknown': 'Unknown state',
     }
 
@@ -338,7 +340,9 @@ window.__ModuleLoader__.load({
     // ===== browser instance list =====
 
     /** The three states the Host reports for a browser instance. */
-    const INSTANCE_STATES = ['starting', 'ready', 'failed']
+    // `closed` is its own state, not a kind of failure: a window the user dismissed must
+    // not read as a window that broke.
+    const INSTANCE_STATES = ['starting', 'ready', 'failed', 'closed']
 
     /**
      * How often the visible list re-reads the instance table.
