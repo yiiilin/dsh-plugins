@@ -20,6 +20,7 @@
  */
 
 import { spawn } from 'node:child_process'
+import { connect as netConnect } from 'node:net'
 import { createReadStream } from 'node:fs'
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
@@ -888,8 +889,57 @@ export function apply(ctx, config) {
   // upstream may likewise belong to something further down, and only the hub can tell.
   if (agent !== undefined) {
     hub.setUplinkNotifier(() => agent.announce({ view: hub.ownView }))
+    // A dialer's topology arrives as frames, so its hub has to be told; otherwise `relay`
+    // routes with an empty view and answers "no route" for peers the agent can reach.
+    agent.setTopologySink((learned) => hub.adoptLearned(learned))
     agent.setRouteQuery((toEnvId, owner) => hub.routeArrived(toEnvId, owner))
   }
+
+  /**
+   * Answer a stream addressed to this node.
+   *
+   * A peer sends `open` with a `toEnvId` naming this node, and the bytes that follow are
+   * an HTTP request for one of this node's own listeners. The port is resolved here — the
+   * caller cannot know it — and the socket is pumped both ways.
+   *
+   * This lives outside the agent because a node with no upstreams still answers: the root
+   * of a federation accepts every stream and has no links of its own.
+   *
+   * @param payload - `{ target?, port? }` from the `open` frame.
+   * @param sink - `{ write, end, accept }`, provided by the hub.
+   */
+  const answerOnThisNode = (payload, sink) => {
+    if (agent !== undefined) return agent.answerLocalStream(payload, sink)
+    const wantsHarness = payload?.target === 'harness'
+    const requested = Number(payload?.port)
+    const port = Number.isInteger(requested) && requested > 0
+      ? requested
+      : (wantsHarness ? embeddedRoot.portOrZero() : config.port)
+    if (port === 0) {
+      logger.warn('federation: a stream arrived before this node had a listener')
+      sink.end()
+      return
+    }
+    const client = netConnect({ host: '127.0.0.1', port }, () => {
+      logger.info(`federation: answered a stream on 127.0.0.1:${port}`)
+    })
+    client.on('data', (piece) => sink.write(piece))
+    client.on('end', () => sink.end())
+    client.on('error', (error) => {
+      logger.warn(`federation: answering on ${port} failed: ${error.message}`)
+      sink.end()
+    })
+    sink.accept((piece) => {
+      if (piece === undefined) client.end()
+      else client.write(piece)
+    })
+  }
+
+  // A stream addressed to this node has to reach its own listener, and that is not a
+  // property of having upstreams: a node with none still answers the peers that dial it.
+  // Installing this inside the block above left the root refusing every arriving stream
+  // with "this node does not answer streams" — sending worked, receiving never did.
+  hub.setLocalStreamHandler((payload, sink) => answerOnThisNode(payload, sink))
 
   /**
    * A loopback port per reachable environment, forwarding through the tunnel.
@@ -901,15 +951,16 @@ export function apply(ctx, config) {
   const relay = createStreamRelay({
     logger,
     openStream: (envId, options) => {
-      // `hub.openStream` resolves the route itself, including through a child, because a
-      // node deeper in a cascade has no tunnel here. Checking `isOnline` first — direct
-      // tunnels only — refused every destination more than one hop away.
-      if (hub !== undefined && hub.isReachable(envId)) return hub.openStream(envId, options)
+      // The agent first: its links are the tunnels this node actually holds. A dialer
+      // keeps no `connections` map — it accepts nothing — so the hub could resolve a route
+      // from the topology and still have no socket to put it on, which answered "finished"
+      // on a stream that never carried a byte.
       if (agent !== undefined) {
         const link = agent.linkTo(envId)
-        if (link === undefined || link.local === true) return { ok: false, error: `no route to "${envId}"` }
-        return link.openStream(envId, options)
+        if (link !== undefined && link.local !== true) return link.openStream(envId, options)
       }
+      // Then the hub, for a destination reached through a child this node accepted.
+      if (hub !== undefined && hub.isReachable(envId)) return hub.openStream(envId, options)
       return { ok: false, error: `this node has no route to "${envId}"` }
     },
   })
@@ -952,6 +1003,10 @@ export function apply(ctx, config) {
    * edge ask its own tunnel table about a peer and report every peer as offline.
    */
   const peer = createPeerAccess({
+    // A function, not the value: this node's id is read from disk after this is built. The
+    // default was the literal `'self'`, so a node asking for its own registered id took the
+    // remote path — and could not route to itself, which read as "not reachable".
+    selfId: () => selfEnvId(),
     localPort: () => config.port,
     relay,
     knownIds: () => reachableIds(),
@@ -1009,11 +1064,13 @@ export function apply(ctx, config) {
         })),
       ]
     }
-    return agent?.topology?.nodes()?.map((row) => ({
+    const rows = agent?.topology?.nodes() ?? []
+    logger.info(`daemon: listReachable topology=${JSON.stringify(rows.map((r) => r.envId))} self=${agent?.topology?.selfId}`)
+    return rows.map((row) => ({
       envId: row.envId,
       label: row.label,
       online: row.online,
-    })) ?? [{ envId: 'self', label: config.name === '' ? 'this node' : config.name, online: true }]
+    })).concat(rows.length === 0 ? [{ envId: 'self', label: config.name === '' ? 'this node' : config.name, online: true }] : [])
   }
 
   /**

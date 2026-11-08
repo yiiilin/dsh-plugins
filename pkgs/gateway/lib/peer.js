@@ -37,7 +37,12 @@ import { request as httpRequest } from 'node:http'
 export function createPeerAccess({ selfId = 'self', localPort, relay, knownIds = () => [], logger }) {
   /** Whether this request is for the node asking. */
   function isLocal(envId) {
-    return envId === undefined || envId === '' || envId === selfId
+    // Resolved per call: a node learns its own id after this accessor is built.
+    const mine = typeof selfId === 'function' ? selfId() : selfId
+    // `'self'` is the alias the environment list hands out, so a caller that echoes it back
+    // must land here. Comparing only against the real id sent it down the remote path,
+    // where no route to `'self'` exists — the answer was a hung socket, not a clear refusal.
+    return envId === undefined || envId === '' || envId === 'self' || envId === mine
   }
 
   /**

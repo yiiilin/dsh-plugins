@@ -331,11 +331,12 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
             // Withhold the peer being told from every neighbour list: an advertisement that
             // names the receiver as the way to reach a node is a message going back the way
             // it came.
-            const states = table.states.map((state) => ({
-              envId: state.envId,
-              neighbours: state.neighbours.filter((one) => one !== peerId),
-              seq: state.seq,
-            }))
+            // Split horizon applies to advertisements being *relayed*, not to this node's
+            // own. A neighbour list is a fact: telling a peer it is not among this node's
+            // links is false, and it left the receiver holding an entry with no path to it.
+            const states = table.states.map((state) => (state.envId === selfName()
+              ? state
+              : { ...state, neighbours: state.neighbours.filter((one) => one !== peerId) }))
             // Each edge is told which environment it *is*: a leaf knows only its token,
             // and without its own id it cannot tell "the destination is me" from "a peer".
             record.socket.send(encodeJsonFrame(TOPOLOGY_FRAME, Buffer.alloc(16), {
@@ -624,7 +625,20 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     // A stream this node itself opened: the answer belongs to the local caller, whatever
     // route carried it. Checked before the relay table because this node's own streams are
     // in both, and the local end is the one that must receive.
-    if (localStreams.has(key)) {
+    const answered = localStreams.get(key)
+    if (answered !== undefined) {
+      // Two kinds of stream share this table: one this node opened and awaits an answer
+      // for, and one a peer opened and this node answers. Only the first is a framed
+      // answer to parse.
+      if (answered.inbound === true) {
+        if (frame.type === FRAME.data) answered.accept?.(frame.payload)
+        else if (frame.type === FRAME.end) {
+          localStreams.delete(key)
+          record.streams.delete(key)
+          answered.accept?.(undefined)
+        }
+        return
+      }
       receiveLocalAnswer(frame, key)
       return
     }
@@ -755,14 +769,24 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       sendStreamRefusal(record, Buffer.from(key, 'hex'), 'this node does not answer streams')
       return
     }
-    localStreams.set(key, {
+    // `accept` is filled in by the handler below: bytes arriving for this stream belong to
+    // a socket on this node, not to a local caller waiting for an answer. The two are told
+    // apart by that field, because both live in this one table.
+    const entry = {
+      inbound: true,
       from: record.envId,
+      accept: undefined,
       send(frame) {
         record.socket.send(frame)
       },
-    })
+    }
+    localStreams.set(key, entry)
     record.streams.add(key)
     handleLocalStream(payload, {
+      /** Hand the socket that answers this stream, so later bytes reach it. */
+      accept(write) {
+        entry.accept = write
+      },
       write(piece) {
         try {
           record.socket.send(encodeFrame(FRAME.data, Buffer.from(key, 'hex'), piece))
@@ -1023,6 +1047,28 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     /** Attach one authenticated edge socket. */
     accept(environment, socket, claim) {
       return register(environment, socket, claim)
+    },
+    /**
+     * Adopt what this node's agent learned from its upstreams.
+     *
+     * A dialer receives topology as frames, not as a report, so its hub would otherwise
+     * never learn the peers it can reach — and `relay` routes with the hub's view.
+     *
+     * @param payload - `{ states, nodes }`, as the agent holds them.
+     */
+    adoptLearned({ states = [], nodes = [] } = {}) {
+      let changed = false
+      // Including this node's own entry: a dialer builds no table of its own, so the only
+      // description of its links is the one its agent sent upstream. Skipping it left the
+      // graph with no origin — every node listed, no path from here.
+      for (const state of states) {
+        if (reported.learn(state)) changed = true
+      }
+      for (const row of nodes) {
+        if (row?.envId === selfName()) continue
+        if (reported.describe(row)) changed = true
+      }
+      return changed
     },
     /**
      * The id a connected node declared for itself, given what the registry calls it.

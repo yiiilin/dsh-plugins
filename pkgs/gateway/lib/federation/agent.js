@@ -339,6 +339,22 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, env
   // Empty for the same reason as the hub's: an edge learns its id from its upstream. It is
   // filled in by `setSelfId` on the first topology it receives.
   const topology = createTopologyView({})
+
+  /** Sockets opened to answer streams addressed to this node. */
+  const localAnswerSockets = new Set()
+
+  /** Called after each applied message, so the hub's view can follow this one. */
+  let topologySink
+
+  /**
+   * The neighbour list last sent upstream.
+   *
+   * Replying to a message that taught nothing new would otherwise re-advertise on every
+   * round: each advertisement carries a fresh counter, so the far side always treats it as
+   * news and answers, and the two nodes trade messages for ever. Measured at 542 in two
+   * minutes before this guard.
+   */
+  let lastAnnounced = ''
   const claimedName = selfName === '' ? (process.env.HOSTNAME ?? '') : selfName
 
   const links = upstreams.map((upstream) => createUpstream({
@@ -374,7 +390,22 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, env
       // sent on link-up listed its neighbours by id, and it had no id for this one yet. The
       // result was an empty neighbour set reaching every other node, which made this node a
       // dead end in their graph — reachable by name, with no path to it.
-      if (adopted || learned) announce(owner)
+      // Hand what was learned to the hub, whose view is the one `relay` routes with.
+      // This is the only path a dialer's topology takes: it never receives a report, so
+      // without it the hub stayed empty and answered "no route" for a peer the agent
+      // could already reach.
+      if (adopted) {
+        topologySink?.({
+          states: topology.advertisements(),
+          nodes: topology.nodes(),
+        })
+      }
+      // Back to the link it came from as well. A node with a single upstream — every leaf —
+      // otherwise had nobody to answer: skipping the origin left the loop with no targets,
+      // so its own advertisement never went out and the upstream's table listed it with no
+      // neighbours. The message carries this node's own links, not the ones just received,
+      // so it does not echo what it was told.
+      if (adopted || learned) announce()
     },
     onFrame(frame, owner) {
       // A frame for a stream this node never opened: either an `open` addressed to this
@@ -446,6 +477,12 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, env
       // Withheld by *id*, not URL: the exclude set is compared against environment ids, and
       // a URL never matches one — which silently disabled split horizon.
       const attached = links.filter((link) => link.connected).map((link) => link.envId).filter((id) => typeof id === 'string' && id !== '')
+      // Silent when nothing changed. `force` is not offered on purpose: an announcement
+      // exists to tell upstreams about this node's links, and re-sending the same list is
+      // what makes two nodes answer each other indefinitely.
+      const signature = attached.join(',')
+      if (signature === lastAnnounced) continue
+      lastAnnounced = signature
       const table = topology.outbound({
         exclude: one.envId ?? '',
         // The view's counter, not a local one: this node also speaks from the hub, and two
@@ -600,6 +637,72 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, env
      */
     setRouteQuery(handler) {
       routeQuery = handler
+    },
+
+    /**
+     * Answer a stream addressed to this node by connecting it to a local port.
+     *
+     * Exposed so the hub can install it: a stream arriving here belongs to this node, and
+     * the hub has no way to open a socket on its behalf.
+     *
+     * @param id - the stream's id, as a hex key.
+     * @param payload - the `open` payload naming `target` or `port`.
+     * @param owner - the link the stream arrived on, so the answer goes back the same way.
+     */
+    /**
+     * Answer a stream addressed to this node: connect it to the port it names and pump the
+     * bytes both ways.
+     *
+     * The hub owns the wire, so it supplies `write`/`end`; this side owns the socket.
+     *
+     * @param payload - the `open` payload naming `target` or `port`.
+     * @param sink - `{ write(piece), end() }`, provided by the hub.
+     */
+    answerLocalStream(payload, sink) {
+      const wantsHarness = payload?.target === 'harness'
+      const requested = Number(payload?.port)
+      const port = Number.isInteger(requested) && requested > 0
+        ? requested
+        : (wantsHarness ? harnessPort() : daemonPort())
+      if (port === 0) {
+        logger.warn('federation: a stream arrived before the local listener existed')
+        sink.end()
+        return
+      }
+      const client = tcpConnect({ host: '127.0.0.1', port }, () => {
+        logger.info(`federation: answered a stream on 127.0.0.1:${port}`)
+      })
+      client.on('data', (piece) => sink.write(piece))
+      client.on('end', () => sink.end())
+      client.on('error', (error) => {
+        logger.warn(`federation: answering on ${port} failed: ${error.message}`)
+        sink.end()
+      })
+      // Registered through the sink, not assigned on it: the hub holds the stream entry and
+      // needs the writer to reach the socket this function just opened.
+      sink.accept((piece) => {
+        if (piece === undefined) {
+          client.end()
+          return
+        }
+        client.write(piece)
+      })
+      localAnswerSockets.add(client)
+      client.on('close', () => localAnswerSockets.delete(client))
+    },
+
+    /**
+     * Be told about every advertisement this agent learns.
+     *
+     * The hub keeps its own view, and it is the one `relay` routes with. A dialer never
+     * receives a report — its topology arrives as frames — so without this the hub's view
+     * stayed empty and every stream toward an upstream answered "no route", even though
+     * the agent's own view knew the way.
+     *
+     * @param handler - `({ states, nodes }) => void`, called after a message is applied.
+     */
+    setTopologySink(handler) {
+      topologySink = handler
     },
     /** How many locally-attached streams are open; for tests and shutdown checks. */
     get localStreamCount() {
