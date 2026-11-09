@@ -6,9 +6,9 @@ disable-model-invocation: true
 
 # 接入 CodeGraph
 
-本技能只做三件事：**安装、初始化、升级**。查询怎么用得顺，看 `codegraph --help` 和工具自带文档，这里不重复。
+本技能做三件事：**安装、初始化、升级**，外加第 5 步把「查图前先 sync」这条规矩写进项目。查询怎么用得顺，看 `codegraph --help` 和工具自带文档，这里不重复。
 
-**目标态**：项目根有 `codegraph.json` 和 `.codegraph/` 索引，CLI 是当前版本，agent 拿到代码问题先查图。
+**目标态**：项目根有 `codegraph.json` 和 `.codegraph/` 索引，CLI 是当前版本，agent 拿到代码问题先查图，且知道改完代码要先 `codegraph sync`。
 
 1. 体检
 2. 装 / 升级 CLI
@@ -206,9 +206,10 @@ codegraph status . --json
 **(a) 指令通道——先做这个，任何 harness 都有效。**
 
 把这段加进项目的 agent 指令文件（本 harness 是 `AGENTS.md`，Claude Code 是 `CLAUDE.md`）。
-**整段照抄，不要删掉「本机还没有索引时」那一节**：`AGENTS.md` 会被提交、被别人的 AI 读到，
-而他们克隆下来并没有你的索引——那一节是给他们的。也不要为省篇幅把安装步骤展开到指令文件里，
-完整步骤留在本技能中，指令文件只负责指路。
+**整段照抄，不要删掉「索引不会自己变新」和「本机还没有索引时」两节**：「索引不会自己变新」
+是让 agent 记得 sync（少了它，图会一直旧）；`AGENTS.md` 会被提交、被别人的 AI 读到，
+而他们克隆下来并没有你的索引——「本机还没有索引时」那一节是给他们的。也不要为省篇幅把安装步骤
+展开到指令文件里，完整步骤留在本技能中，指令文件只负责指路。
 
 ```markdown
 <!-- INIT-CODE-GRAPH:START -->
@@ -221,6 +222,18 @@ codegraph status . --json
 - `codegraph impact <符号>` / `codegraph affected <文件>` —— 改之前的影响面 / 该跑哪些测试
 - 查询按字面匹配，词要取自符号名 / 文件名 / 标识符；中文词命中不了，用 `GLOSSARY.md` 括号里的英文
 - 图的输出带 `file:line`，视为已经读过；只在图没覆盖时才 Read
+
+### 索引不会自己变新
+
+`codegraph explore` 直接读库，不检查文件改没改过。改了代码不 sync，图里的符号表、调用关系、行号
+都是旧的——查不到新函数算轻的，拿旧行号去 Edit 才出事。
+
+- **改完文件、下次查图之前**跑 `codegraph sync . -q || true`（空跑约 0.3 秒；未建索引时 sync 退出 1，
+  所以要 `|| true`）。
+- 有 codegraph 的 MCP 工具（`mcp__codegraph__codegraph_explore`）就优先用它，**必须带 `projectPath`**：
+  它打开项目时自带 catch-up 同步并挂文件监听。但空闲 10 分钟会释放监听，上面那条 sync 规矩照旧。
+- 结果里出现 `⚠ changed since last index sync`：源码是新的（可当 Read 用），符号表、调用路径、
+  行号是旧的。sync 后重查一次再 Edit。
 
 ### 本机还没有索引时
 

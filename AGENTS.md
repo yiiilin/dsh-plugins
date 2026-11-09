@@ -111,6 +111,18 @@ with no index, so read `status --json`'s `initialized` field instead of the exit
 - 查询按字面匹配，词要取自符号名 / 文件名 / 标识符；中文词命中不了，用 `GLOSSARY.md` 括号里的英文
 - 图的输出带 `file:line`，视为已经读过；只在图没覆盖时才 Read
 
+### 索引不会自己变新
+
+`codegraph explore` 直接读库，不检查文件改没改过。改了代码不 sync，图里的符号表、调用关系、行号
+都是旧的——查不到新函数算轻的，拿旧行号去 Edit 才出事。
+
+- **改完文件、下次查图之前**跑 `codegraph sync . -q || true`（空跑约 0.3 秒；未建索引时 sync 退出 1，
+  所以要 `|| true`）。
+- 有 codegraph 的 MCP 工具（`mcp__codegraph__codegraph_explore`）就优先用它，**必须带 `projectPath`**：
+  它打开项目时自带 catch-up 同步并挂文件监听。但空闲 10 分钟会释放监听，上面那条 sync 规矩照旧。
+- 结果里出现 `⚠ changed since last index sync`：源码是新的（可当 Read 用），符号表、调用路径、
+  行号是旧的。sync 后重查一次再 Edit。
+
 ### 本机还没有索引时
 
 配置（`codegraph.json`）随仓库共享，索引（`.codegraph/`）各建各的、不入库——刚 clone
