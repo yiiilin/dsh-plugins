@@ -361,6 +361,15 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, env
    *
    * Supplied by the gateway, which owns the routing table.
    */
+  /**
+   * Frames this agent has no stream for, offered to the hub.
+   *
+   * The hub opens streams on dialled links as well as accepted ones, and keeps them in its
+   * own table. A response arrives on this agent's socket, so it has to be handed over —
+   * the alternative was dropping it while both ends reported success.
+   */
+  let frameSink
+
   let routeQuery
 
   // Empty for the same reason as the hub's: an edge learns its id from its upstream. It is
@@ -470,6 +479,11 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, env
           relay(frame, owner)
           return
         }
+        // Not this agent's stream. The hub opens streams on dialled links too, and keeps
+        // them in its own table — handing the frame here is what lets an answer reach the
+        // caller that is waiting for it. Without this every response on a dialled link was
+        // dropped on the floor while both ends reported success.
+        if (frameSink?.(frame, owner) === true) return
         writeLocal(frame.id, frame.payload)
         return
       }
@@ -480,6 +494,7 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, env
           relay(frame, owner)
           return
         }
+        if (frameSink?.(frame, owner) === true) return
         endLocal(frame.id)
       }
     },
@@ -674,6 +689,11 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, env
       routeQuery = handler
     },
 
+    /** Install the sink for frames this agent has no stream for. */
+    setFrameSink(handler) {
+      frameSink = handler
+    },
+
     /**
      * One of this node's dialled links, shaped the way the hub's own records are.
      *
@@ -723,7 +743,9 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, env
       const client = tcpConnect({ host: '127.0.0.1', port }, () => {
         logger.info(`federation: answered a stream on 127.0.0.1:${port}`)
       })
-      client.on('data', (piece) => sink.write(piece))
+      client.on('data', (piece) => {
+        sink.write(piece)
+      })
       client.on('end', () => sink.end())
       client.on('error', (error) => {
         logger.warn(`federation: answering on ${port} failed: ${error.message}`)
@@ -732,8 +754,11 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, env
       // Registered through the sink, not assigned on it: the hub holds the stream entry and
       // needs the writer to reach the socket this function just opened.
       sink.accept((piece) => {
+        // Nothing on `end`. The caller finishing its request says nothing about the
+        // answer, and closing here discarded every response — the far side saw a stream
+        // that delivered its request and ended without a byte back. The listener closes
+        // the socket when it is done, which is the real end of the exchange.
         if (piece === undefined) {
-          client.end()
           return
         }
         client.write(piece)

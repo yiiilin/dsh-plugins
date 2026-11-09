@@ -847,7 +847,10 @@ window.__ModuleLoader__.load({
 
         if (state.phase === 'failed') parts.push(h('div', { key: 'error', style: styles.error }, t('unreachable')))
 
-        if (!manages) {
+        // `manages` decides whether environments can be *edited* here, not whether they can
+        // be reached. A node that accepts no downstream connections still has tunnels to
+        // its upstreams, and hiding the whole table left it unable to open any of them.
+        if (!manages && state.environments.length === 0) {
           parts.push(h('div', { key: 'edge', style: styles.note }, t('edgeNote')))
           return parts
         }
@@ -887,15 +890,19 @@ window.__ModuleLoader__.load({
           state.environments.length === 0
             ? h('div', { style: styles.note }, t('empty'))
             : h('div', { className: 'dsg-grid', style: styles.grid }, cards),
-          h('div', { key: 'form', style: styles.form },
-            h('label', { key: 'l', style: styles.formLabel }, t('labelLabel')),
-            h('input', {
-              key: 'i', className: 'dsg-input', style: styles.input, value: label,
-              placeholder: t('labelPlaceholder'),
-              onChange: (event) => setLabel(event.target.value),
-            }),
-            h('button', { key: 'b', style: styles.buttonPrimary, disabled: busy !== '', onClick: () => void create() },
-              busy === 'create' ? t('creating') : t('create')))))
+          // Only a node that accepts downstream connections can enrol one; a dialer's list
+          // comes from its tunnels and is read-only here.
+          manages
+            ? h('div', { key: 'form', style: styles.form },
+              h('label', { key: 'l', style: styles.formLabel }, t('labelLabel')),
+              h('input', {
+                key: 'i', className: 'dsg-input', style: styles.input, value: label,
+                placeholder: t('labelPlaceholder'),
+                onChange: (event) => setLabel(event.target.value),
+              }),
+              h('button', { key: 'b', style: styles.buttonPrimary, disabled: busy !== '', onClick: () => void create() },
+                busy === 'create' ? t('creating') : t('create')))
+            : h('div', { key: 'edge', style: styles.note }, t('edgeNote'))))
         return parts
       }
 

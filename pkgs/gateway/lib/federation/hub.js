@@ -341,9 +341,11 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
               : { ...state, neighbours: state.neighbours.filter((one) => one !== peerId) }))
             // Each edge is told which environment it *is*: a leaf knows only its token,
             // and without its own id it cannot tell "the destination is me" from "a peer".
-            record.socket.send(encodeJsonFrame(TOPOLOGY_FRAME, Buffer.alloc(16), {
+            const frame = encodeJsonFrame(TOPOLOGY_FRAME, Buffer.alloc(16), {
               ...table, states, seq, from: selfName(), selfEnvId: record.envId,
-            }))
+            })
+            record.socket.send(frame, (err) => {
+            })
             sent += 1
           } catch (error) {
             logger.warn(`federation: could not send the topology to ${record.envId}: ${error.message}`)
@@ -463,6 +465,20 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       logger.warn(`federation: ${record.envId} tunnel error: ${error.message}`)
     })
 
+    // One link per environment. A peer that reconnects before its old socket is reaped
+    // would otherwise leave this table holding the new record while every stream opened on
+    // the old one stayed "live" — and answers written to it went nowhere, because the far
+    // side had already replaced the channel. Closing the replaced socket here makes the
+    // old record fail its own streams through the ordinary close path.
+    const replaced = connections.get(record.envId)
+    if (replaced !== undefined && replaced !== record) {
+      logger.info(`federation: ${record.envId} reconnected; retiring its previous link`)
+      try {
+        replaced.socket.close()
+      } catch {
+        // Already gone.
+      }
+    }
     connections.set(record.envId, record)
     logger.info(`federation: ${record.envId} connected`)
     // The arriving edge needs the table before it can route anything, and everyone else
@@ -525,6 +541,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
   /** Handle one frame from an edge. */
   function dispatch(record, frame) {
     const key = frame.id.toString('hex')
+    if (process.env.DBG && frame.type !== TOPOLOGY_FRAME) console.error(`[recv] ${String(record.envId).slice(0,8)} type=${frame.type} key=${key.slice(0,8)}`)
     if (frame.type !== TOPOLOGY_FRAME) {
       logger.info(`federation: ${record.envId} -> type ${frame.type} ${key.slice(0, 8)} local=${localStreams.has(key)} route=${routes.has(key)} up=${upstreamStreams.has(key)}`) 
     }
@@ -800,8 +817,11 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       },
       write(piece) {
         try {
-          const sent = record.socket.send(encodeFrame(FRAME.data, Buffer.from(key, 'hex'), piece))
-        } catch {
+          const frame = encodeFrame(FRAME.data, Buffer.from(key, 'hex'), piece)
+          const sent = record.socket.send(frame, (err) => {
+          })
+          if (process.env.DBG) console.error(`[sink] write ${piece.length}B key=${key.slice(0,8)} to=${String(record.envId).slice(0,8)} sent=${sent} ready=${record.socket.readyState} ws=${record.socket.constructor?.name}`)
+        } catch (error) {
           localStreams.delete(key)
         }
       },
@@ -968,7 +988,9 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     // absence means that node's daemon.
     // The frame names the *destination*, not the next hop: an intermediate node resolves
     // its own next hop from the same field, so a chain relays without extra state.
-    const sent = record.socket.send(encodeJsonFrame(FRAME.open, id, target === undefined ? { toEnvId } : { toEnvId, target }))
+    const openFrame = encodeJsonFrame(FRAME.open, id, target === undefined ? { toEnvId } : { toEnvId, target })
+    const sent = record.socket.send(openFrame, (err) => {
+    })
     return {
       ok: true,
       id,
@@ -981,6 +1003,41 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
         record.socket.send(encodeFrame(FRAME.end, id))
       },
     }
+  }
+
+  /**
+   * Answer a data/end frame for a stream this node opened itself.
+   *
+   * Exposed so an agent can hand over frames that arrive on a dialled link: the hub opens
+   * streams there, but the bytes land on the agent's socket.
+   *
+   * @param frame - the frame to apply.
+   * @returns whether this hub had a stream waiting for it.
+   */
+  function acceptAnswer(frame, owner) {
+    const key = frame.id.toString('hex')
+    // A stream this node opened itself: the answer belongs to a local caller.
+    const answered = localStreams.get(key)
+    if (answered !== undefined && answered.inbound !== true) {
+      receiveLocalAnswer(frame, key)
+      return true
+    }
+    // A stream this node is relaying: it joined two links, and the frame came back on the
+    // one it was sent out on, so it belongs on the other. Without this an answer to a
+    // two-hop request stopped at the middle node — the caller waited, both hops reported
+    // success, and nothing arrived.
+    const flow = flows.get(key)
+    if (flow === undefined) return false
+    const from = owner ?? flow.toRecord
+    const to = from === flow.fromRecord ? flow.toRecord : flow.fromRecord
+    if (to === undefined || to.socket?.readyState !== 1) return false
+    forwardFrame(to, frame)
+    if (frame.type === FRAME.end) {
+      flows.delete(key)
+      flow.fromRecord?.streams?.delete(key)
+      flow.toRecord?.streams?.delete(key)
+    }
+    return true
   }
 
   /** Answer a data/end frame for a stream this node opened itself. */
@@ -1146,6 +1203,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     declaredIdFor,
     /** How this node answers a stream aimed at itself; set once at mount. */
     setOutboundLink,
+    acceptAnswer,
     setLocalStreamHandler(handler) {
       handleLocalStream = handler
     },

@@ -931,6 +931,9 @@ export function apply(ctx, config) {
     // A dialled link is the same channel as an accepted one; let the hub open streams on
     // it too, so one code path serves both directions.
     hub.setOutboundLink((envId) => agent.outboundRecord(envId))
+    // Frames arriving on a dialled link are read by the agent, but a stream the hub opened
+    // is waiting in the hub's table. Handing them over is what lets an answer come back.
+    agent.setFrameSink((frame) => hub.acceptAnswer(frame))
     agent.setRouteQuery((toEnvId, owner) => hub.routeArrived(toEnvId, owner))
   }
 
@@ -961,6 +964,8 @@ export function apply(ctx, config) {
     }
     const client = netConnect({ host: '127.0.0.1', port }, () => {
       logger.info(`federation: answered a stream on 127.0.0.1:${port}`)
+    })
+    client.on('close', () => {
     })
     client.on('data', (piece) => {
       sink.write(piece)
