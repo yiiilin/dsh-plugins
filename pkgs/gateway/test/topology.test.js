@@ -26,8 +26,9 @@ test('a node row carries the metadata a peer needs, and no token', () => {
   const row = nodeRow({ ...edgeA, token: 'secret' }, { online: true, selfId: '' })
   assert.deepEqual(row, {
     envId: 'n95c', label: '6.13', hostname: 'six13', online: true, lastSeen: 100,
-    // The port a peer's own UI answers on: not derivable, so it travels with the table.
+    // The ports a peer needs to address: its daemon, and its own UI. Neither is derivable.
     harnessPort: 0,
+    port: 0,
   })
 })
 

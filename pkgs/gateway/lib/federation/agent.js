@@ -686,7 +686,6 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, env
      */
     outboundRecord(envId) {
       const link = links.find((one) => one.connected && one.envId === envId)
-      if (process.env.DBG) console.error(`[outbound] want=${String(envId).slice(0,8)} links=${JSON.stringify((links ?? []).map((l) => ({ id: String(l.envId).slice(0,8), up: l.connected })))}`)
       if (link === undefined) return undefined
       return link.asRecord()
     },

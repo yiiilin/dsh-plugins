@@ -703,10 +703,8 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    */
   function routeArrived(toEnvId, owner) {
     if (typeof toEnvId !== 'string' || toEnvId === '') return { forward: false }
-    if (process.env.DBG) console.error(`[arrive] to=${String(toEnvId).slice(0,8)} self=${String(selfName()).slice(0,8)}`)
     if (toEnvId === selfName()) return { forward: false }
     const resolved = resolveTarget({ envId: selfName() }, { toEnvId })
-    if (process.env.DBG) console.error(`[arrive] resolved=${JSON.stringify(resolved)}`)
     if (resolved.error !== undefined) return { forward: false }
     if (resolved.local === true) return { forward: false }
     // Either direction: the hop may be a link this node dialled as well as one it accepted.
@@ -801,9 +799,8 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
         entry.accept = write
       },
       write(piece) {
-        if (process.env.DBG) console.error(`[write] key=${key.slice(0,8)} len=${piece.length} to=${String(record.envId).slice(0,8)} ready=${record.socket.readyState}`)
         try {
-          record.socket.send(encodeFrame(FRAME.data, Buffer.from(key, 'hex'), piece))
+          const sent = record.socket.send(encodeFrame(FRAME.data, Buffer.from(key, 'hex'), piece))
         } catch {
           localStreams.delete(key)
         }
@@ -972,7 +969,6 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     // The frame names the *destination*, not the next hop: an intermediate node resolves
     // its own next hop from the same field, so a chain relays without extra state.
     const sent = record.socket.send(encodeJsonFrame(FRAME.open, id, target === undefined ? { toEnvId } : { toEnvId, target }))
-    if (process.env.DBG) console.error(`[open] to=${String(toEnvId).slice(0,8)} next=${String(nextId).slice(0,8)} sent=${sent} ready=${record.socket.readyState}`)
     return {
       ok: true,
       id,
@@ -1014,6 +1010,21 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    * @param envId - the environment.
    * @returns `127.0.0.1:<port>`, or an empty string when unknown.
    */
+  /**
+   * The loopback address a peer's daemon answers on.
+   *
+   * A node publishes its own listen port in the topology, and a request addressed to any
+   * other name is one that daemon refuses — the bytes arrive on a socket but not for it.
+   *
+   * @param envId - the peer to address.
+   * @returns `host:port`, or `''` when it is not known.
+   */
+  function daemonAuthorityOf(envId) {
+    const row = reported.get(envId)
+    const port = Number(row?.port)
+    return Number.isInteger(port) && port > 0 ? `127.0.0.1:${port}` : ''
+  }
+
   function harnessAuthorityOf(envId) {
     // A direct peer declares this at handshake; one further out is described by a report.
     // Only the node itself knows the port, and a wrong guess signs a cookie the browser
@@ -1037,11 +1048,6 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    * what made the panel show a live node as dead.
    */
   function isReachable(envId) {
-    if (process.env.DBG) {
-      const route = reported.routeTo(envId)
-      const adjs = reported.advertisements().map((s) => `${String(s.envId).slice(0,8)}:[${s.neighbours.map((n) => String(n).slice(0,8)).join(' ')}]`).join(' ')
-      console.error(`[reach] ${String(envId).slice(0,8)} conn=${connections.has(envId)} route=${JSON.stringify(route)} self=${String(reported.selfId).slice(0,8)} adj=${adjs}`)
-    }
     if (linkTo(envId) !== undefined) return true
     // A route is the honest test: if this node can put a stream on the way to `envId`, it
     // is reachable, whatever a peer's report said about its `online` flag. Deciding from
@@ -1119,7 +1125,6 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       // no origin: every node listed, every route undefined.
       reported.setSelfId(selfName())
       let changed = false
-      if (process.env.DBG) console.error(`[adopt] states=${JSON.stringify(states.map((s) => `${String(s?.envId).slice(0,8)}:[${(s?.neighbours ?? []).map((n) => String(n).slice(0,8)).join(' ')}]`))}`)
       // Including this node's own entry: a dialer builds no table of its own, so the only
       // description of its links is the one its agent sent upstream. Skipping it left the
       // graph with no origin — every node listed, no path from here.
@@ -1166,6 +1171,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     openStream,
     isOnline,
     isReachable,
+    daemonAuthorityOf,
     harnessAuthorityOf,
     knownNodes,
     ids,

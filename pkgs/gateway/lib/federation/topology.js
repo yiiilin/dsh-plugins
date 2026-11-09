@@ -49,6 +49,9 @@ export function nodeRow(environment, { online = false, selfId = '' } = {}) {
     online: envId === selfId ? true : online === true,
     // A peer needs this to address the mux socket, and cannot derive it.
     harnessPort: Number(environment.harnessPort) || 0,
+    // And this to address the daemon itself: a request must name the port that daemon
+    // listens on, or it refuses bytes that arrive on a socket not addressed to it.
+    port: Number(environment.port) || 0,
     lastSeen: typeof environment.lastSeen === 'number' ? environment.lastSeen : 0,
   }
 }

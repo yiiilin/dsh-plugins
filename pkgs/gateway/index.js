@@ -337,7 +337,8 @@ export function apply(ctx, config) {
           // switcher as if it were themselves.
           label: config.name === '' ? (process.env.HOSTNAME ?? selfEnvId()) : config.name,
           online: true,
-          // Published so a peer can address this node's own UI.
+          // Published so a peer can address this node's daemon and its own UI.
+          port: config.port,
           harnessPort: embeddedRoot.portOrZero(),
         },
         ...registry.list().map((environment) => ({
@@ -961,15 +962,29 @@ export function apply(ctx, config) {
     const client = netConnect({ host: '127.0.0.1', port }, () => {
       logger.info(`federation: answered a stream on 127.0.0.1:${port}`)
     })
-    client.on('data', (piece) => sink.write(piece))
-    client.on('end', () => sink.end())
+    client.on('data', (piece) => {
+      sink.write(piece)
+    })
+    client.on('end', () => {
+      sink.end()
+    })
     client.on('error', (error) => {
       logger.warn(`federation: answering on ${port} failed: ${error.message}`)
       sink.end()
     })
     sink.accept((piece) => {
-      if (piece === undefined) client.end()
-      else client.write(piece)
+      // Half-close only. A stream's `end` means "the caller has finished sending", which
+      // for HTTP happens long before the answer exists — closing the socket there
+      // discarded every response, and the far side saw a stream that opened, delivered its
+      // request, and ended without a byte back.
+      if (piece === undefined) {
+        // Nothing. The caller has finished sending, and `client` is a socket to a local
+        // listener that is still working — closing it here cut the answer off before it
+        // was written. The socket is closed when the listener ends it (`client.on('end')`),
+        // which is the real end of the exchange.
+        return
+      }
+      client.write(piece)
     })
   }
 
