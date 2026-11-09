@@ -152,6 +152,13 @@ export function createTopologyView({ selfId = '' } = {}) {
         if (!adjacency.has(peer)) adjacency.set(peer, new Set())
       }
     }
+    // Symmetric. An edge that dials its upstream still answers streams on that same socket,
+    // so the link is there in both directions even though only the dialer advertises it.
+    // Without this the graph is directed, and a peer that is reachable in fact is
+    // unreachable in the walk: n4 lists n2, n2 lists only n1, and no path exists.
+    for (const [from, peers] of [...adjacency]) {
+      for (const to of [...peers]) link(to, from)
+    }
     if (identity() === 'named') {
       if (!adjacency.has(me)) adjacency.set(me, new Set())
       // This node's own advertisement is half of every path that starts here. The loop

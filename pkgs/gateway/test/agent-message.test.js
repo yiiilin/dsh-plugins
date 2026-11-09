@@ -14,7 +14,7 @@ import { WebSocketServer } from 'ws'
 
 import { FRAME, FrameReader, encodeFrame, encodeJsonFrame, newRequestId } from '../lib/federation/frames.js'
 import { createTunnelAgent } from '../lib/federation/agent.js'
-import { createTunnelHub, SELF_ENV_ID, TUNNEL_PATH, tokenOf } from '../lib/federation/hub.js'
+import { createTunnelHub, TUNNEL_PATH, tokenOf } from '../lib/federation/hub.js'
 import { composeBody, deliverToSession, MAX_MESSAGE_CHARS, PREFIX, validateMessageRequest } from '../lib/agent-message.js'
 import { createPeerAccess } from '../lib/peer.js'
 import { createStreamRelay } from '../lib/stream-relay.js'

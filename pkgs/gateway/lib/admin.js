@@ -38,8 +38,6 @@ const RELAY_TIMEOUT_MS = 30_000
  * `self` is a reserved environment id, so no registered environment can be mistaken for
  * the node the panel is being read on: the id alone answers "which node".
  */
-const SELF_NODE_ID = 'self'
-
 export function createAdmin({
   registry, hub, config, profileSelf, inventory, readModel, readModelRows, writeModel, sessions,
   changeCredential, logger, relayTimeoutMs = RELAY_TIMEOUT_MS, deliverMessage,
@@ -57,7 +55,18 @@ export function createAdmin({
    * computed from a live value.
    */
   managesRegistry = () => config.accept !== false,
+  /** This node's own id; the gateway supplies it because only it reads `node-id`. */
+  nodeId = () => '',
 }) {
+  /**
+   * This node's own id, supplied by the gateway.
+   *
+   * It was the literal `'self'`, which no peer can compare against — the same string meant
+   * "whoever is reading this" on every machine. Kept per instance, because two routers in
+   * one process would otherwise overwrite each other's identity.
+   */
+  const selfNodeId = () => (typeof nodeId === 'function' ? nodeId() : '')
+
   /** id -> `{ at, value }` for the last known connection state. */
   const statusCache = new Map()
 
@@ -137,7 +146,7 @@ export function createAdmin({
     // local to the edge, so the entry is retagged with the id and label this registry
     // knows it by — the panel must name the node the way the environment list does.
     const own = Array.isArray(payload.nodes)
-      ? payload.nodes.find((entry) => entry.id === SELF_NODE_ID)
+      ? payload.nodes.find((entry) => entry.id === selfNodeId())
       : undefined
     if (own === undefined || !Array.isArray(own.sessions)) {
       return { ...node, state: 'error', error: 'the environment answered without its own sessions' }
@@ -159,7 +168,9 @@ export function createAdmin({
    * @returns `{ ok, partial, nodes }`; `partial` is true when any node did not answer.
    */
   async function overview(sessionId) {
-    const self = { id: SELF_NODE_ID, state: 'ok', sessions: sessions(sessionId) }
+    // `own` marks this row as the node the panel is being read on, so the client can label
+    // it without comparing against an id it would have to know in advance.
+    const self = { id: selfNodeId(), own: true, state: 'ok', sessions: sessions(sessionId) }
     // A node that keeps no registry has no other environments to ask about, so its
     // overview is itself: that is what an upstream relays into its own table, and it is
     // also what an operator reading this node directly should see.
@@ -199,17 +210,33 @@ export function createAdmin({
         // What a switcher can offer. The main node enumerates its registry; an edge has
         // no registry but does know which peers it can reach, and without them its own
         // switcher had nothing to show even though navigation would have worked.
-        environments: managesRegistry?.() === true
-          ? registry.list().map(describe)
-          : (reachableEnvironments?.() ?? []).map((row) => ({
-            id: row.envId,
-            label: row.label,
-            enabled: true,
-            hostname: row.hostname,
-            machineId: undefined,
-            online: row.online !== false,
-            lastSeen: row.lastSeen,
-          })),
+        // Both sources, merged: a node that accepts peers knows them by registry, and one
+        // that dials knows them by topology. Asking only the registry left a dialer with an
+        // empty list even when its table named every peer it could reach.
+        environments: (() => {
+          const rows = []
+          const seen = new Set()
+          if (managesRegistry?.() === true) {
+            for (const environment of registry.list()) {
+              seen.add(environment.id)
+              rows.push(describe(environment))
+            }
+          }
+          for (const row of reachableEnvironments?.() ?? []) {
+            if (seen.has(row.envId)) continue
+            seen.add(row.envId)
+            rows.push({
+              id: row.envId,
+              label: row.label,
+              enabled: true,
+              hostname: row.hostname,
+              machineId: undefined,
+              online: row.online !== false,
+              lastSeen: row.lastSeen,
+            })
+          }
+          return rows
+        })(),
       })
       return true
     }
@@ -320,7 +347,7 @@ export function createAdmin({
       // ever open this node's own UI — and a browser cannot ask a peer directly, because
       // `/admin` on a peer answers only a tunnelled request.
       const wanted = new URL(`http://x${url}`).searchParams.get('envId') ?? ''
-      if (wanted !== '' && wanted !== SELF_NODE_ID) {
+      if (wanted !== '' && wanted !== selfNodeId()) {
         const access = getPeer?.()
         if (access === undefined) {
           json(res, 503, { ok: false, error: 'this node cannot reach others' })

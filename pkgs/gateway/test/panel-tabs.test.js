@@ -449,8 +449,8 @@ const OVERVIEW = {
     partial: true,
     nodes: [
       {
-        id: 'self',
-        role: 'main',
+        id: 'nself00000000001',
+        own: true,
         state: 'ok',
         sessions: [{
           id: 'sess-1',
@@ -625,7 +625,8 @@ test('gives each unreadable state its own word', () => {
 test('names a node by its label, and this host by the panel\'s own word for it', () => {
   const { nodeDisplayName, formatTime } = loadClient().exported.__test
   assert.equal(nodeDisplayName({ id: 'nalpha', label: 'alpha' }, '本机'), 'alpha')
-  assert.equal(nodeDisplayName({ id: 'self' }, '本机'), '本机')
+  // The row this node contributes is marked, not named: there is no `'self'` id.
+  assert.equal(nodeDisplayName({ id: 'nself', own: true }, '本机'), '本机')
   assert.equal(nodeDisplayName({ id: 'nbeta' }, '本机'), 'nbeta')
   // A missing or unreadable timestamp is a dash, never "Invalid Date".
   assert.equal(formatTime(undefined), '—')

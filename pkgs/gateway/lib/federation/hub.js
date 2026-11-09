@@ -34,7 +34,7 @@ export const TUNNEL_PATH = '/_tunnel'
  * Shared with the admin API's own overview, which reports this node under the same id,
  * so a caller that learned the id from one service can use it in the other.
  */
-export const SELF_ENV_ID = 'self'
+
 
 /**
  * Accept and manage edge connections.
@@ -220,7 +220,9 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     // "this is me" — an edge could not see the node it was connected to.
     // Resolved on each use: the value is not known when this hub is constructed.
     const named = typeof selfEnvId === 'function' ? selfEnvId() : selfEnvId
-    return typeof named === 'string' && named !== '' ? named : SELF_ENV_ID
+    // Empty when the id is not known yet. There is no placeholder: an id that every node
+    // answers to cannot identify one, and callers already treat empty as "not known".
+    return typeof named === 'string' ? named : ''
   }
 
   /** This node's own advertisement counter; a receiver keeps the higher of two. */
@@ -429,7 +431,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
         const route = routes.get(key)
         routes.delete(key)
         if (route === undefined) continue
-        const other = connections.get(route.from === record.envId ? route.to : route.from)
+        const other = linkTo(route.from === record.envId ? route.to : route.from)
         if (other === undefined) continue
         // Tell the far side the stream is over rather than leaving it half-open.
         try {
@@ -487,19 +489,14 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
   /** Find the envId a stream should go to, following the open frame's target. */
   function resolveTarget(record, payload) {
     const toEnvId = typeof payload?.toEnvId === 'string' ? payload.toEnvId.trim() : ''
-    // `self` is a caller's shorthand for "the node I am talking to", meaningful only when
-    // the caller is the origin. An intermediate node sees a real destination here, and
-    // treating `self` as local there delivered every relayed stream to the middle of the
-    // chain instead of its destination.
-    const origin = record.envId === SELF_ENV_ID
+    // `toEnvId` is always a real environment id — there is no `'self'` shorthand any more,
+    // so a destination naming this node is this node's answer to give, whichever peer
+    // relayed it here. The old `origin` test existed only to disambiguate that shorthand,
+    // and keeping it rejected every relayed stream whose destination was the receiver.
     if (toEnvId === '') return { local: true }
-    if (toEnvId === SELF_ENV_ID) {
-      return origin ? { local: true } : { error: 'a relayed stream must name its destination' }
-    }
-    if (toEnvId === record.envId) {
-      return origin ? { next: toEnvId } : { local: true }
-    }
-    if (connections.has(toEnvId)) return { next: toEnvId }
+    if (toEnvId === selfName()) return { local: true }
+    if (toEnvId === record.envId) return { local: true }
+    if (linkTo(toEnvId) !== undefined) return { next: toEnvId }
 
     // Not a direct peer: it may still be reachable through one. A node that both accepts
     // and dials is the middle of a chain, and without this it answered "unreachable" for
@@ -511,7 +508,13 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     if (route.done === true) return { local: true }
     // `next` names the peer to hand the stream to. An empty value means a direct tunnel,
     // which the check above already covered.
-    if (route.next !== '' && connections.has(route.next)) return { next: route.next }
+    //
+    // The hop may be a link this node dialled as well as one it accepted: both are the same
+    // channel. Reading only the accepted side is what made a dialer able to see a route in
+    // its table and still refuse to use it.
+    if (route.next !== '' && (connections.has(route.next) || outboundLink?.(route.next) !== undefined)) {
+      return { next: route.next }
+    }
     // No route is better than a guessed one. An earlier version picked any connected peer
     // here, "whichever reported it", and that peer was frequently the one the request had
     // just come from — so the stream ping-ponged between two nodes instead of travelling
@@ -609,7 +612,14 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
         openLocalStream(record, key, payload)
         return
       }
-      const next = connections.get(target.next)
+      // The hop may be a link this node dialled as well as one it accepted; both carry
+      // streams the same way. Reading only `connections` returned undefined here and the
+      // next line took the process down.
+      const next = linkTo(target.next)
+      if (next === undefined) {
+        sendStreamRefusal(record, Buffer.from(key, 'hex'), `environment "${target.next}" is unreachable`)
+        return
+      }
       record.streams.add(key)
       next.streams.add(key)
       // Both ends recorded together: the whole state a relay hop needs.
@@ -666,7 +676,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       }
       return
     }
-    const peer = connections.get(route.from === record.envId ? route.to : route.from)
+    const peer = linkTo(route.from === record.envId ? route.to : route.from)
     if (peer === undefined) {
       routes.delete(key)
       record.streams.delete(key)
@@ -693,11 +703,14 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    */
   function routeArrived(toEnvId, owner) {
     if (typeof toEnvId !== 'string' || toEnvId === '') return { forward: false }
-    if (toEnvId === SELF_ENV_ID || toEnvId === selfName()) return { forward: false }
+    if (process.env.DBG) console.error(`[arrive] to=${String(toEnvId).slice(0,8)} self=${String(selfName()).slice(0,8)}`)
+    if (toEnvId === selfName()) return { forward: false }
     const resolved = resolveTarget({ envId: selfName() }, { toEnvId })
+    if (process.env.DBG) console.error(`[arrive] resolved=${JSON.stringify(resolved)}`)
     if (resolved.error !== undefined) return { forward: false }
     if (resolved.local === true) return { forward: false }
-    const next = connections.get(resolved.next)
+    // Either direction: the hop may be a link this node dialled as well as one it accepted.
+    const next = linkTo(resolved.next)
     logger.info(`federation: arrived "${toEnvId}" -> ${JSON.stringify(resolved)} next=${next === undefined ? 'NONE' : next.envId}`)
     if (next === undefined) return { forward: false }
     const key = () => undefined
@@ -788,6 +801,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
         entry.accept = write
       },
       write(piece) {
+        if (process.env.DBG) console.error(`[write] key=${key.slice(0,8)} len=${piece.length} to=${String(record.envId).slice(0,8)} ready=${record.socket.readyState}`)
         try {
           record.socket.send(encodeFrame(FRAME.data, Buffer.from(key, 'hex'), piece))
         } catch {
@@ -804,6 +818,24 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
         }
       },
     })
+  }
+
+  /**
+   * Supplied by the gateway: a link this node dialled, by the environment it reaches.
+   *
+   * The hub holds only the accepted side. A dialer's tunnels live in its agent, and
+   * without this the hub could resolve a route and still have no socket to open it on.
+   */
+  let outboundLink
+
+  /**
+   * Install the lookup for outbound links.
+   *
+   * @param handler - `(envId) => record | undefined`, where a record has `socket.send`
+   *   and `streams` like an accepted one.
+   */
+  function setOutboundLink(handler) {
+    outboundLink = handler
   }
 
   /** Supplied by the gateway: how this node answers a stream aimed at itself. */
@@ -853,7 +885,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
       return
     }
     let answer
-    if (toEnvId === '' || toEnvId === SELF_ENV_ID || toEnvId === record.envId) {
+    if (toEnvId === '' || toEnvId === selfName() || toEnvId === record.envId) {
       answer = await deliver({ fromEnvId: record.envId, sessionId, text })
     } else if (forward !== undefined) {
       answer = await forward(toEnvId, { fromEnvId: record.envId, sessionId, text })
@@ -881,18 +913,37 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    * @param options.timeoutMs - how long to wait for the first byte.
    * @returns `{ ok: true, send, end }` or `{ ok: false, error }`.
    */
+  /**
+   * This node's link to an environment, whichever way it was made.
+   *
+   * A link is a link: dialled and accepted channels are the same full-duplex socket, and
+   * every place that looks one up has to consider both. Reading only `connections` — the
+   * accepted side — is what made a dialer able to see a route and still refuse to use it,
+   * and it took four separate call sites to find every instance of that mistake.
+   *
+   * @param envId - the environment to reach.
+   * @returns the record, or `undefined` when this node has no direct link to it.
+   */
+  function linkTo(envId) {
+    return connections.get(envId) ?? outboundLink?.(envId)
+  }
+
   function openStream(toEnvId, { sink, onEnd, onError, target, timeoutMs = 300_000 } = {}) {
     // The direct peer, or whoever this node can reach the destination through.
     const resolved = resolveTarget({ envId: selfName() }, { toEnvId })
-    logger.info(`federation: openStream to "${toEnvId}" resolved ${JSON.stringify(resolved)}`)
+    logger.info(`federation: openStream to "${toEnvId}" self=${String(selfName()).slice(0,8)} resolved ${JSON.stringify(resolved)}`)
     if (resolved.error !== undefined) {
       return { ok: false, error: resolved.error }
     }
     const nextId = resolved.local === true ? toEnvId : resolved.next
-    if (!connections.has(nextId)) {
+    // A link is a link. Whether this node dialled it or accepted it, the socket is the same
+    // full-duplex channel and a stream can be opened on it either way. Reading only
+    // `connections` — the accepted ones — made every dialer unable to send anything, which
+    // is why the same code refused a peer it had a working tunnel to.
+    const record = linkTo(nextId)
+    if (record === undefined || record.streams === undefined) {
       return { ok: false, error: `environment "${toEnvId}" is unreachable` }
     }
-    const record = connections.get(nextId)
     const id = newRequestId()
     const key = id.toString('hex')
     record.streams.add(key)
@@ -906,7 +957,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     }
     flows.set(key, { fromRecord: local, toRecord: record })
     localStreams.set(key, {
-      from: SELF_ENV_ID,
+      from: selfName(),
       onData: sink,
       onEnd,
       onError,
@@ -920,7 +971,8 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
     // absence means that node's daemon.
     // The frame names the *destination*, not the next hop: an intermediate node resolves
     // its own next hop from the same field, so a chain relays without extra state.
-    record.socket.send(encodeJsonFrame(FRAME.open, id, target === undefined ? { toEnvId } : { toEnvId, target }))
+    const sent = record.socket.send(encodeJsonFrame(FRAME.open, id, target === undefined ? { toEnvId } : { toEnvId, target }))
+    if (process.env.DBG) console.error(`[open] to=${String(toEnvId).slice(0,8)} next=${String(nextId).slice(0,8)} sent=${sent} ready=${record.socket.readyState}`)
     return {
       ok: true,
       id,
@@ -929,6 +981,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
         record.socket.send(encodeFrame(FRAME.data, id, piece))
       },
       end() {
+        if (record.socket.readyState !== 1) return
         record.socket.send(encodeFrame(FRAME.end, id))
       },
     }
@@ -973,7 +1026,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
 
   /** Whether the hub has a live tunnel to this environment. */
   function isOnline(envId) {
-    return connections.has(envId)
+    return linkTo(envId) !== undefined
   }
 
   /**
@@ -984,8 +1037,12 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
    * what made the panel show a live node as dead.
    */
   function isReachable(envId) {
-
-    if (connections.has(envId)) return true
+    if (process.env.DBG) {
+      const route = reported.routeTo(envId)
+      const adjs = reported.advertisements().map((s) => `${String(s.envId).slice(0,8)}:[${s.neighbours.map((n) => String(n).slice(0,8)).join(' ')}]`).join(' ')
+      console.error(`[reach] ${String(envId).slice(0,8)} conn=${connections.has(envId)} route=${JSON.stringify(route)} self=${String(reported.selfId).slice(0,8)} adj=${adjs}`)
+    }
+    if (linkTo(envId) !== undefined) return true
     // A route is the honest test: if this node can put a stream on the way to `envId`, it
     // is reachable, whatever a peer's report said about its `online` flag. Deciding from
     // the flag alone made the panel show a node as offline while calls to it succeeded —
@@ -1057,7 +1114,12 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
      * @param payload - `{ states, nodes }`, as the agent holds them.
      */
     adoptLearned({ states = [], nodes = [] } = {}) {
+      // The view needs its own id before it can walk a path. A dialer never broadcasts, so
+      // `buildSnapshot` — the other place this is set — never runs here, and the graph had
+      // no origin: every node listed, every route undefined.
+      reported.setSelfId(selfName())
       let changed = false
+      if (process.env.DBG) console.error(`[adopt] states=${JSON.stringify(states.map((s) => `${String(s?.envId).slice(0,8)}:[${(s?.neighbours ?? []).map((n) => String(n).slice(0,8)).join(' ')}]`))}`)
       // Including this node's own entry: a dialer builds no table of its own, so the only
       // description of its links is the one its agent sent upstream. Skipping it left the
       // graph with no origin — every node listed, no path from here.
@@ -1078,6 +1140,7 @@ export function createTunnelHub({ verifyToken, logger, deliver, forward, listEnv
      */
     declaredIdFor,
     /** How this node answers a stream aimed at itself; set once at mount. */
+    setOutboundLink,
     setLocalStreamHandler(handler) {
       handleLocalStream = handler
     },

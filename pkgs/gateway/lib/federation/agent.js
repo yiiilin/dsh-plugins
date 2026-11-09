@@ -73,6 +73,8 @@ function createUpstream({ url, token, selfName, harnessPort, envId, logger, onTo
   let timer
   /** streamId(hex) -> handlers for a stream this node opened toward the upstream. */
   const pending = new Map()
+  /** Streams carried by this link, so a close can fail all of them. */
+  const linkStreams = new Set()
 
   const clock = createClockSync()
 
@@ -253,6 +255,31 @@ function createUpstream({ url, token, selfName, harnessPort, envId, logger, onTo
      *
      * @returns `{ ok: true, send, end, id }` or `{ ok: false, error }`.
      */
+    /**
+     * This link in the shape the hub's records take.
+     *
+     * The hub opens streams on a record with `socket.send` and a `streams` set. A dialled
+     * link is the same channel, so it answers the same two fields — one implementation
+     * serves both directions instead of one per side.
+     */
+    asRecord() {
+      return {
+        envId: peerEnvId,
+        socket: {
+          // Guarded: a link can drop between the lookup and the send, and an unguarded
+          // call here took the whole process down.
+          send(bytes) {
+            if (socket === undefined || socket.readyState !== WebSocket.OPEN) return false
+            socket.send(bytes)
+            return true
+          },
+          get readyState() {
+            return socket === undefined ? WebSocket.CLOSED : socket.readyState
+          },
+        },
+        streams: linkStreams,
+      }
+    },
     openStream(toEnvId, { sink, onEnd, onError, target, timeoutMs = 300_000 }) {
       if (socket === undefined || socket.readyState !== WebSocket.OPEN) {
         return { ok: false, error: `upstream ${url} is not connected` }
@@ -395,8 +422,11 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, env
       // without it the hub stayed empty and answered "no route" for a peer the agent
       // could already reach.
       if (adopted) {
+        // This node's own advertisement is included: `advertisements()` holds only what
+        // was learned from peers, and the hub needs the origin's own links to walk a path
+        // that starts here. A dialer has no table of its own to supply them.
         topologySink?.({
-          states: topology.advertisements(),
+          states: [...topology.advertisements(), topology.selfAdvertisement(upstreamLinks())],
           nodes: topology.nodes(),
         })
       }
@@ -471,6 +501,11 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, env
    *
    * @param origin - the link a table just arrived on; omitted for a local change.
    */
+  /** The environments this node holds a live direct link to. */
+  function upstreamLinks() {
+    return links.filter((link) => link.connected).map((link) => link.envId).filter((id) => typeof id === 'string' && id !== '')
+  }
+
   function announce(origin) {
     for (const one of links) {
       if (one === origin) continue
@@ -637,6 +672,23 @@ export function createTunnelAgent({ upstreams = [], harnessPort, daemonPort, env
      */
     setRouteQuery(handler) {
       routeQuery = handler
+    },
+
+    /**
+     * One of this node's dialled links, shaped the way the hub's own records are.
+     *
+     * The hub opens streams on records; a dialled link is the same full-duplex channel as
+     * an accepted one, so it answers the same two fields — `socket.send` and a `streams`
+     * set. Exposing it is what lets one code path serve both directions.
+     *
+     * @param envId - the environment the link reaches.
+     * @returns the record, or `undefined` when no link reaches it.
+     */
+    outboundRecord(envId) {
+      const link = links.find((one) => one.connected && one.envId === envId)
+      if (process.env.DBG) console.error(`[outbound] want=${String(envId).slice(0,8)} links=${JSON.stringify((links ?? []).map((l) => ({ id: String(l.envId).slice(0,8), up: l.connected })))}`)
+      if (link === undefined) return undefined
+      return link.asRecord()
     },
 
     /**

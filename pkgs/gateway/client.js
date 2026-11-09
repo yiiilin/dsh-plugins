@@ -541,7 +541,9 @@ window.__ModuleLoader__.load({
      */
     const nodeDisplayName = (node, selfLabel) => {
       if (typeof node?.label === 'string' && node.label !== '') return node.label
-      if (node?.id === 'self') return selfLabel
+      // The row this node contributes is the one the environment list marks; there is no
+      // `'self'` id any more, so the caller tells us which row is ours.
+      if (node?.own === true) return selfLabel
       return String(node?.id ?? '')
     }
 
@@ -578,6 +580,7 @@ window.__ModuleLoader__.load({
             node: {
               id,
               label,
+              own: node?.own === true,
               state: String(node?.state ?? 'error'),
               error: String(node?.error ?? ''),
             },
@@ -585,13 +588,13 @@ window.__ModuleLoader__.load({
           continue
         }
         if (node.sessions.length === 0) {
-          entries.push({ kind: 'empty', node: { id, label, state: 'ok' } })
+          entries.push({ kind: 'empty', node: { id, label, own: node.own === true, state: 'ok' } })
           continue
         }
         for (const session of node.sessions) {
           entries.push({
             kind: 'session',
-            node: { id, label, state: 'ok' },
+            node: { id, label, own: node.own === true, state: 'ok' },
             session: {
               id: String(session?.id ?? ''),
               address: String(session?.address ?? ''),

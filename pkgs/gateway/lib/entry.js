@@ -260,7 +260,9 @@ async function handleHttp({ req, res, url, listEnvironments, local, root, tunnel
     }
   }
 
-  const routed = routeEnvironment(url, listEnvironments().map((entry) => entry.id))
+  const knownIds = listEnvironments().map((entry) => entry.id)
+  const routed = routeEnvironment(url, knownIds)
+  if (process.env.DBG) console.error(`[entry] url=${url} known=${JSON.stringify(knownIds.map((k) => k.slice(0, 10)))} routed=${JSON.stringify(routed)} tunnel=${tunnel !== undefined}`)
   if (routed !== undefined && localProfile !== undefined) {
     const upstream = localProfile(routed.id)
     if (upstream !== undefined) {
@@ -400,6 +402,7 @@ async function handleHttp({ req, res, url, listEnvironments, local, root, tunnel
   }
 
   function proxyToEnvironment(hub, envId, req, res, upstreamPath) {
+    if (process.env.DBG) console.error(`[proxy] env=${String(envId).slice(0,8)} reach=${hub.isReachable(envId)} path=${upstreamPath}`)
     if (hub.isReachable(envId) !== true) return false
     // The far side answers with a complete HTTP response, status line and headers
     // included — the tunnel carries bytes, not a parsed response. Writing those bytes

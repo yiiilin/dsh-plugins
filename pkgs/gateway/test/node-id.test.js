@@ -52,8 +52,10 @@ test('a corrupt file is replaced rather than trusted', async (t) => {
   assert.notEqual(id, 'Not An Id!')
 })
 
-test('a node with nowhere to write still has an id', async () => {
-  assert.equal(await ensureNodeId({ daemonDir: '' }), 'self')
+test('a node with nowhere to write reports no id rather than a shared one', async () => {
+  // An id every node answers to would make two machines indistinguishable; empty is the
+  // honest answer, and callers already treat it as "not known yet".
+  assert.equal(await ensureNodeId({ daemonDir: '' }), '')
 })
 
 test('two profiles sharing one home keep separate ids', async (t) => {

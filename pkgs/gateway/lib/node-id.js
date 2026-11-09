@@ -33,13 +33,13 @@ const fileFor = (profile) => `node-id${profile === '' ? '' : `-${profile}`}`
  * @param options.daemonDir - directory holding the daemon's own state.
  * @param options.configured - an explicit id from configuration; takes precedence when valid.
  * @param options.profile - the profile this node serves; ids are per profile.
- * @returns the id, or `self` when neither a file nor a directory is available.
+ * @returns the id, or `''` when neither a file nor a directory is available.
  */
 export async function ensureNodeId({ daemonDir, configured = '', profile = '' }) {
   const asked = String(configured ?? '').trim()
   if (asked !== '' && ID_PATTERN.test(asked)) return asked
 
-  if (daemonDir === '') return 'self'
+  if (daemonDir === '') return ''
   // A profile suffix, because every profile on a machine shares one daemon directory. Two
   // profiles reading the same file would introduce themselves to the federation under one
   // id, and every route to either of them would land on whichever answered first.

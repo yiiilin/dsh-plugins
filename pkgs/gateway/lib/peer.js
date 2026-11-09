@@ -34,15 +34,14 @@ import { request as httpRequest } from 'node:http'
  * @param options.logger - logger.
  * @returns `{ json, stream, isLocal }`.
  */
-export function createPeerAccess({ selfId = 'self', localPort, relay, knownIds = () => [], logger }) {
+export function createPeerAccess({ selfId = '', localPort, relay, knownIds = () => [], logger }) {
   /** Whether this request is for the node asking. */
   function isLocal(envId) {
     // Resolved per call: a node learns its own id after this accessor is built.
     const mine = typeof selfId === 'function' ? selfId() : selfId
-    // `'self'` is the alias the environment list hands out, so a caller that echoes it back
-    // must land here. Comparing only against the real id sent it down the remote path,
-    // where no route to `'self'` exists — the answer was a hung socket, not a clear refusal.
-    return envId === undefined || envId === '' || envId === 'self' || envId === mine
+    // No alias: an environment id is the only name for a node. `'self'` was ambiguous
+    // across machines — it meant "whoever is reading this" — so it is not accepted here.
+    return envId === undefined || envId === '' || envId === mine
   }
 
   /**

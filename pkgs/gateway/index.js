@@ -293,7 +293,9 @@ export function apply(ctx, config) {
    * nothing to another machine, and lives in a different namespace from the ids the
    * registry hands out.
    */
-  const selfEnvId = () => nodeId !== '' ? nodeId : (process.env.DSH_ENV_ID ?? 'self')
+  // No `'self'` fallback: an id is what identifies a node, and a placeholder that every
+  // node answers to cannot. Empty means "not known yet", which callers already handle.
+  const selfEnvId = () => nodeId !== '' ? nodeId : (process.env.DSH_ENV_ID ?? '')
 
   /**
    * Whether an id names this node.
@@ -302,7 +304,7 @@ export function apply(ctx, config) {
    * what a peer sees in the table. Comparing only one made a node fail to recognise
    * itself in its own topology.
    */
-  const isThisNode = (envId) => envId === '' || envId === 'self' || envId === selfEnvId()
+  const isThisNode = (envId) => envId === '' || envId === selfEnvId()
 
   const hub = createTunnelHub({
     logger,
@@ -351,14 +353,25 @@ export function apply(ctx, config) {
         })),
       ],
     // What an edge asks for: this node's environment table, with live state.
-    listEnvironments: () => [
-      { envId: selfEnvId(), label: config.name === '' ? 'this node' : config.name, online: true },
-      ...registry.list().map((environment) => ({
-        envId: environment.id,
-        label: environment.label,
-        online: hub.isReachable(environment.id),
-      })),
-    ],
+    listEnvironments: () => {
+      const self = { envId: selfEnvId(), label: config.name === '' ? 'this node' : config.name, online: true }
+      const seen = new Set([self.envId])
+      const rows = [self]
+      for (const environment of registry.list()) {
+        if (seen.has(environment.id)) continue
+        seen.add(environment.id)
+        rows.push({ envId: environment.id, label: environment.label, online: hub.isReachable(environment.id) })
+      }
+      // Peers this node can reach without a registry entry — the upstreams a dialer holds.
+      // Without them the proxy could not name the node it is meant to forward to, and a
+      // tunnelled call for that node fell through to the login page.
+      for (const row of agent?.topology?.nodes() ?? []) {
+        if (row?.envId === undefined || seen.has(row.envId)) continue
+        seen.add(row.envId)
+        rows.push({ envId: row.envId, label: row.label ?? row.envId, online: row.online !== false })
+      }
+      return rows
+    },
   })
   const tunnelServer = createTunnelServer()
 
@@ -372,6 +385,9 @@ export function apply(ctx, config) {
       plugins = undefined
     }
     return {
+      // This node's own id. It is what every caller needs in place of the old `'self'`
+      // alias: an id is comparable across machines, and the alias never was.
+      envId: selfEnvId(),
       // What callers actually branch on: whether this node manages a registry at all.
       manages: config.accept === true,
       switcher: config.switcher,
@@ -494,13 +510,23 @@ export function apply(ctx, config) {
     // that *has* a token reject the header a peer actually sends, and answering a peer
     // with the login page looks exactly like a routing failure.
     const federated = req.headers['x-dsh-federation'] !== undefined
+    if (federated && process.env.DBG) console.error(`[fed] url=${url} own=${selfEnvId()}`)
     if (federated) {
-      const path = url.split('?')[0]
+      // A peer addresses this node as `/<envId>/admin/...`, the same shape a browser uses
+      // for another environment. The prefix is the *caller's* way of naming this node, so
+      // it is stripped before the routes below see the path — otherwise every tunnelled
+      // call missed `/admin` and was answered with the login page, which looks exactly
+      // like a routing failure.
+      const own = selfEnvId()
+      const stripped = own !== '' && (url === `/${own}` || url.startsWith(`/${own}/`))
+        ? url.slice(own.length + 1)
+        : url
+      const path = stripped.split('?')[0]
       // `/admin/file` is the byte surface and everything else under `/admin` is JSON;
       // both sit inside the one prefix, so one branch answers them and one gate protects
       // them.
-      if (path === '/admin/file' || path.startsWith('/admin/file')) return await serveFileRoute(req, res, url)
-      if (path === '/admin' || path.startsWith('/admin/')) return await admin(req, res, url)
+      if (path === '/admin/file' || path.startsWith('/admin/file')) return await serveFileRoute(req, res, stripped)
+      if (path === '/admin' || path.startsWith('/admin/')) return await admin(req, res, stripped)
     }
     // The auth layer matches its endpoints as exact strings, and the login page
     // posts from inside the mount, so the mount is stripped before it is asked.
@@ -527,7 +553,15 @@ export function apply(ctx, config) {
     // The edge has its own login, and this node has already authenticated whoever is
     // asking before the request got here.
     const routed = path.slice(1).split('/')[0]
-    if (routed !== '' && registry.find(routed) !== undefined) return false
+    // Known either by registry — this node accepts peers — or by topology, which is how a
+    // node that dials learns who it can reach. Asking only the registry made every dialer
+    // answer a prefixed call with the login page, because the prefix named a peer it knew
+    // perfectly well but had never enrolled.
+    const knownPrefix = routed !== '' && (
+      registry.find(routed) !== undefined
+      || (agent?.topology?.nodes() ?? []).some((row) => row.envId === routed)
+    )
+    if (knownPrefix) return false
     // Kept outside the gate so `/admin` can tell which session is asking: the session
     // overview marks that row `current`, and without it the panel cannot tell the
     // operator's own browser apart from any other. Undefined means nothing
@@ -802,6 +836,7 @@ export function apply(ctx, config) {
     // destructuring would resolve it at construction time. Named differently from the
     // closure it returns, because a same-named arrow here would call itself.
     managesRegistry: () => keepsRegistry(),
+    nodeId: () => selfEnvId(),
     // An edge's peers, from the topology its upstreams pushed. Empty on the main node,
     // which answers from its registry instead.
     reachableEnvironments: () => agent?.topology?.nodes()
@@ -892,6 +927,9 @@ export function apply(ctx, config) {
     // A dialer's topology arrives as frames, so its hub has to be told; otherwise `relay`
     // routes with an empty view and answers "no route" for peers the agent can reach.
     agent.setTopologySink((learned) => hub.adoptLearned(learned))
+    // A dialled link is the same channel as an accepted one; let the hub open streams on
+    // it too, so one code path serves both directions.
+    hub.setOutboundLink((envId) => agent.outboundRecord(envId))
     agent.setRouteQuery((toEnvId, owner) => hub.routeArrived(toEnvId, owner))
   }
 
@@ -989,10 +1027,22 @@ export function apply(ctx, config) {
    * here so a caller never has to know which kind of node it is running on.
    */
   const reachableIds = () => {
-    if (keepsRegistry()) return registry.list().filter((one) => one.enabled !== false).map((one) => one.id)
-    return agent?.topology?.nodes()
-      ?.filter((row) => row.envId !== agent?.topology?.selfId)
-      .map((row) => row.envId) ?? []
+    // Both sources, merged. A node that accepts peers names them by registry; one that
+    // dials learns them from the topology. Taking only one left every other node
+    // unroutable on whichever side of that line it fell.
+    const ids = []
+    const seen = new Set()
+    for (const environment of registry.list()) {
+      if (environment.enabled === false || seen.has(environment.id)) continue
+      seen.add(environment.id)
+      ids.push(environment.id)
+    }
+    for (const row of agent?.topology?.nodes() ?? []) {
+      if (row?.envId === undefined || row.envId === agent?.topology?.selfId || seen.has(row.envId)) continue
+      seen.add(row.envId)
+      ids.push(row.envId)
+    }
+    return ids
   }
 
   /**
@@ -1026,7 +1076,9 @@ export function apply(ctx, config) {
       // Local delivery never crosses the tunnel; going out and back would need this node
       // to be reachable as a destination, which it is not.
       return await deliverMessage({
-        fromEnvId: 'self',
+        // The real id, not the old alias: a receiver has to be able to tell which machine
+        // a message came from, and `'self'` means "whoever is reading this".
+        fromEnvId: selfEnvId(),
         fromSessionId: request.fromSessionId,
         sessionId: request.sessionId,
         text: request.text,
@@ -1038,7 +1090,7 @@ export function apply(ctx, config) {
       method: 'POST',
       path: '/admin/agent-message',
       body: {
-        fromEnvId: 'self',
+        fromEnvId: selfEnvId(),
         fromSessionId: request.fromSessionId,
         sessionId: request.sessionId,
         text: request.text,
@@ -1054,7 +1106,7 @@ export function apply(ctx, config) {
     // every leaf blind until its first call.
     if (keepsRegistry()) {
       return [
-        { envId: 'self', label: config.name === '' ? 'this node' : config.name, online: true },
+        { envId: selfEnvId(), label: config.name === '' ? 'this node' : config.name, online: true },
         ...registry.list().map((environment) => ({
           envId: environment.id,
           label: environment.label,
@@ -1065,12 +1117,11 @@ export function apply(ctx, config) {
       ]
     }
     const rows = agent?.topology?.nodes() ?? []
-    logger.info(`daemon: listReachable topology=${JSON.stringify(rows.map((r) => r.envId))} self=${agent?.topology?.selfId}`)
     return rows.map((row) => ({
       envId: row.envId,
       label: row.label,
       online: row.online,
-    })).concat(rows.length === 0 ? [{ envId: 'self', label: config.name === '' ? 'this node' : config.name, online: true }] : [])
+    })).concat(rows.length === 0 ? [{ envId: selfEnvId(), label: config.name === '' ? 'this node' : config.name, online: true }] : [])
   }
 
   /**
@@ -1141,7 +1192,7 @@ export function apply(ctx, config) {
    */
   const getFile = async (request) => {
     const source = String(request.envId ?? '').trim()
-    const remote = source !== '' && source !== 'self'
+    const remote = source !== '' && source !== selfEnvId()
 
     // `Range` is the same mechanism every HTTP client uses, so an offset needs no
     // custom framing.
@@ -1240,7 +1291,10 @@ export function apply(ctx, config) {
       entry = await startEntry({
         host: config.host,
         port: config.port,
-        listEnvironments: () => registry.list().map((one) => ({ id: one.id, online: hub.isReachable(one.id) })),
+        // The same list the agent tools see: registry *and* topology. An environment prefix
+        // names a peer this node can reach, and a dialer reaches peers it never enrolled —
+        // answering from the registry alone left every prefixed call unroutable.
+        listEnvironments: () => reachableIds().map((id) => ({ id, online: hub.isReachable(id) })),
         local,
         root: config.rootEmbedded
           ? {

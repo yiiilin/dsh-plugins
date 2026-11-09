@@ -185,7 +185,7 @@ function fakeHub({ online, replies }) {
       // The shape an edge's own daemon answers with: one `self` envelope.
       const envelope = reply.kind === 'envelope'
         ? reply.nodes
-        : [{ id: 'self', state: 'ok', sessions: reply.sessions ?? [] }]
+        : [{ id: FAKE_SELF, state: 'ok', sessions: reply.sessions ?? [] }]
       if (reply.kind === 'barrier') {
         barriers += 1
         held.push(() => answer({ ok: true, partial: false, nodes: envelope }))
@@ -270,6 +270,7 @@ async function withFakeHub({
     registry: fakeRegistry(environments),
     hub,
     config: { accept: keepsRegistry },
+    nodeId: () => FAKE_SELF,
     sessions,
     relayTimeoutMs,
     getPeer,
@@ -301,6 +302,25 @@ async function overview(origin, path = '/admin/sessions', cookie) {
   return { response, body }
 }
 
+/** The id the fake-hub router is told to use. */
+const FAKE_SELF = 'nselftest0000001'
+
+/**
+ * The id this node calls itself, read from the daemon that is running.
+ *
+ * There is no `'self'` alias any more, and the id is generated per profile, so a test that
+ * hardcodes one is asserting against a value the code never produces.
+ */
+async function ownIdOf(origin, cookie) {
+  // Asked of the node itself: there is no `'self'` row to look for any more, and the id is
+  // generated per profile, so a test cannot name it in advance.
+  const answer = await fetch(`${origin}/admin/state`, { headers: { cookie } })
+  const body = await answer.json()
+  const own = body?.self?.envId
+  assert.match(String(own), /^n[0-9a-f]+$/u, `this node reports an id, not an alias (got ${JSON.stringify(body).slice(0, 200)})`)
+  return own
+}
+
 /** The node envelope for one id, or a failure naming what came back instead. */
 function node(body, id) {
   const found = body.nodes.find((entry) => entry.id === id)
@@ -324,9 +344,11 @@ test('the overview includes this node\'s own sessions, marked with the one askin
     assert.equal(body.ok, true)
     assert.equal(body.partial, false, 'nothing failed, so the answer is whole')
     assert.equal(body.nodes.length, 1, 'no environments are registered, so there is one node')
-    const self = node(body, 'self')
+    // The row this node contributes is the only one, so its id is the answer's own. There
+    // is no `'self'` alias to look for and the id is generated per profile.
+    const self = body.nodes[0]
+    assert.match(self.id, /^n[0-9a-f]+$/u, 'this node reports an id, not an alias')
     assert.equal(self.state, 'ok', 'the node the panel is read on reports its own health')
-    assert.equal(self.state, 'ok')
     assert.equal(self.sessions.length, 1, 'the pairing session is live')
     const [only] = self.sessions
     assert.equal(only.current, true, 'the session that asked is the current one')
@@ -363,7 +385,8 @@ test('a registered environment with no tunnel is offline, and not an empty node'
     const paired = await fetch(`${daemon.origin}/admin/sessions`, { headers: { cookie } }).then((r) => r.json())
 
     assert.equal(paired.ok, true)
-    const self = node(paired, 'self')
+    // The row this node contributes is the one the registry does not name.
+    const self = node(paired, paired.nodes.find((one) => one.id !== ALPHA.id).id)
     assert.equal(self.state, 'ok')
     assert.equal(self.sessions.length, 1, 'this node answered for itself')
 
@@ -399,7 +422,7 @@ test('the overview offers no way to change a session', async () => {
     const after = await fetch(`${origin}/admin/sessions`, { headers: { cookie } })
     assert.equal(after.status, 200)
     const body = await after.json()
-    assert.equal(node(body, 'self').sessions.length, 1, 'the session is untouched')
+    assert.equal(node(body, await ownIdOf(origin, cookie)).sessions.length, 1, 'the session is untouched')
   })
 })
 
@@ -411,7 +434,7 @@ test('the overview is answered under the mount the panel is served from', async 
     const { response, body } = await overview(origin, '/main/admin/sessions', cookie)
     assert.equal(response.status, 200)
     assert.equal(body.ok, true)
-    assert.equal(node(body, 'self').sessions.length, 1)
+    assert.equal(node(body, await ownIdOf(origin, cookie)).sessions.length, 1)
   })
 })
 
@@ -433,7 +456,7 @@ test('an edge\'s sessions appear, tagged with the node they are on', async () =>
     assert.equal(body.ok, true)
     assert.equal(body.partial, false)
 
-    assert.deepEqual(node(body, 'self').sessions.map((one) => one.id), ['s1'], 'this node\'s own sessions are still there')
+    assert.deepEqual(node(body, FAKE_SELF).sessions.map((one) => one.id), ['s1'], 'this node\'s own sessions are still there')
     const alpha = node(body, ALPHA.id)
     assert.equal(alpha.label, ALPHA.label)
     assert.equal(alpha.state, 'ok')
@@ -487,7 +510,7 @@ test('a node that never answers is marked timed out, and the rest of the table s
     assert.match(alpha.error, /in time/u, 'the reason says the answer never came')
 
     assert.deepEqual(node(body, BETA.id).sessions.map((one) => one.id), ['b1'], 'the other node still answers')
-    assert.deepEqual(node(body, 'self').sessions.map((one) => one.id), ['s1'], 'and so does this node')
+    assert.deepEqual(node(body, FAKE_SELF).sessions.map((one) => one.id), ['s1'], 'and so does this node')
     assert.equal(body.partial, true)
   })
 })
@@ -573,7 +596,7 @@ test('an edge reports only itself, which is what the main node relays', async ()
     assert.equal(body.ok, true)
     assert.equal(body.partial, false)
     assert.equal(body.nodes.length, 1, 'an edge aggregates nothing: it has no environments')
-    const self = node(body, 'self')
+    const self = node(body, FAKE_SELF)
     assert.equal(self.state, 'ok')
     assert.deepEqual(self.sessions.map((one) => one.id), ['e1'])
     assert.equal(hub.sent.length, 0, 'and asks nobody over a tunnel')
